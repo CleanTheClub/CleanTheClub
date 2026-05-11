@@ -1,6 +1,8 @@
-import { room } from '../shared/messages'
+import { setupUi } from '../ui'
+import { initCleaningSystem } from '../cleaningSystem'
 
 export function initClient() {
   console.log('[CLIENT] started')
-  // Client-side input handling and message sending goes here
+  setupUi()
+  initCleaningSystem()
 }
