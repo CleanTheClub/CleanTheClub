@@ -10,8 +10,9 @@ import { CLUTTER_DEFS, InteractionType } from './shared/config'
 import { initInteractionManager } from './client/InteractionManager'
 
 // Dirty entities are what players interact with (pointer events registered on these)
-const dirtyEntities = new Map<string, Entity>()
-const cleanEntities = new Map<string, Entity>()
+const dirtyEntities    = new Map<string, Entity>()
+const cleanEntities    = new Map<string, Entity>()
+const originalDirtyScales = new Map<string, { x: number; y: number; z: number }>()
 
 // Per hold-type item: independent billboard + two plane meshes
 type HoldBar = { bg: Entity; fill: Entity }
@@ -19,17 +20,30 @@ const holdBars = new Map<string, HoldBar>()
 
 const BAR_WIDTH  = 0.8
 const BAR_HEIGHT = 0.1
-
-// Placeholder clean color — same shape, neutral light tone
-// Replace per-type when real GLBs are ready
 const CLEAN_COLOR = Color4.create(0.88, 0.94, 0.88, 1)
 
-// Swaps dirty/clean visuals — driven by ClutterSync.isCleaned on all clients
+// Swaps dirty visuals — driven by ClutterSync.isCleaned on all clients.
+// Cleaned items vanish (scale = zero); restored items snap back to original scale.
+// The "clean" placeholder entities are kept but never shown — real GLBs will replace them.
 export function applyCleanState(id: string, isCleaned: boolean) {
   const dirty = dirtyEntities.get(id)
+  if (dirty) {
+    // Stash original scale on first call so round-resets can restore it
+    if (!originalDirtyScales.has(id)) {
+      const t = Transform.getOrNull(dirty)
+      if (t) originalDirtyScales.set(id, { x: t.scale.x, y: t.scale.y, z: t.scale.z })
+    }
+    const t = Transform.getMutable(dirty)
+    if (isCleaned) {
+      t.scale = Vector3.Zero()
+    } else {
+      const orig = originalDirtyScales.get(id) ?? { x: 1, y: 1, z: 1 }
+      t.scale = { x: orig.x, y: orig.y, z: orig.z }
+    }
+  }
+  // Clean placeholder always hidden — items just disappear when cleaned
   const clean = cleanEntities.get(id)
-  if (dirty) VisibilityComponent.createOrReplace(dirty, { visible: !isCleaned })
-  if (clean) VisibilityComponent.createOrReplace(clean, { visible:  isCleaned })
+  if (clean) VisibilityComponent.createOrReplace(clean, { visible: false })
 }
 
 export function showHoldBar(id: string, visible: boolean) {

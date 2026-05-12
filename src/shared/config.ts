@@ -1,5 +1,5 @@
 // Set to true for fast timers during local testing
-export const DEBUG = true
+export const DEBUG = false
 
 const _ROUND_DURATIONS_MS  = [3 * 60_000, 2.5 * 60_000, 2 * 60_000, 1.5 * 60_000]
 const _DEBUG_DURATIONS_MS  = [30_000, 25_000, 20_000, 15_000]

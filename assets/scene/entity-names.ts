@@ -6,6 +6,9 @@
  */
 export enum EntityNames {
   Ambient_Sound___Market = "Ambient Sound - Market",
+  Bottle = "Bottle",
+  Bottle_Test = "Bottle_Test",
+  Bottles = "Bottles",
   Discord_Button = "Discord Button",
   Discord_Button_2 = "Discord Button_2",
   Elevator = "Elevator",
@@ -63,6 +66,8 @@ export enum EntityNames {
   NFT_2 = "NFT_2",
   NFT_3 = "NFT_3",
   NFT_4 = "NFT_4",
+  Rubbish = "Rubbish",
+  Rubbish_Bag = "Rubbish Bag",
   Sit_Spot_1 = "Sit Spot_1",
   Sit_Spot_10 = "Sit Spot_10",
   Sit_Spot_11 = "Sit Spot_11",
@@ -98,6 +103,7 @@ export enum EntityNames {
   Sit_Spot_9 = "Sit Spot_9",
   Text_Sign = "Text_Sign",
   Text_Title = "Text_Title",
+  Trash_Group = "Trash Group",
   Video_Screen = "Video Screen",
   Wine_Glass = "Wine Glass",
   Wine_Glass_10 = "Wine Glass_10",

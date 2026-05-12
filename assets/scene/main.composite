@@ -2840,6 +2840,132 @@
             },
             "parent": 0
           }
+        },
+        "644": {
+          "json": {
+            "position": {
+              "x": 26.196640014648438,
+              "y": 0,
+              "z": 17.844873428344727
+            },
+            "rotation": {
+              "x": 0,
+              "y": -0.6087614297866821,
+              "z": 0,
+              "w": 0.7933533191680908
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 648
+          }
+        },
+        "645": {
+          "json": {
+            "position": {
+              "x": 3.8721556663513184,
+              "y": -0.014194638468325138,
+              "z": 12.21378231048584
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 648
+          }
+        },
+        "646": {
+          "json": {
+            "position": {
+              "x": 7.5,
+              "y": 0,
+              "z": 13.5
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 647
+          }
+        },
+        "647": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
+        },
+        "648": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
+        },
+        "650": {
+          "json": {
+            "position": {
+              "x": 8.141861915588379,
+              "y": 0,
+              "z": 14.009294509887695
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
         }
       }
     },
@@ -3819,6 +3945,34 @@
         "642": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "644": {
+          "json": {
+            "src": "assets/asset-packs/trash_group/Trash_Group.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "645": {
+          "json": {
+            "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "646": {
+          "json": {
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "650": {
+          "json": {
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
           }
@@ -9555,6 +9709,36 @@
           "json": {
             "value": "Glasses"
           }
+        },
+        "644": {
+          "json": {
+            "value": "Trash Group"
+          }
+        },
+        "645": {
+          "json": {
+            "value": "Rubbish Bag"
+          }
+        },
+        "646": {
+          "json": {
+            "value": "Bottle"
+          }
+        },
+        "647": {
+          "json": {
+            "value": "Bottles"
+          }
+        },
+        "648": {
+          "json": {
+            "value": "Rubbish"
+          }
+        },
+        "650": {
+          "json": {
+            "value": "Bottle_Test"
+          }
         }
       }
     },
@@ -10838,9 +11022,9 @@
         "serializationType": "map"
       },
       "data": {
-        "0": {
+        "650": {
           "json": {
-            "gizmo": 0
+            "gizmo": 1
           }
         }
       }
@@ -10988,7 +11172,10 @@
                   630,
                   631,
                   517,
-                  643
+                  643,
+                  647,
+                  648,
+                  650
                 ]
               },
               {
@@ -11557,6 +11744,37 @@
                   641,
                   642
                 ]
+              },
+              {
+                "entity": 644,
+                "children": []
+              },
+              {
+                "entity": 645,
+                "children": []
+              },
+              {
+                "entity": 646,
+                "children": []
+              },
+              {
+                "entity": 647,
+                "open": true,
+                "children": [
+                  646
+                ]
+              },
+              {
+                "entity": 648,
+                "open": true,
+                "children": [
+                  644,
+                  645
+                ]
+              },
+              {
+                "entity": 650,
+                "children": []
               }
             ]
           }
@@ -11974,6 +12192,24 @@
           "json": {}
         },
         "643": {
+          "json": {}
+        },
+        "644": {
+          "json": {}
+        },
+        "645": {
+          "json": {}
+        },
+        "646": {
+          "json": {}
+        },
+        "647": {
+          "json": {}
+        },
+        "648": {
+          "json": {}
+        },
+        "650": {
           "json": {}
         }
       }
@@ -17684,7 +17920,7 @@
         "0": {
           "json": {
             "id": 0,
-            "value": 82
+            "value": 84
           }
         }
       }

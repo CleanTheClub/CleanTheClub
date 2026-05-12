@@ -64,6 +64,8 @@ function clearAllRespawns() {
   for (const [id, t] of respawnTimers) { clearTimeout(t); respawnTimers.delete(id) }
 }
 
+let onRestoreScales: (() => void) | undefined
+
 function resetClutter() {
   for (const [, entity] of itemEntities) {
     const cs = ClutterSync.getMutable(entity)
@@ -71,6 +73,7 @@ function resetClutter() {
     cs.cleanedAt = 0
     cs.cleanedBy = ''
   }
+  onRestoreScales?.()
 }
 
 function triggerOpen() {
@@ -134,8 +137,8 @@ export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
   syncGameState()
 }
 
-// Glasses don't respawn mid-round — just sync updated count
-export function onGlassCleaned() {
+// Scene items (glasses, bottles, rubbish) stay collected all round — no respawn timer
+export function onSceneItemCleaned() {
   if (phase !== 'playing') return
   syncGameState()
 }
@@ -173,10 +176,12 @@ export function onAdminReset() {
 
 export function initRoundManager(
   entities: Map<string, Entity>,
-  gsEntity: Entity
+  gsEntity: Entity,
+  restoreScales?: () => void,
 ) {
   itemEntities    = entities
   gameStateEntity = gsEntity
+  onRestoreScales = restoreScales
 
   roundNumber    = 0
   currentOutcome = ''

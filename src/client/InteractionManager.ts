@@ -1,12 +1,13 @@
-import { engine, Entity, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { room } from '../shared/messages'
 import { ClutterSync } from '../shared/schemas'
 import { CLUTTER_DEFS, HOLD_DURATION_MS, InteractionType } from '../shared/config'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showToast } from '../ui'
+import { showCleanedToast } from '../ui'
 import { playHoverSound, playClickSound, playStickySound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
+import { playSparkle } from './sparkleSystem'
 
 const pendingCleans = new Set<string>()
 const lastState     = new Map<string, boolean>()
@@ -28,7 +29,6 @@ function findClutterEntity(itemId: string): Entity | undefined {
 function tryClean(
   id: string,
   applyCleanState: (id: string, isCleaned: boolean) => void,
-  toast: string
 ) {
   if (pendingCleans.has(id)) return
   const syncEnt = findClutterEntity(id)
@@ -37,7 +37,7 @@ function tryClean(
   disableClick(id)            // remove prompt immediately while pending
   applyCleanState(id, true)   // optimistic swap
   room.send('cleanItem', { itemId: id })
-  showToast(toast)
+  showCleanedToast()
 }
 
 // ─── Enable / disable pointer interactions per item ───────────────────────────
@@ -77,8 +77,11 @@ function enableClick(id: string) {
       () => {
         playClickSound()
         playCleanSound()
-        if (type === 'quick' || type === 'collect') playPickupEmote()
-        tryClean(id, applyCleanStateRef, 'Cleaning...')
+        if (type === 'quick' || type === 'collect') {
+          const pos = Transform.getOrNull(entity)?.position
+          if (pos) { playPickupEmote(pos); playSparkle(pos) }
+        }
+        tryClean(id, applyCleanStateRef)
       }
     )
   }
@@ -127,7 +130,9 @@ export function initInteractionManager(
       activeHold = null
       showHoldBar(id, false)
       playCleanSound()
-      tryClean(id, applyCleanState, 'Cleaned!')
+      const holdPos = Transform.getOrNull(itemRefs.get(id)!.entity)?.position
+      if (holdPos) playSparkle(holdPos)
+      tryClean(id, applyCleanState)
     }
   })
 
@@ -173,6 +178,6 @@ export function initInteractionManager(
     // Invalidate lastState so the watcher re-applies authoritative ClutterSync state
     // next frame — avoids manually guessing dirty/clean and fighting with the watcher
     lastState.delete(data.itemId)
-    showToast('Already cleaned!')
+    // silently drop — server rejection needs no feedback
   })
 }
