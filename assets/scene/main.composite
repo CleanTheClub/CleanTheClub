@@ -195,6 +195,258 @@
             "parent": 0
           }
         },
+        "518": {
+          "json": {
+            "position": {
+              "x": 10.241631507873535,
+              "y": 0.20572349429130554,
+              "z": 25.3348445892334
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "519": {
+          "json": {
+            "position": {
+              "x": 6.741631507873535,
+              "y": 0.20572349429130554,
+              "z": 25.3348445892334
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "520": {
+          "json": {
+            "position": {
+              "x": 6.454700946807861,
+              "y": 0.20572349429130554,
+              "z": 24.0848445892334
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "521": {
+          "json": {
+            "position": {
+              "x": 6.2932024002075195,
+              "y": 0.20572349429130554,
+              "z": 21.29351234436035
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "522": {
+          "json": {
+            "position": {
+              "x": 14.135747909545898,
+              "y": 3.462817668914795,
+              "z": 6.896235466003418
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "523": {
+          "json": {
+            "position": {
+              "x": 5.03664493560791,
+              "y": 8.321290969848633,
+              "z": 25.27712059020996
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "524": {
+          "json": {
+            "position": {
+              "x": 6.1080169677734375,
+              "y": 8.321290969848633,
+              "z": 25.855676651000977
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "525": {
+          "json": {
+            "position": {
+              "x": 6.1080169677734375,
+              "y": 8.321290969848633,
+              "z": 26.99387550354004
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "526": {
+          "json": {
+            "position": {
+              "x": 6.882565975189209,
+              "y": 8.321290969848633,
+              "z": 28.065753936767578
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "527": {
+          "json": {
+            "position": {
+              "x": 3.8649590015411377,
+              "y": 8.321290969848633,
+              "z": 25.217252731323242
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "528": {
+          "json": {
+            "position": {
+              "x": 4.290892601013184,
+              "y": 8.321290969848633,
+              "z": 24.99504852294922
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "529": {
+          "json": {
+            "position": {
+              "x": 12.2559814453125,
+              "y": 7.285275936126709,
+              "z": 24.99504852294922
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
         "530": {
           "json": {
             "position": {
@@ -214,6 +466,195 @@
               "w": 1
             },
             "parent": 0
+          }
+        },
+        "531": {
+          "json": {
+            "position": {
+              "x": 12.2559814453125,
+              "y": 7.285275936126709,
+              "z": 25.852577209472656
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "532": {
+          "json": {
+            "position": {
+              "x": 12.458447456359863,
+              "y": 7.285275936126709,
+              "z": 26.122039794921875
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "533": {
+          "json": {
+            "position": {
+              "x": 14.187385559082031,
+              "y": 8.067804336547852,
+              "z": 25.070234298706055
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "534": {
+          "json": {
+            "position": {
+              "x": 14.764941215515137,
+              "y": 8.067804336547852,
+              "z": 25.33003044128418
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "535": {
+          "json": {
+            "position": {
+              "x": 15.228238105773926,
+              "y": 8.067804336547852,
+              "z": 24.894376754760742
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "536": {
+          "json": {
+            "position": {
+              "x": 17.544599533081055,
+              "y": 8.067804336547852,
+              "z": 24.894376754760742
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "537": {
+          "json": {
+            "position": {
+              "x": 22.351903915405273,
+              "y": 8.067804336547852,
+              "z": 25.34308624267578
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "538": {
+          "json": {
+            "position": {
+              "x": 22.743385314941406,
+              "y": 8.067804336547852,
+              "z": 24.999122619628906
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "539": {
+          "json": {
+            "position": {
+              "x": 21.540435791015625,
+              "y": 8.067804336547852,
+              "z": 25.270381927490234
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
           }
         },
         "540": {
@@ -676,6 +1117,27 @@
               "w": -0.707099974155426
             },
             "parent": 0
+          }
+        },
+        "562": {
+          "json": {
+            "position": {
+              "x": 13.458447456359863,
+              "y": 7.285275936126709,
+              "z": 26.372039794921875
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
           }
         },
         "563": {
@@ -2126,6 +2588,258 @@
             },
             "parent": 0
           }
+        },
+        "632": {
+          "json": {
+            "position": {
+              "x": 14.597164154052734,
+              "y": 7.328144550323486,
+              "z": 26.474674224853516
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": 0.6830127239227295,
+              "y": -0.1830127239227295,
+              "z": 0.1830127090215683,
+              "w": 0.6830126643180847
+            },
+            "parent": 643
+          }
+        },
+        "633": {
+          "json": {
+            "position": {
+              "x": 14.958447456359863,
+              "y": 7.307467460632324,
+              "z": 26.372039794921875
+            },
+            "scale": {
+              "x": 0.9999999403953552,
+              "y": 0.9999999403953552,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0.7071067690849304,
+              "w": 0.7071067690849304
+            },
+            "parent": 643
+          }
+        },
+        "634": {
+          "json": {
+            "position": {
+              "x": 15.708447456359863,
+              "y": 7.285275936126709,
+              "z": 26.372039794921875
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "635": {
+          "json": {
+            "position": {
+              "x": 15.960000038146973,
+              "y": 7.320000171661377,
+              "z": 26.3700008392334
+            },
+            "scale": {
+              "x": 1,
+              "y": 0.9999808073043823,
+              "z": 0.9999808073043823
+            },
+            "rotation": {
+              "x": 0.707099974155426,
+              "y": 0,
+              "z": 0,
+              "w": 0.7071135640144348
+            },
+            "parent": 643
+          }
+        },
+        "636": {
+          "json": {
+            "position": {
+              "x": 16.208446502685547,
+              "y": 7.342493534088135,
+              "z": 26.372039794921875
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "637": {
+          "json": {
+            "position": {
+              "x": 19.958446502685547,
+              "y": 7.342493534088135,
+              "z": 25.85687255859375
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "638": {
+          "json": {
+            "position": {
+              "x": 23.911298751831055,
+              "y": 7.342493534088135,
+              "z": 26.251941680908203
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "639": {
+          "json": {
+            "position": {
+              "x": 26.899166107177734,
+              "y": 7.342493534088135,
+              "z": 22.844959259033203
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "640": {
+          "json": {
+            "position": {
+              "x": 25.76972007751465,
+              "y": 7.329832553863525,
+              "z": 18.844959259033203
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "641": {
+          "json": {
+            "position": {
+              "x": 26.030607223510742,
+              "y": 8.363266944885254,
+              "z": 11.244471549987793
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "642": {
+          "json": {
+            "position": {
+              "x": 27.605661392211914,
+              "y": 8.643234252929688,
+              "z": 10.635462760925293
+            },
+            "scale": {
+              "x": 1,
+              "y": 1.0000001192092896,
+              "z": 1.0000001192092896
+            },
+            "rotation": {
+              "x": -0.6532815098762512,
+              "y": -0.27059808373451233,
+              "z": -0.27059805393218994,
+              "w": 0.6532814502716064
+            },
+            "parent": 643
+          }
+        },
+        "643": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 0
+          }
         }
       }
     },
@@ -2570,11 +3284,158 @@
             "invisibleMeshesCollisionMask": 0
           }
         },
+        "518": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "519": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "520": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "521": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "522": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "523": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "524": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "525": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "526": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "527": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "528": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "529": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
         "530": {
           "json": {
             "src": "assets/asset-packs/ambient_sound_-_market/ambient_sound.glb",
             "visibleMeshesCollisionMask": 1,
             "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "531": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "532": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "533": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "534": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "535": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "536": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "537": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "538": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "539": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
           }
         },
         "540": {
@@ -2694,6 +3555,13 @@
             "src": "assets/scene/Models/elevator/elevator.glb",
             "visibleMeshesCollisionMask": 1,
             "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "562": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
           }
         },
         "565": {
@@ -2874,6 +3742,83 @@
         "631": {
           "json": {
             "src": "assets/scene/Models/graffiti/graffiti.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "632": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "633": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "634": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "635": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "636": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "637": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "638": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "639": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "640": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "641": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
+            "visibleMeshesCollisionMask": 0,
+            "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "642": {
+          "json": {
+            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
           }
@@ -7981,9 +8926,114 @@
             "value": "Fixed View Camera"
           }
         },
+        "518": {
+          "json": {
+            "value": "Wine Glass"
+          }
+        },
+        "519": {
+          "json": {
+            "value": "Wine Glass_2"
+          }
+        },
+        "520": {
+          "json": {
+            "value": "Wine Glass_3"
+          }
+        },
+        "521": {
+          "json": {
+            "value": "Wine Glass_4"
+          }
+        },
+        "522": {
+          "json": {
+            "value": "Wine Glass_5"
+          }
+        },
+        "523": {
+          "json": {
+            "value": "Wine Glass_6"
+          }
+        },
+        "524": {
+          "json": {
+            "value": "Wine Glass_7"
+          }
+        },
+        "525": {
+          "json": {
+            "value": "Wine Glass_8"
+          }
+        },
+        "526": {
+          "json": {
+            "value": "Wine Glass_9"
+          }
+        },
+        "527": {
+          "json": {
+            "value": "Wine Glass_10"
+          }
+        },
+        "528": {
+          "json": {
+            "value": "Wine Glass_11"
+          }
+        },
+        "529": {
+          "json": {
+            "value": "Wine Glass_12"
+          }
+        },
         "530": {
           "json": {
             "value": "Ambient Sound - Market"
+          }
+        },
+        "531": {
+          "json": {
+            "value": "Wine Glass_13"
+          }
+        },
+        "532": {
+          "json": {
+            "value": "Wine Glass_14"
+          }
+        },
+        "533": {
+          "json": {
+            "value": "Wine Glass_15"
+          }
+        },
+        "534": {
+          "json": {
+            "value": "Wine Glass_16"
+          }
+        },
+        "535": {
+          "json": {
+            "value": "Wine Glass_17"
+          }
+        },
+        "536": {
+          "json": {
+            "value": "Wine Glass_18"
+          }
+        },
+        "537": {
+          "json": {
+            "value": "Wine Glass_19"
+          }
+        },
+        "538": {
+          "json": {
+            "value": "Wine Glass_20"
+          }
+        },
+        "539": {
+          "json": {
+            "value": "Wine Glass_21"
           }
         },
         "540": {
@@ -8094,6 +9144,11 @@
         "561": {
           "json": {
             "value": "NFT_4"
+          }
+        },
+        "562": {
+          "json": {
+            "value": "Wine Glass_22"
           }
         },
         "563": {
@@ -8439,6 +9494,66 @@
         "631": {
           "json": {
             "value": "Graffiti"
+          }
+        },
+        "632": {
+          "json": {
+            "value": "Wine Glass_23"
+          }
+        },
+        "633": {
+          "json": {
+            "value": "Wine Glass_24"
+          }
+        },
+        "634": {
+          "json": {
+            "value": "Wine Glass_25"
+          }
+        },
+        "635": {
+          "json": {
+            "value": "Wine Glass_26"
+          }
+        },
+        "636": {
+          "json": {
+            "value": "Wine Glass_27"
+          }
+        },
+        "637": {
+          "json": {
+            "value": "Wine Glass_28"
+          }
+        },
+        "638": {
+          "json": {
+            "value": "Wine Glass_29"
+          }
+        },
+        "639": {
+          "json": {
+            "value": "Wine Glass_30"
+          }
+        },
+        "640": {
+          "json": {
+            "value": "Wine Glass_31"
+          }
+        },
+        "641": {
+          "json": {
+            "value": "Wine Glass_32"
+          }
+        },
+        "642": {
+          "json": {
+            "value": "Wine Glass_33"
+          }
+        },
+        "643": {
+          "json": {
+            "value": "Glasses"
           }
         }
       }
@@ -9872,7 +10987,8 @@
                   629,
                   630,
                   631,
-                  517
+                  517,
+                  643
                 ]
               },
               {
@@ -10270,6 +11386,177 @@
               {
                 "entity": 517,
                 "children": []
+              },
+              {
+                "entity": 518,
+                "children": []
+              },
+              {
+                "entity": 519,
+                "children": []
+              },
+              {
+                "entity": 520,
+                "children": []
+              },
+              {
+                "entity": 521,
+                "children": []
+              },
+              {
+                "entity": 522,
+                "children": []
+              },
+              {
+                "entity": 523,
+                "children": []
+              },
+              {
+                "entity": 524,
+                "children": []
+              },
+              {
+                "entity": 525,
+                "children": []
+              },
+              {
+                "entity": 526,
+                "children": []
+              },
+              {
+                "entity": 527,
+                "children": []
+              },
+              {
+                "entity": 528,
+                "children": []
+              },
+              {
+                "entity": 529,
+                "children": []
+              },
+              {
+                "entity": 531,
+                "children": []
+              },
+              {
+                "entity": 532,
+                "children": []
+              },
+              {
+                "entity": 533,
+                "children": []
+              },
+              {
+                "entity": 534,
+                "children": []
+              },
+              {
+                "entity": 535,
+                "children": []
+              },
+              {
+                "entity": 536,
+                "children": []
+              },
+              {
+                "entity": 537,
+                "children": []
+              },
+              {
+                "entity": 538,
+                "children": []
+              },
+              {
+                "entity": 539,
+                "children": []
+              },
+              {
+                "entity": 562,
+                "children": []
+              },
+              {
+                "entity": 632,
+                "children": []
+              },
+              {
+                "entity": 633,
+                "children": []
+              },
+              {
+                "entity": 634,
+                "children": []
+              },
+              {
+                "entity": 635,
+                "children": []
+              },
+              {
+                "entity": 636,
+                "children": []
+              },
+              {
+                "entity": 637,
+                "children": []
+              },
+              {
+                "entity": 638,
+                "children": []
+              },
+              {
+                "entity": 639,
+                "children": []
+              },
+              {
+                "entity": 640,
+                "children": []
+              },
+              {
+                "entity": 641,
+                "children": []
+              },
+              {
+                "entity": 642,
+                "children": []
+              },
+              {
+                "entity": 643,
+                "open": true,
+                "children": [
+                  518,
+                  519,
+                  520,
+                  521,
+                  522,
+                  523,
+                  524,
+                  525,
+                  526,
+                  527,
+                  528,
+                  529,
+                  531,
+                  532,
+                  533,
+                  534,
+                  535,
+                  536,
+                  537,
+                  538,
+                  539,
+                  562,
+                  632,
+                  633,
+                  634,
+                  635,
+                  636,
+                  637,
+                  638,
+                  639,
+                  640,
+                  641,
+                  642
+                ]
               }
             ]
           }
@@ -10311,7 +11598,70 @@
         "517": {
           "json": {}
         },
+        "518": {
+          "json": {}
+        },
+        "519": {
+          "json": {}
+        },
+        "520": {
+          "json": {}
+        },
+        "521": {
+          "json": {}
+        },
+        "522": {
+          "json": {}
+        },
+        "523": {
+          "json": {}
+        },
+        "524": {
+          "json": {}
+        },
+        "525": {
+          "json": {}
+        },
+        "526": {
+          "json": {}
+        },
+        "527": {
+          "json": {}
+        },
+        "528": {
+          "json": {}
+        },
+        "529": {
+          "json": {}
+        },
         "530": {
+          "json": {}
+        },
+        "531": {
+          "json": {}
+        },
+        "532": {
+          "json": {}
+        },
+        "533": {
+          "json": {}
+        },
+        "534": {
+          "json": {}
+        },
+        "535": {
+          "json": {}
+        },
+        "536": {
+          "json": {}
+        },
+        "537": {
+          "json": {}
+        },
+        "538": {
+          "json": {}
+        },
+        "539": {
           "json": {}
         },
         "540": {
@@ -10378,6 +11728,9 @@
           "json": {}
         },
         "561": {
+          "json": {}
+        },
+        "562": {
           "json": {}
         },
         "563": {
@@ -10585,6 +11938,42 @@
           "json": {}
         },
         "631": {
+          "json": {}
+        },
+        "632": {
+          "json": {}
+        },
+        "633": {
+          "json": {}
+        },
+        "634": {
+          "json": {}
+        },
+        "635": {
+          "json": {}
+        },
+        "636": {
+          "json": {}
+        },
+        "637": {
+          "json": {}
+        },
+        "638": {
+          "json": {}
+        },
+        "639": {
+          "json": {}
+        },
+        "640": {
+          "json": {}
+        },
+        "641": {
+          "json": {}
+        },
+        "642": {
+          "json": {}
+        },
+        "643": {
           "json": {}
         }
       }
@@ -13715,7 +15104,7 @@
           "json": {
             "name": "Clean The Club",
             "description": "Empty Scene Template",
-            "thumbnail": "",
+            "thumbnail": "assets/images/autogenerated-thumbnail.png",
             "ageRating": "T",
             "categories": [
               "social",
@@ -13758,22 +15147,22 @@
                   "x": {
                     "$case": "range",
                     "value": [
-                      15,
-                      17
+                      15.029999732971191,
+                      17.030000686645508
                     ]
                   },
                   "y": {
                     "$case": "range",
                     "value": [
-                      0,
-                      0
+                      0.800000011920929,
+                      0.800000011920929
                     ]
                   },
                   "z": {
                     "$case": "range",
                     "value": [
-                      30,
-                      32
+                      18.030000686645508,
+                      20.030000686645508
                     ]
                   }
                 },

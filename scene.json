@@ -32,16 +32,16 @@
       "default": true,
       "position": {
         "x": [
-          15,
-          17
+          15.029999732971191,
+          17.030000686645508
         ],
         "y": [
-          0,
-          0
+          0.800000011920929,
+          0.800000011920929
         ],
         "z": [
-          30,
-          32
+          18.030000686645508,
+          20.030000686645508
         ]
       },
       "cameraTarget": {
@@ -65,5 +65,6 @@
     "projectId": "c234e010-bf2f-4a35-9404-b57f360b3964"
   },
   "rating": "T",
-  "authoritativeMultiplayer": true
+  "authoritativeMultiplayer": true,
+  "creator": ""
 }
