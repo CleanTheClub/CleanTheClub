@@ -1,7 +1,7 @@
 // Generic system for scene-item groups that are collected (hidden) on click.
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
-import { engine, Entity, Transform, GltfContainer, ColliderLayer, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, GltfContainer, ColliderLayer, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { ClutterSync } from '../shared/schemas'
 import { SceneItemDef } from '../shared/glassDiscovery'
 import { room } from '../shared/messages'
@@ -9,6 +9,7 @@ import { showCollectionToast } from '../ui'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
+import { PICKUP_TOUCH_MS } from '../shared/config'
 
 export type CollectibleConfig = {
   items:     SceneItemDef[]
@@ -20,8 +21,9 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   const { items, idPrefix, toastKind } = cfg
   if (items.length === 0) return
 
-  const pendingCleans = new Set<string>()
-  const lastState     = new Map<string, boolean>()
+  const pendingCleans     = new Set<string>()
+  const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
+  const lastState         = new Map<string, boolean>()
 
   // containerEntity = the entity discovered by discoverChildren (direct child of the group).
   // gltfEntity      = the entity that actually holds GltfContainer (self or one level deeper).
@@ -116,15 +118,25 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         if (pendingCleans.has(itemId)) return
         pendingCleans.add(itemId)
         const pos = Transform.getOrNull(rec?.containerEntity ?? target)?.position
-        setVisible(itemId, false)
         disableClick(itemId)
         playClickSound()
-        playCleanSound()
-        if (pos) { playPickupEmote(pos); playSparkle(pos) }
+        playCleanSound()               // instant audio feedback on click
+        if (pos) playPickupEmote(pos)
         room.send('cleanItem', { itemId })
         if (toastKind !== null) {
           showCollectionToast(toastKind, countCollected(), items.length)
         }
+
+        // Delay visual hide + sparkle to sync with the emote hand-touch moment.
+        // Guard: if cleanRejected arrives before the timer fires it clears
+        // pendingVisualHide — the timer then bails out without hiding the item.
+        pendingVisualHide.add(itemId)
+        timers.setTimeout(() => {
+          if (!pendingVisualHide.has(itemId)) return   // rejected — leave item visible
+          pendingVisualHide.delete(itemId)
+          setVisible(itemId, false)
+          if (pos) playSparkle(pos)
+        }, PICKUP_TOUCH_MS)
       }
     )
   }
@@ -149,10 +161,16 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
       const ref = items.find(i => i.itemId === state.itemId)
       if (!ref) continue
 
-      setVisible(state.itemId, !state.isCleaned)
       if (state.isCleaned) {
         disableClick(state.itemId)
+        // If a pickup timer is pending, let it hide the item at the touch moment
+        if (!pendingVisualHide.has(state.itemId)) {
+          setVisible(state.itemId, false)
+        }
       } else {
+        // Round reset — cancel any pending visual hide and restore immediately
+        pendingVisualHide.delete(state.itemId)
+        setVisible(state.itemId, true)
         enableClick(state.itemId, ref.entity)
       }
     }
@@ -161,7 +179,8 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   room.onMessage('cleanRejected', (data) => {
     if (!data.itemId.startsWith(idPrefix)) return
     pendingCleans.delete(data.itemId)
-    lastState.delete(data.itemId)
-    // silently drop — server rejection needs no feedback
+    pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
+    setVisible(data.itemId, true)           // restores item if timer already fired
+    lastState.delete(data.itemId)           // force watcher to re-apply next ClutterSync tick
   })
 }

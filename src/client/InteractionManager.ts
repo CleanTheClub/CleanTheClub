@@ -1,16 +1,17 @@
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { room } from '../shared/messages'
 import { ClutterSync } from '../shared/schemas'
-import { CLUTTER_DEFS, HOLD_DURATION_MS, InteractionType } from '../shared/config'
+import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast } from '../ui'
 import { playHoverSound, playClickSound, playStickySound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 
-const pendingCleans = new Set<string>()
-const lastState     = new Map<string, boolean>()
+const pendingCleans     = new Set<string>()
+const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
+const lastState         = new Map<string, boolean>()
 
 // Stored after sync so enable/disable can re-register handlers at any time
 type ItemRef = { entity: Entity; type: InteractionType }
@@ -75,13 +76,31 @@ function enableClick(id: string) {
     pointerEventsSystem.onPointerDown(
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
       () => {
+        if (pendingCleans.has(id)) return
+        const syncEnt = findClutterEntity(id)
+        if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+
         playClickSound()
-        playCleanSound()
-        if (type === 'quick' || type === 'collect') {
-          const pos = Transform.getOrNull(entity)?.position
-          if (pos) { playPickupEmote(pos); playSparkle(pos) }
-        }
-        tryClean(id, applyCleanStateRef)
+        playCleanSound()               // instant audio feedback on click
+        pendingCleans.add(id)
+        disableClick(id)
+        showCleanedToast()
+
+        const pos = Transform.getOrNull(entity)?.position
+        if (pos) playPickupEmote(pos)
+
+        // Delay visual hide + sparkle to sync with the emote hand-touch moment.
+        // Guard: if cleanRejected arrives before the timer fires it clears
+        // pendingVisualHide — the timer then bails out without hiding the item.
+        pendingVisualHide.add(id)
+        room.send('cleanItem', { itemId: id })
+
+        timers.setTimeout(() => {
+          if (!pendingVisualHide.has(id)) return   // rejected — leave item visible
+          pendingVisualHide.delete(id)
+          applyCleanStateRef(id, true)
+          if (pos) playSparkle(pos)
+        }, PICKUP_TOUCH_MS)
       }
     )
   }
@@ -160,24 +179,32 @@ export function initInteractionManager(
           activeHold = null
         }
         disableClick(state.itemId)
+        // If a pickup timer is pending, let it apply the visual at the touch moment.
+        // For hold items the timer is never set, so this branch is a no-op for them.
+        if (!pendingVisualHide.has(state.itemId)) {
+          applyCleanState(state.itemId, true)
+        }
       } else {
+        // Round reset — cancel any pending visual hide and restore immediately
+        pendingVisualHide.delete(state.itemId)
         enableClick(state.itemId)
+        applyCleanState(state.itemId, false)
       }
-
-      applyCleanState(state.itemId, state.isCleaned)
     }
   })
 
   room.onMessage('cleanRejected', (data) => {
     if (data.itemId.startsWith(GLASS_ID_PREFIX)) return  // handled by glassSystem
     pendingCleans.delete(data.itemId)
+    pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
     if (activeHold?.id === data.itemId) {
       showHoldBar(data.itemId, false)
       activeHold = null
     }
-    // Invalidate lastState so the watcher re-applies authoritative ClutterSync state
-    // next frame — avoids manually guessing dirty/clean and fighting with the watcher
+    // Restore dirty visual immediately in case the timer already fired and hid the item.
+    // lastState is then cleared so the ClutterSync watcher re-applies authoritative state
+    // on its next tick (confirms item is still dirty, re-enables click).
+    applyCleanStateRef(data.itemId, false)
     lastState.delete(data.itemId)
-    // silently drop — server rejection needs no feedback
   })
 }

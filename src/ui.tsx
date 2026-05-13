@@ -176,8 +176,12 @@ const ui = () => {
   // Desktop: right side (right: 40). Mobile: left of centre safe zone (left: 730)
   // so toasts stay clear of the 25% reserved right edge and 30% reserved left edge.
   const toastSize   = mobile ? 320  : 450
-  const toastFont   = Math.round(26  * S)
-  const narrFont    = Math.round(27  * S)
+  // Negative overlap between stacked toasts — the images are mostly transparent,
+  // content fills ~20% of height. Pull each toast up by ~75% of the image height
+  // so only the content areas are visible with a small gap between them.
+  const toastOverlap = -Math.round(toastSize * 0.70)
+  const toastFont   = Math.round(14  * S)
+  const narrFont    = Math.round(15  * S)
   const toastPos    = mobile
     ? { top: 92, left: 730 } as const   // top of safe zone, inside centre band
     : { top: 360, right: 40 } as const
@@ -334,9 +338,9 @@ const ui = () => {
               uiTransform={{
                 width:          toastSize,
                 height:         toastSize,
-                margin:         { bottom: idx < activeToasts.length - 1 ? 1 : 0 },
-                justifyContent: 'center',
-                alignItems:     'center',
+                margin:         { bottom: idx < activeToasts.length - 1 ? toastOverlap : 0 },
+                justifyContent: 'flex-end',
+                alignItems:     'flex-start',
               }}
               uiBackground={{
                 texture:     { src: TOAST_SRC[toast.kind] },
@@ -349,7 +353,10 @@ const ui = () => {
                   value={`${toast.count} / ${toast.total}`}
                   fontSize={toastFont}
                   color={WHITE}
-                  uiTransform={{ margin: { top: 6 } }}
+                  uiTransform={{
+                    positionType: 'absolute',
+                    position: { top: Math.round(toastSize * 0.53), left: Math.round(toastSize * 0.30) },
+                  }}
                 />
               )}
               {toast.kind === 'narrative' && toast.text !== undefined && (
@@ -357,7 +364,10 @@ const ui = () => {
                   value={toast.text}
                   fontSize={narrFont}
                   color={WHITE}
-                  uiTransform={{ margin: { top: 6 } }}
+                  uiTransform={{
+                    positionType: 'absolute',
+                    position: { top: Math.round(toastSize * 0.53), left: Math.round(toastSize * 0.30) },
+                  }}
                 />
               )}
             </UiEntity>

@@ -5,59 +5,133 @@
 // HOW TO ADD TARGETS
 // ──────────────────
 // 1. Place your emissive entity in Creator Hub and give it a Name.
-// 2. (Optional) Open the GLB in Babylon Sandbox to find specific mesh node paths.
-//    Use path '' to override the entire model — fine for dedicated light/sign entities.
-// 3. Add an entry to EMISSION_TARGETS below.
+// 2. Find the node name in the GLB (Blender object name, not mesh name).
+// 3. Add an entry to EMISSION_TARGETS below with the matching colour constant.
 //
 // STATES → THRESHOLDS (from shared/config.ts)
 // ────────────────────────────────────────────
 //  grungy : pct < TRANSFORM_DIM    (0.30) — barely lit, grimy
 //  dim    : pct < TRANSFORM_MID    (0.60) — dim, still dirty
 //  mid    : pct < TRANSFORM_BRIGHT (0.80) — getting cleaner
-//  bright : pct ≥ TRANSFORM_BRIGHT        — nearly spotless
-//  vivid  : phase === 'open'              — club is open, full celebration
+//  bright : pct ≥ TRANSFORM_BRIGHT        — authored values fully restored
+//  vivid  : phase === 'open'              — authored values fully restored (party mode)
 
 import { engine, Entity, GltfNodeModifiers, Name } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
 import { TRANSFORM_DIM, TRANSFORM_MID, TRANSFORM_BRIGHT } from '../shared/config'
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ── Colour palette — exact emissiveFactor values from the GLB materials ───────
+// ─────────────────────────────────────────────────────────────────────────────
+// Sourced directly from the GLB binary (emissiveFactor × KHR_emissive_strength).
+// albedoColor is set to black so scene lighting adds no unwanted contribution —
+// these are pure-emissive nodes; only the glow should be visible.
+
+const PINK   = { r: 1.0000, g: 0.0000, b: 0.3042 }
+const BLUE   = { r: 0.0000, g: 0.0761, b: 0.7989 }
+const PURPLE = { r: 0.3273, g: 0.0000, b: 0.7989 }
+const ORANGE = { r: 0.7989, g: 0.1135, b: 0.0000 }
+const SIGN   = { r: 1.9822, g: 0.0006, b: 0.8251 }  // 5em.001 — strength ×1.98
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ── Target config ─────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Each entry is a named scene entity + the mesh node paths to override.
-// 'paths: [""]'  → override the whole model (ideal for pure-emissive entities).
-// 'paths: ["LightMesh", "GlowRing"]' → override only specific nodes.
-export const EMISSION_TARGETS: { name: string; paths: string[] }[] = [
-  // { name: 'NeonSign_Bar',  paths: [''] },
-  // { name: 'FloorLights',   paths: ['LightStrip'] },
-  // { name: 'StageRig',      paths: ['SpotLight_L', 'SpotLight_R'] },
+type PathEntry = { path: string; r: number; g: number; b: number }
+
+export const EMISSION_TARGETS: { name: string; paths: PathEntry[] }[] = [
+  {
+    name: 'MainStructure',
+    paths: [
+      // ── Structure / ambient ───────────────────────────────────────────────────
+      { path: 'collis',                        ...SIGN   },  // signage
+      { path: 'Roof.001',                      ...BLUE   },  // roof glow
+      { path: 'Walls.001',                     ...BLUE   },  // wall panels
+      { path: 'SkirtingBoard_GroundFloor.001', ...BLUE   },  // skirting blue
+      { path: 'SkirtingBoard_GroundFloor.002', ...ORANGE },  // skirting orange
+      { path: 'InnerCorners.001',              ...PINK   },  // inner corner accents
+      { path: 'InnerCornersSpeakers.001',      ...BLUE   },  // speaker corner accents
+      { path: 'InnerCornersSpeakers.002',      ...BLUE   },
+
+      // ── Entrance ─────────────────────────────────────────────────────────────
+      { path: 'SideEntranceGlowR',             ...BLUE   },  // entrance glow blue
+      { path: 'SideEntranceGlowR.001',         ...PINK   },  // entrance glow pink
+      { path: 'Arrow.002',                     ...PINK   },  // directional arrow
+
+      // ── Dance floor ──────────────────────────────────────────────────────────
+      { path: 'DanceFloorTop',                 ...PINK   },  // floor rings pink
+      { path: 'DanceFloorTop.001',             ...PURPLE },  // floor rings purple
+      { path: 'DanceFloor.002',                ...PINK   },  // floor surface
+      { path: 'DanceAreaTubes',                ...ORANGE },  // tubes orange
+      { path: 'DanceAreaTubes.001',            ...PINK   },  // tubes pink
+      { path: 'SpeakerGlow',                   ...PINK   },  // speaker glow rings
+      { path: 'ChillGlow',                     ...PINK   },  // chill-zone glow
+      { path: 'heart',                         ...ORANGE },  // heart accent
+      { path: 'Cylinder.002',                  ...ORANGE },  // dance area accent
+      { path: 'Cylinder.003',                  ...PINK   },
+      { path: 'Cylinder.004',                  ...PINK   },
+      { path: 'Cylinder.005',                  ...BLUE   },
+      { path: 'Cylinder.006',                  ...PINK   },
+      { path: 'Cylinder.007',                  ...BLUE   },
+      { path: 'Cylinder.011',                  ...PURPLE },  // pillar cylinder
+
+      // ── Speakers / AV ────────────────────────────────────────────────────────
+      { path: 'Speakers.001',                  ...PINK   },  // main subwoofers
+      { path: 'SpeakerBase.001',               ...PINK   },  // speaker bases
+      { path: 'Spotlights.001',                ...PINK   },  // DJ floor spotlights
+      { path: 'screen.003',                    ...PINK   },  // screen surrounds
+      { path: 'screen.004',                    ...PINK   },
+      { path: 'screen.005',                    ...PINK   },
+
+      // ── Mezzanine ────────────────────────────────────────────────────────────
+      { path: 'MezzTubeFloorCeiling',          ...ORANGE },  // mezzanine tube strip
+      { path: 'MezzTubeRail',                  ...ORANGE },  // mezzanine railing
+
+      // ── VIP area ─────────────────────────────────────────────────────────────
+      { path: 'Cube.001',                      ...ORANGE },  // VIP accent
+      { path: 'PendantLight.001',              ...ORANGE },  // VIP pendant lamp
+      { path: 'SideTable.001',                 ...BLUE   },  // VIP side table
+      { path: 'Lamp.001',                      ...BLUE   },  // VIP lamp
+
+      // ── Seating ──────────────────────────────────────────────────────────────
+      { path: 'sofa-113.002',                  ...BLUE   },  // main sofa glow
+      { path: 'sofa.002',                      ...BLUE   },  // secondary sofa
+
+      // ── Hanging lights ───────────────────────────────────────────────────────
+      { path: 'HangingLightbulb.004',          ...PINK   },
+      { path: 'HangingLightbulb.006',          ...PURPLE },
+      { path: 'HangingLightbulb.007',          ...BLUE   },
+      { path: 'HangingLightbulb.008',          ...PINK   },
+      { path: 'HangingLightbulb.009',          ...PURPLE },
+
+      // ── Bar ──────────────────────────────────────────────────────────────────
+      { path: 'Bar.001',                       ...BLUE   },  // bar counter
+      { path: 'stool-046.001',                 ...BLUE   },  // bar stool
+      { path: 'cap.002',                       ...PINK   },  // bottle cap
+      { path: 'beaker-glass-001.006',          ...PINK   },  // bar glassware
+    ],
+  },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Emission level config ─────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
-// Full material override — albedo and emissive are set to the same colour so
-// the entity glows with a pure-colour look (no albedo lighting artefacts).
-// Tune intensity and colour per state to match the club's visual design.
+// null = GltfNodeModifiers.deleteFrom() → authored GLB values fully restored.
+// Used for both 'bright' (nearly clean) and 'vivid' (party mode) so the club
+// looks exactly as designed at its best — no blowout.
 
 type EmissionState = 'grungy' | 'dim' | 'mid' | 'bright' | 'vivid'
-type EmissionLevel = {
-  intensity: number       // emissiveIntensity — controls glow strength
-  r: number; g: number; b: number  // emissive (and albedo) colour 0–1
-}
+type EmissionLevel = { intensity: number } | null
 
 const EMISSION_LEVELS: Record<EmissionState, EmissionLevel> = {
-  //              intensity   r      g      b
-  grungy: {  intensity: 0.05, r: 0.40, g: 0.10, b: 0.15 },  // barely lit, reddish-dim
-  dim:    {  intensity: 0.25, r: 0.55, g: 0.15, b: 0.40 },  // dim purple/magenta
-  mid:    {  intensity: 0.55, r: 0.70, g: 0.30, b: 0.70 },  // medium purple
-  bright: {  intensity: 0.90, r: 0.85, g: 0.50, b: 1.00 },  // bright purple/pink
-  vivid:  {  intensity: 1.40, r: 1.00, g: 0.70, b: 1.00 },  // celebration — full vivid
+  grungy: { intensity: 0.00 },  // no glow — colour visible via scene lighting only
+  dim:    { intensity: 0.15 },  // glow emerging — still dirty
+  mid:    { intensity: 0.50 },  // club coming alive
+  bright: null,                 // authored values restored — nearly spotless
+  vivid:  null,                 // authored values restored — party mode, no blowout
 }
 
 // How often to sample GameState and check for a state transition (seconds).
-// Keeps the system cheap — emission changes are infrequent by nature.
 const CHECK_INTERVAL_S = 0.5
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,16 +146,25 @@ function getEmissionState(pct: number, phase: string): EmissionState {
   return 'bright'
 }
 
-function applyToEntity(entity: Entity, paths: string[], level: EmissionLevel): void {
+function applyToEntity(entity: Entity, paths: PathEntry[], level: EmissionLevel): void {
+  if (level === null) {
+    // Restore authored GLB material completely.
+    GltfNodeModifiers.deleteFrom(entity)
+    return
+  }
   GltfNodeModifiers.createOrReplace(entity, {
-    modifiers: paths.map(path => ({
+    modifiers: paths.map(({ path, r, g, b }) => ({
       path,
       material: {
         material: {
           $case: 'pbr' as const,
           pbr: {
-            albedoColor:       { r: level.r, g: level.g, b: level.b, a: 1 },
-            emissiveColor:     { r: level.r, g: level.g, b: level.b },
+            // albedoColor = authored colour (clamped to [0,1] — some emissives have
+            // KHR_emissive_strength > 1 which would be invalid for albedo).
+            // This makes the material visible via scene lighting even at intensity 0,
+            // so colour is always present and glow builds on top as the club gets cleaner.
+            albedoColor:       { r: Math.min(1, r), g: Math.min(1, g), b: Math.min(1, b), a: 1 },
+            emissiveColor:     { r, g, b },
             emissiveIntensity: level.intensity,
           },
         },
@@ -95,17 +178,16 @@ function applyToEntity(entity: Entity, paths: string[], level: EmissionLevel): v
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function initEmissionSystem(): void {
+  console.log('[Emission] initEmissionSystem called')
   if (EMISSION_TARGETS.length === 0) {
     console.log('[Emission] No targets configured — add entries to EMISSION_TARGETS to enable')
     return
   }
 
-  // Discovered entities: name → { entity, paths }
-  type DiscoveredEntry = { entity: Entity; paths: string[] }
+  type DiscoveredEntry = { entity: Entity; paths: PathEntry[] }
   const discovered = new Map<string, DiscoveredEntry>()
   const needsDiscovery = new Set(EMISSION_TARGETS.map(t => t.name))
 
-  // One-shot setup: scan Name components each frame until all targets are found.
   const discoverSystem = () => {
     for (const [entity] of engine.getEntitiesWith(Name)) {
       const entityName = Name.get(entity).value
@@ -119,9 +201,9 @@ export function initEmissionSystem(): void {
   }
   engine.addSystem(discoverSystem)
 
-  // State watcher: throttled check, only writes GltfNodeModifiers on state transition.
   let lastState: EmissionState | null = null
-  let timer = 0
+  let lastRoundNumber = -1
+  let timer = CHECK_INTERVAL_S
 
   engine.addSystem((dt: number) => {
     timer += dt
@@ -130,21 +212,32 @@ export function initEmissionSystem(): void {
 
     if (discovered.size === 0) return
 
-    // Read GameState (synced from server — safe to read on client)
-    let pct   = 0
-    let phase = 'playing'
+    let pct         = 0
+    let phase       = 'playing'
+    let roundNumber = 0
     for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      pct   = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
-      phase = gs.phase
+      pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
+      phase       = gs.phase
+      roundNumber = gs.roundNumber
       break
     }
 
+    // Round transition — force re-apply in case the renderer cleared the component.
+    if (roundNumber !== lastRoundNumber) {
+      if (lastRoundNumber !== -1) {
+        console.log(`[Emission] Round ${lastRoundNumber} → ${roundNumber}, forcing re-apply`)
+      }
+      lastRoundNumber = roundNumber
+      lastState = null
+    }
+
     const state = getEmissionState(pct, phase)
-    if (state === lastState) return   // nothing changed — skip
+    if (state === lastState) return
     lastState = state
 
     const level = EMISSION_LEVELS[state]
-    console.log(`[Emission] → "${state}"  pct=${Math.round(pct * 100)}%  phase=${phase}`)
+    const intensityStr = level === null ? 'restore authored' : `intensity=${level.intensity}`
+    console.log(`[Emission] → "${state}"  ${intensityStr}  pct=${Math.round(pct * 100)}%`)
 
     for (const { entity, paths } of discovered.values()) {
       applyToEntity(entity, paths, level)

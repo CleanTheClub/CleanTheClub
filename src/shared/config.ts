@@ -11,6 +11,7 @@ export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 90_000
 export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
 export const HOLD_DURATION_MS   = DEBUG ? 500    : 1_500   // hold-to-clean duration
 export const PICKUP_EMOTE_MS    = 1_500                    // match PickUp_Anim_emote.glb clip length
+export const PICKUP_TOUCH_MS   = 800                       // ms from click → hand touches item (tune to match anim)
 
 // Restoration meter thresholds
 export const TRANSFORM_DIM    = 0.3

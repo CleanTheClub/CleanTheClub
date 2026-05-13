@@ -1,7 +1,7 @@
 // Quick-click-to-clean system for the Rubbish group.
 // Children of the "Rubbish" entity disappear on click and stay gone until round reset.
 
-import { engine, Entity, Transform, GltfContainer, ColliderLayer, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, GltfContainer, ColliderLayer, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { ClutterSync } from '../shared/schemas'
 import { discoverRubbish, RUBBISH_ID_PREFIX } from '../shared/glassDiscovery'
 import { room } from '../shared/messages'
@@ -9,9 +9,11 @@ import { showCleanedToast } from '../ui'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
+import { PICKUP_TOUCH_MS } from '../shared/config'
 
-const pendingCleans = new Set<string>()
-const lastState     = new Map<string, boolean>()
+const pendingCleans     = new Set<string>()
+const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
+const lastState         = new Map<string, boolean>()
 
 type GltfRecord = {
   containerEntity: Entity
@@ -58,13 +60,23 @@ function enableClick(itemId: string, fallbackEntity: Entity) {
       if (pendingCleans.has(itemId)) return
       pendingCleans.add(itemId)
       const pos = Transform.getOrNull(rec?.containerEntity ?? target)?.position
-      setVisible(itemId, false)
       disableClick(itemId)
       playClickSound()
-      playCleanSound()
-      if (pos) { playPickupEmote(pos); playSparkle(pos) }
+      playCleanSound()               // instant audio feedback on click
+      if (pos) playPickupEmote(pos)
       room.send('cleanItem', { itemId })
       showCleanedToast()
+
+      // Delay visual hide + sparkle to sync with the emote hand-touch moment.
+      // Guard: if cleanRejected arrives before the timer fires it clears
+      // pendingVisualHide — the timer then bails out without hiding the item.
+      pendingVisualHide.add(itemId)
+      timers.setTimeout(() => {
+        if (!pendingVisualHide.has(itemId)) return   // rejected — leave item visible
+        pendingVisualHide.delete(itemId)
+        setVisible(itemId, false)
+        if (pos) playSparkle(pos)
+      }, PICKUP_TOUCH_MS)
     }
   )
 }
@@ -122,10 +134,16 @@ export function initRubbishSystem() {
       const ref = items.find(i => i.itemId === state.itemId)
       if (!ref) continue
 
-      setVisible(state.itemId, !state.isCleaned)
       if (state.isCleaned) {
         disableClick(state.itemId)
+        // If a pickup timer is pending, let it hide the item at the touch moment
+        if (!pendingVisualHide.has(state.itemId)) {
+          setVisible(state.itemId, false)
+        }
       } else {
+        // Round reset — cancel any pending visual hide and restore immediately
+        pendingVisualHide.delete(state.itemId)
+        setVisible(state.itemId, true)
         enableClick(state.itemId, ref.entity)
       }
     }
@@ -134,7 +152,8 @@ export function initRubbishSystem() {
   room.onMessage('cleanRejected', (data) => {
     if (!data.itemId.startsWith(RUBBISH_ID_PREFIX)) return
     pendingCleans.delete(data.itemId)
-    lastState.delete(data.itemId)
-    // silently drop — server rejection needs no feedback
+    pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
+    setVisible(data.itemId, true)           // restores item if timer already fired
+    lastState.delete(data.itemId)           // force watcher to re-apply next ClutterSync tick
   })
 }

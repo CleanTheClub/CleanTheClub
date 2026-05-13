@@ -8,7 +8,7 @@ import {
   ParticleSystem,
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3 } from '@dcl/sdk/math'
-import { ClutterSync } from '../shared/schemas'
+import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS } from '../shared/config'
 import { discoverGlasses, discoverBottles, discoverRubbish } from '../shared/glassDiscovery'
 
@@ -124,7 +124,10 @@ export function initStinkSystem() {
 
   console.log(`[STINK] Allocated ${allocated} emitters (pool cap: ${MAX_STINK_EMITTERS})`)
 
-  // Per-frame watcher — mirrors isCleaned state → emitter on/off
+  // Per-frame watcher — mirrors isCleaned state → emitter on/off.
+  // Skips updates during party mode (phase = 'open') — stink is frozen then.
+  let partyMode = false
+
   engine.addSystem(() => {
     for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
       const state = ClutterSync.get(syncEnt)
@@ -132,6 +135,8 @@ export function initStinkSystem() {
 
       if (lastCleaned.get(itemId) === isCleaned) continue
       lastCleaned.set(itemId, isCleaned)
+
+      if (partyMode) continue   // don't toggle emitters during open phase
 
       const emitter = emitterFor.get(itemId)
       if (!emitter) continue
@@ -141,6 +146,30 @@ export function initStinkSystem() {
       } else {
         resumeEmitter(emitter)
       }
+    }
+  })
+
+  // Phase watcher — freeze all stink during party mode, resume on new round.
+  let lastPhase = ''
+  engine.addSystem(() => {
+    for (const [, gs] of engine.getEntitiesWith(GameState)) {
+      if (gs.phase === lastPhase) return
+      const prev = lastPhase
+      lastPhase  = gs.phase
+      partyMode  = gs.phase === 'open'
+
+      if (gs.phase === 'open') {
+        // Party mode — pause every emitter regardless of clean state
+        for (const emitter of emitterFor.values()) pauseEmitter(emitter)
+        console.log('[STINK] Party mode — all emitters paused')
+      } else if (prev === 'open') {
+        // New round started — resume emitters for any item still uncleaned
+        for (const [itemId, emitter] of emitterFor) {
+          if (!(lastCleaned.get(itemId) ?? false)) resumeEmitter(emitter)
+        }
+        console.log('[STINK] Round started — emitters resumed')
+      }
+      return
     }
   })
 }

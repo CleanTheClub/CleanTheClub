@@ -34,8 +34,14 @@ let lastNotificationMs = 0
 let hoverEntity:        Entity
 let clickEntity:        Entity
 let stickyEntity:       Entity
-let cleanEntity:        Entity
 let notificationEntity: Entity
+
+// Pool of 3 clean-sound entities, round-robined on each play call.
+// A single entity can't retrigger while playing=true — the false→true toggle
+// no-ops if the previous sound hasn't finished. Cycling entities avoids this.
+const CLEAN_POOL_SIZE = 3
+const cleanPool: Entity[] = []
+let   cleanIdx  = 0
 
 // Moves the sound entity to the player's current position then retriggers playback.
 // The false→true toggle via setTimeout is the standard DCL retrigger pattern.
@@ -59,19 +65,27 @@ export function initSoundManager() {
   Transform.create(stickyEntity, { position: INIT_POS })
   AudioSource.create(stickyEntity, { audioClipUrl: SND_STICKY, playing: false, loop: false, volume: VOL_STICKY })
 
-  cleanEntity = engine.addEntity()
-  Transform.create(cleanEntity,  { position: INIT_POS })
-  AudioSource.create(cleanEntity,  { audioClipUrl: SND_CLEAN,  playing: false, loop: false, volume: VOL_CLEAN  })
+  for (let i = 0; i < CLEAN_POOL_SIZE; i++) {
+    const e = engine.addEntity()
+    Transform.create(e, { position: INIT_POS })
+    AudioSource.create(e, { audioClipUrl: SND_CLEAN, playing: false, loop: false, volume: VOL_CLEAN })
+    cleanPool.push(e)
+  }
 
   notificationEntity = engine.addEntity()
   Transform.create(notificationEntity, { position: INIT_POS })
   AudioSource.create(notificationEntity, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.7, pitch: 1.0 })
 }
 
-export function playHoverSound()  { playAt(hoverEntity)  }
-export function playClickSound()  { playAt(clickEntity)  }
+export function playHoverSound()  { playAt(hoverEntity) }
+export function playClickSound()  { playAt(clickEntity) }
 export function playStickySound() { playAt(stickyEntity) }
-export function playCleanSound()  { playAt(cleanEntity)  }
+export function playCleanSound()  {
+  // Grab the next entity in the pool — guaranteed to not be mid-play from a
+  // recent call, so the false→true retrigger always fires correctly.
+  playAt(cleanPool[cleanIdx % CLEAN_POOL_SIZE])
+  cleanIdx++
+}
 
 export function playToastSound(kind: ToastKind) {
   const now = Date.now()
