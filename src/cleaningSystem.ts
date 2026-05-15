@@ -161,6 +161,7 @@ function createHoldBar(pos: { x: number; y: number; z: number }): HoldBar {
 
 export function initCleaningSystem() {
   for (const def of CLUTTER_DEFS) {
+    if (def.sceneGlb) continue   // visuals owned by a scene-discovery system
     const type = def.type ?? 'quick'
     const cfg  = getVisualConfig(type)
     const pos  = Vector3.create(def.position.x, def.position.y, def.position.z)

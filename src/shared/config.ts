@@ -35,9 +35,13 @@ export type ClutterDef = {
   scale?: { x: number; y: number; z: number }
   fast?: boolean
   type?: InteractionType   // defaults to 'quick'
+  // When true, no primitive entity is created and no InteractionManager click is
+  // registered — a scene-side system (e.g. barStoolSystem) owns the visuals and
+  // click handling, but the server still tracks the itemId via ClutterSync.
+  sceneGlb?: boolean
 }
 
 export const CLUTTER_DEFS: ClutterDef[] = [
-  // Reset item — placeholder primitive until a GLB is ready
-  { id: 'test_reset', position: { x: 20, y: 0.5, z: 26 }, type: 'reset' },
+  // Reset item — visuals & click owned by barStoolSystem; server tracks via this id
+  { id: 'test_reset', position: { x: 20, y: 0.5, z: 26 }, type: 'reset', sceneGlb: true },
 ]

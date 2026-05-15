@@ -155,6 +155,7 @@ export function initInteractionManager(
 
   // Populate item refs immediately — enable/disable can be called as soon as sync fires
   for (const def of CLUTTER_DEFS) {
+    if (def.sceneGlb) continue   // click + visuals owned by a scene-discovery system
     itemRefs.set(def.id, { entity: dirtyEntities.get(def.id)!, type: def.type ?? 'quick' })
   }
   // Scene-discovered hold entities (e.g. StickyPatches from GLB) — type is always 'hold'
@@ -187,7 +188,10 @@ export function initInteractionManager(
   engine.addSystem(() => {
     if (!isStateSyncronized() || registered) return
     registered = true
-    for (const def of CLUTTER_DEFS) enableClick(def.id)
+    for (const def of CLUTTER_DEFS) {
+      if (def.sceneGlb) continue
+      enableClick(def.id)
+    }
     if (sceneHoldEntities) {
       for (const [itemId] of sceneHoldEntities) enableClick(itemId)
     }

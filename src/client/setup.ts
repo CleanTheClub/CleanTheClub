@@ -7,10 +7,12 @@ import { initGlassSystem } from './glassSystem'
 import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
+import { initBarStoolSystem } from './barStoolSystem'
 import { initStinkSystem } from './stinkSystem'
 import { initSparkleSystem } from './sparkleSystem'
 import { initConfettiSystem } from './confettiSystem'
 import { initEmissionSystem } from './emissionSystem'
+import { initGrungeSystem } from './grungeSystem'
 import { initNarrativeSystem } from './narrativeSystem'
 import { initMusicManager } from './musicManager'
 
@@ -29,9 +31,11 @@ export function initClient() {
     toastKind:  'bottles',
   })
   initRubbishSystem()
+  initBarStoolSystem()
   initSparkleSystem()
   initStinkSystem()
   initConfettiSystem()
   initEmissionSystem()
+  initGrungeSystem()
   initNarrativeSystem()
 }
