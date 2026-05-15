@@ -282,14 +282,9 @@
         "522": {
           "json": {
             "position": {
-              "x": 14.135747909545898,
-              "y": 3.462817668914795,
-              "z": 6.896235466003418
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 9.384456634521484,
+              "y": 0.7985225915908813,
+              "z": 8.75
             },
             "rotation": {
               "x": 0,
@@ -297,15 +292,20 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 647
           }
         },
         "523": {
           "json": {
             "position": {
-              "x": 5.03664493560791,
-              "y": 8.321290969848633,
-              "z": 25.27712059020996
+              "x": 9.731976509094238,
+              "y": 0.7985225915908813,
+              "z": 7.883072853088379
             },
             "scale": {
               "x": 1,
@@ -318,20 +318,15 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "524": {
           "json": {
             "position": {
-              "x": 6.1080169677734375,
-              "y": 8.321290969848633,
-              "z": 25.855676651000977
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 9.47237491607666,
+              "y": 0.7985225915908813,
+              "z": 7.668501377105713
             },
             "rotation": {
               "x": 0,
@@ -339,15 +334,20 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 647
           }
         },
         "525": {
           "json": {
             "position": {
-              "x": 6.1080169677734375,
-              "y": 8.321290969848633,
-              "z": 26.99387550354004
+              "x": 10.364838600158691,
+              "y": 0.0971810519695282,
+              "z": 28.377532958984375
             },
             "scale": {
               "x": 1,
@@ -360,15 +360,15 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "526": {
           "json": {
             "position": {
-              "x": 6.882565975189209,
-              "y": 8.321290969848633,
-              "z": 28.065753936767578
+              "x": 10.084759712219238,
+              "y": 0.1605910062789917,
+              "z": 28.377532958984375
             },
             "scale": {
               "x": 1,
@@ -376,41 +376,41 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": -0.7010573744773865,
+              "y": 0.09229595214128494,
+              "z": 0.09229595214128494,
+              "w": 0.7010573744773865
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "527": {
           "json": {
             "position": {
-              "x": 3.8649590015411377,
-              "y": 8.321290969848633,
-              "z": 25.217252731323242
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 10,
+              "y": 0.10000000149011612,
+              "z": 27.6200008392334
             },
             "rotation": {
               "x": 0,
-              "y": 0,
+              "y": 0.050599999725818634,
               "z": 0,
-              "w": 1
+              "w": 0.9987000226974487
             },
-            "parent": 643
+            "scale": {
+              "x": 0.11999999731779099,
+              "y": 1,
+              "z": 0.11999999731779099
+            },
+            "parent": 656
           }
         },
         "528": {
           "json": {
             "position": {
-              "x": 4.290892601013184,
-              "y": 8.321290969848633,
-              "z": 24.99504852294922
+              "x": 4.281090259552002,
+              "y": 0.1605910062789917,
+              "z": 28.377532958984375
             },
             "scale": {
               "x": 1,
@@ -418,12 +418,12 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": -0.7010573744773865,
+              "y": 0.09229595214128494,
+              "z": 0.09229595214128494,
+              "w": 0.7010573744773865
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "529": {
@@ -513,9 +513,9 @@
         "533": {
           "json": {
             "position": {
-              "x": 14.187385559082031,
-              "y": 8.067804336547852,
-              "z": 25.070234298706055
+              "x": 3.557203531265259,
+              "y": -0.014194638468325138,
+              "z": 27.05034065246582
             },
             "scale": {
               "x": 1,
@@ -528,15 +528,15 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "parent": 648
           }
         },
         "534": {
           "json": {
             "position": {
-              "x": 14.764941215515137,
-              "y": 8.067804336547852,
-              "z": 25.33003044128418
+              "x": 6.440000057220459,
+              "y": 0.1599999964237213,
+              "z": 20.329999923706055
             },
             "scale": {
               "x": 1,
@@ -544,41 +544,41 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": -0.20569999516010284,
+              "y": -0.6765000224113464,
+              "z": -0.6765000224113464,
+              "w": 0.20569999516010284
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "535": {
           "json": {
             "position": {
-              "x": 15.228238105773926,
-              "y": 8.067804336547852,
-              "z": 24.894376754760742
+              "x": 20.436635971069336,
+              "y": 0.1599999964237213,
+              "z": 24.896913528442383
+            },
+            "rotation": {
+              "x": -0.6975616812705994,
+              "y": 0.11563923209905624,
+              "z": 0.11563923209905624,
+              "w": 0.6975616812705994
             },
             "scale": {
               "x": 1,
               "y": 1,
               "z": 1
             },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 643
+            "parent": 647
           }
         },
         "536": {
           "json": {
             "position": {
-              "x": 17.544599533081055,
-              "y": 8.067804336547852,
-              "z": 24.894376754760742
+              "x": 21.517160415649414,
+              "y": 0.1599999964237213,
+              "z": 24.294300079345703
             },
             "scale": {
               "x": 1,
@@ -586,20 +586,20 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": -0.24863432347774506,
+              "y": 0.661925733089447,
+              "z": 0.661925733089447,
+              "w": 0.24863432347774506
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "537": {
           "json": {
             "position": {
-              "x": 22.351903915405273,
-              "y": 8.067804336547852,
-              "z": 25.34308624267578
+              "x": 19.765466690063477,
+              "y": 0.1599999964237213,
+              "z": 25.417095184326172
             },
             "scale": {
               "x": 1,
@@ -607,20 +607,20 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": 0.5202614068984985,
+              "y": 0.4788452684879303,
+              "z": 0.4788452684879303,
+              "w": -0.5202614068984985
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "538": {
           "json": {
             "position": {
-              "x": 22.743385314941406,
-              "y": 8.067804336547852,
-              "z": 24.999122619628906
+              "x": 9.218695640563965,
+              "y": 7.409999847412109,
+              "z": 26.32468605041504
             },
             "scale": {
               "x": 1,
@@ -628,20 +628,20 @@
               "z": 1
             },
             "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
+              "x": 0.6999524831771851,
+              "y": -0.10015591233968735,
+              "z": -0.10015591233968735,
+              "w": -0.6999524831771851
             },
-            "parent": 643
+            "parent": 647
           }
         },
         "539": {
           "json": {
             "position": {
-              "x": 21.540435791015625,
-              "y": 8.067804336547852,
-              "z": 25.270381927490234
+              "x": 25.97029685974121,
+              "y": -0.014194638468325138,
+              "z": 18.119003295898438
             },
             "scale": {
               "x": 1,
@@ -654,7 +654,7 @@
               "z": 0,
               "w": 1
             },
-            "parent": 643
+            "parent": 648
           }
         },
         "540": {
@@ -1182,27 +1182,6 @@
             "parent": 0
           }
         },
-        "565": {
-          "json": {
-            "position": {
-              "x": 18.5,
-              "y": 0.36021557450294495,
-              "z": 25.58409881591797
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": -0.707099974155426,
-              "z": 0,
-              "w": 0.707099974155426
-            },
-            "parent": 0
-          }
-        },
         "566": {
           "json": {
             "position": {
@@ -1220,153 +1199,6 @@
               "y": 1,
               "z": 0,
               "w": 0
-            },
-            "parent": 0
-          }
-        },
-        "567": {
-          "json": {
-            "position": {
-              "x": 18.5,
-              "y": 0.36021557450294495,
-              "z": 26.554340362548828
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
-        "568": {
-          "json": {
-            "position": {
-              "x": 18.5,
-              "y": 0.36021557450294495,
-              "z": 28.50782012939453
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
-        "569": {
-          "json": {
-            "position": {
-              "x": 18.5,
-              "y": 0.36021557450294495,
-              "z": 27.54207992553711
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
-        "570": {
-          "json": {
-            "position": {
-              "x": 18.75,
-              "y": 1,
-              "z": 9.069999694824219
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
-          }
-        },
-        "571": {
-          "json": {
-            "position": {
-              "x": 15,
-              "y": 1,
-              "z": 9.069999694824219
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
-          }
-        },
-        "572": {
-          "json": {
-            "position": {
-              "x": 17,
-              "y": 1,
-              "z": 9.069999694824219
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
-          }
-        },
-        "573": {
-          "json": {
-            "position": {
-              "x": 13.25,
-              "y": 1,
-              "z": 9.069999694824219
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
             },
             "parent": 0
           }
@@ -2592,20 +2424,20 @@
         "632": {
           "json": {
             "position": {
-              "x": 14.597164154052734,
-              "y": 7.328144550323486,
-              "z": 26.474674224853516
+              "x": 14.600000381469727,
+              "y": 7.329999923706055,
+              "z": 26.469999313354492
             },
             "scale": {
               "x": 1,
-              "y": 1.0000001192092896,
-              "z": 1.0000001192092896
+              "y": 1,
+              "z": 1
             },
             "rotation": {
-              "x": 0.6830127239227295,
-              "y": -0.1830127239227295,
-              "z": 0.1830127090215683,
-              "w": 0.6830126643180847
+              "x": -0.6830000281333923,
+              "y": 0.18299999833106995,
+              "z": -0.18299999833106995,
+              "w": -0.6830000281333923
             },
             "parent": 643
           }
@@ -2781,43 +2613,43 @@
         "641": {
           "json": {
             "position": {
-              "x": 26.030607223510742,
-              "y": 8.363266944885254,
-              "z": 11.244471549987793
+              "x": 8.971590042114258,
+              "y": 7.259676933288574,
+              "z": 27.39054298400879
             },
             "scale": {
               "x": 1,
-              "y": 1.0000001192092896,
-              "z": 1.0000001192092896
+              "y": 1,
+              "z": 1
             },
             "rotation": {
-              "x": -0.6532815098762512,
-              "y": -0.27059808373451233,
-              "z": -0.27059805393218994,
-              "w": 0.6532814502716064
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
             },
-            "parent": 643
+            "parent": 648
           }
         },
         "642": {
           "json": {
             "position": {
-              "x": 27.605661392211914,
-              "y": 8.643234252929688,
-              "z": 10.635462760925293
+              "x": 25.7998104095459,
+              "y": 7.259676933288574,
+              "z": 14.140542984008789
             },
             "scale": {
               "x": 1,
-              "y": 1.0000001192092896,
-              "z": 1.0000001192092896
+              "y": 1,
+              "z": 1
             },
             "rotation": {
-              "x": -0.6532815098762512,
-              "y": -0.27059808373451233,
-              "z": -0.27059805393218994,
-              "w": 0.6532814502716064
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
             },
-            "parent": 643
+            "parent": 648
           }
         },
         "643": {
@@ -2844,22 +2676,22 @@
         "644": {
           "json": {
             "position": {
-              "x": 26.196640014648438,
-              "y": 0,
-              "z": 17.844873428344727
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 4.429999828338623,
+              "y": 7.289999961853027,
+              "z": 15.890000343322754
             },
             "rotation": {
               "x": 0,
-              "y": -0.6087614297866821,
+              "y": 0.4478999972343445,
               "z": 0,
-              "w": 0.7933533191680908
+              "w": -0.89410001039505
             },
-            "parent": 648
+            "scale": {
+              "x": 0.3199999928474426,
+              "y": 1,
+              "z": 0.3199999928474426
+            },
+            "parent": 656
           }
         },
         "645": {
@@ -2886,20 +2718,20 @@
         "646": {
           "json": {
             "position": {
-              "x": 7.5,
-              "y": 0,
-              "z": 13.5
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 5.8790435791015625,
+              "y": 0.06974522024393082,
+              "z": 11.746658325195312
             },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
             },
             "parent": 647
           }
@@ -2946,12 +2778,159 @@
             "parent": 0
           }
         },
+        "649": {
+          "json": {
+            "position": {
+              "x": 6.829999923706055,
+              "y": 0.09000000357627869,
+              "z": 20.799999237060547
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 0.20999999344348907,
+              "y": 1,
+              "z": 0.20999999344348907
+            },
+            "parent": 656
+          }
+        },
         "650": {
           "json": {
             "position": {
-              "x": 8.141861915588379,
+              "x": 3.6700000762939453,
+              "y": 7.349999904632568,
+              "z": 16.59000015258789
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": -0.6556000113487244,
+              "y": -0.26489999890327454,
+              "z": -0.26489999890327454,
+              "w": 0.6556000113487244
+            },
+            "parent": 647
+          }
+        },
+        "651": {
+          "json": {
+            "position": {
+              "x": 25.059999465942383,
               "y": 0,
-              "z": 14.009294509887695
+              "z": 17.90999984741211
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0.9855999946594238,
+              "z": 0,
+              "w": 0.1687999963760376
+            },
+            "scale": {
+              "x": 0.4099999964237213,
+              "y": 1,
+              "z": 0.4099999964237213
+            },
+            "parent": 656
+          }
+        },
+        "652": {
+          "json": {
+            "position": {
+              "x": 20.450000762939453,
+              "y": 0.10000000149011612,
+              "z": 25.479999542236328
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0.9855999946594238,
+              "z": 0,
+              "w": 0.1687999963760376
+            },
+            "scale": {
+              "x": 0.4399999976158142,
+              "y": 1,
+              "z": 0.4300000071525574
+            },
+            "parent": 656
+          }
+        },
+        "653": {
+          "json": {
+            "position": {
+              "x": 4.150000095367432,
+              "y": 0.25,
+              "z": 27.6200008392334
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0.050599999725818634,
+              "z": 0,
+              "w": 0.9987000226974487
+            },
+            "scale": {
+              "x": 0.4399999976158142,
+              "y": 1,
+              "z": 0.4300000071525574
+            },
+            "parent": 656
+          }
+        },
+        "654": {
+          "json": {
+            "position": {
+              "x": 24.389999389648438,
+              "y": 7.349999904632568,
+              "z": 13.920000076293945
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0.9855999946594238,
+              "z": 0,
+              "w": 0.1687999963760376
+            },
+            "scale": {
+              "x": 0.4399999976158142,
+              "y": 1,
+              "z": 0.4300000071525574
+            },
+            "parent": 656
+          }
+        },
+        "655": {
+          "json": {
+            "position": {
+              "x": 8.199999809265137,
+              "y": 7.349999904632568,
+              "z": 25.09000015258789
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0.8406999707221985,
+              "z": 0,
+              "w": 0.5414999723434448
+            },
+            "scale": {
+              "x": 0.4399999976158142,
+              "y": 1,
+              "z": 0.4300000071525574
+            },
+            "parent": 656
+          }
+        },
+        "656": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
             },
             "scale": {
               "x": 1,
@@ -2965,6 +2944,27 @@
               "w": 1
             },
             "parent": 0
+          }
+        },
+        "657": {
+          "json": {
+            "position": {
+              "x": 3.814934015274048,
+              "y": 7.286940574645996,
+              "z": 16.826030731201172
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": -0.4925326406955719,
+              "z": 0,
+              "w": 0.8702939748764038
+            },
+            "parent": 647
           }
         }
       }
@@ -3235,159 +3235,6 @@
       }
     },
     {
-      "name": "core::Animator",
-      "jsonSchema": {
-        "type": "object",
-        "properties": {},
-        "serializationType": "protocol-buffer",
-        "protocolBuffer": "PBAnimator"
-      },
-      "data": {
-        "565": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "567": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "568": {
-          "json": {
-            "states": []
-          }
-        },
-        "569": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "570": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "571": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "572": {
-          "json": {
-            "states": [
-              {
-                "clip": "Action",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              },
-              {
-                "clip": "Main",
-                "playing": false,
-                "weight": 1,
-                "speed": 1,
-                "loop": false,
-                "shouldReset": false
-              }
-            ]
-          }
-        },
-        "573": {
-          "json": {
-            "states": []
-          }
-        }
-      }
-    },
-    {
       "name": "core::GltfContainer",
       "jsonSchema": {
         "type": "object",
@@ -3400,7 +3247,7 @@
           "json": {
             "src": "assets/scene/Models/mainstructure/mainstructure.glb",
             "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "invisibleMeshesCollisionMask": 2
           }
         },
         "517": {
@@ -3413,85 +3260,85 @@
         "518": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "519": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "520": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "521": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "522": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "523": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "524": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "525": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "526": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "527": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "528": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "529": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "530": {
@@ -3504,64 +3351,64 @@
         "531": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "532": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "533": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "534": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "535": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "536": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "537": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "538": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "539": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "540": {
@@ -3686,69 +3533,13 @@
         "562": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "565": {
-          "json": {
-            "src": "assets/asset-packs/discord_button/discord.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "566": {
           "json": {
             "src": "assets/asset-packs/sit_spot/sitting_pose_collider.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "567": {
-          "json": {
-            "src": "assets/asset-packs/instagram_button/instagram.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "568": {
-          "json": {
-            "src": "assets/asset-packs/x_link_button/xsocialmedia_coin.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "569": {
-          "json": {
-            "src": "assets/asset-packs/youtube_button/youtube.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "570": {
-          "json": {
-            "src": "assets/asset-packs/discord_button/discord.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "571": {
-          "json": {
-            "src": "assets/asset-packs/instagram_button/instagram.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "572": {
-          "json": {
-            "src": "assets/asset-packs/youtube_button/youtube.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "573": {
-          "json": {
-            "src": "assets/asset-packs/x_link_button/xsocialmedia_coin.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
           }
@@ -3875,106 +3666,155 @@
         "632": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "633": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "634": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "635": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "636": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "637": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "638": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "639": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "640": {
           "json": {
             "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "641": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "642": {
           "json": {
-            "src": "assets/asset-packs/wine_glass/WineGlass_01/WineGlass_01.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "644": {
           "json": {
-            "src": "assets/asset-packs/trash_group/Trash_Group.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "645": {
           "json": {
             "src": "assets/asset-packs/rubbish_bag/Rubbish_Bag.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "646": {
           "json": {
             "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "649": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         },
         "650": {
           "json": {
             "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "651": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "652": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "653": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "654": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "655": {
+          "json": {
+            "src": "assets/scene/Models/StickyPatch/StickyPatch.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "657": {
+          "json": {
+            "src": "assets/asset-packs/wine/Bottle_02/Bottle_02.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 0
           }
         }
       }
@@ -9102,42 +8942,42 @@
         },
         "522": {
           "json": {
-            "value": "Wine Glass_5"
+            "value": "Bottle_2"
           }
         },
         "523": {
           "json": {
-            "value": "Wine Glass_6"
+            "value": "Bottle_3"
           }
         },
         "524": {
           "json": {
-            "value": "Wine Glass_7"
+            "value": "Bottle_4"
           }
         },
         "525": {
           "json": {
-            "value": "Wine Glass_8"
+            "value": "Bottle_5"
           }
         },
         "526": {
           "json": {
-            "value": "Wine Glass_9"
+            "value": "Bottle_6"
           }
         },
         "527": {
           "json": {
-            "value": "Wine Glass_10"
+            "value": "StickyPatch_7"
           }
         },
         "528": {
           "json": {
-            "value": "Wine Glass_11"
+            "value": "Bottle_7"
           }
         },
         "529": {
           "json": {
-            "value": "Wine Glass_12"
+            "value": "Wine Glass_5"
           }
         },
         "530": {
@@ -9147,47 +8987,47 @@
         },
         "531": {
           "json": {
-            "value": "Wine Glass_13"
+            "value": "Wine Glass_6"
           }
         },
         "532": {
           "json": {
-            "value": "Wine Glass_14"
+            "value": "Wine Glass_7"
           }
         },
         "533": {
           "json": {
-            "value": "Wine Glass_15"
+            "value": "Rubbish Bag_2"
           }
         },
         "534": {
           "json": {
-            "value": "Wine Glass_16"
+            "value": "Bottle_8"
           }
         },
         "535": {
           "json": {
-            "value": "Wine Glass_17"
+            "value": "Bottle_9"
           }
         },
         "536": {
           "json": {
-            "value": "Wine Glass_18"
+            "value": "Bottle_10"
           }
         },
         "537": {
           "json": {
-            "value": "Wine Glass_19"
+            "value": "Bottle_11"
           }
         },
         "538": {
           "json": {
-            "value": "Wine Glass_20"
+            "value": "Bottle_12"
           }
         },
         "539": {
           "json": {
-            "value": "Wine Glass_21"
+            "value": "Rubbish Bag_3"
           }
         },
         "540": {
@@ -9302,7 +9142,7 @@
         },
         "562": {
           "json": {
-            "value": "Wine Glass_22"
+            "value": "Wine Glass_8"
           }
         },
         "563": {
@@ -9315,49 +9155,9 @@
             "value": "Text_Title"
           }
         },
-        "565": {
-          "json": {
-            "value": "Discord Button"
-          }
-        },
         "566": {
           "json": {
             "value": "Sit Spot_17"
-          }
-        },
-        "567": {
-          "json": {
-            "value": "Instagram Button"
-          }
-        },
-        "568": {
-          "json": {
-            "value": "X Link Button"
-          }
-        },
-        "569": {
-          "json": {
-            "value": "YouTube Button"
-          }
-        },
-        "570": {
-          "json": {
-            "value": "Discord Button_2"
-          }
-        },
-        "571": {
-          "json": {
-            "value": "Instagram Button_2"
-          }
-        },
-        "572": {
-          "json": {
-            "value": "YouTube Button_2"
-          }
-        },
-        "573": {
-          "json": {
-            "value": "X Link Button_2"
           }
         },
         "574": {
@@ -9652,57 +9452,57 @@
         },
         "632": {
           "json": {
-            "value": "Wine Glass_23"
+            "value": "Wine Glass_9"
           }
         },
         "633": {
           "json": {
-            "value": "Wine Glass_24"
+            "value": "Wine Glass_10"
           }
         },
         "634": {
           "json": {
-            "value": "Wine Glass_25"
+            "value": "Wine Glass_11"
           }
         },
         "635": {
           "json": {
-            "value": "Wine Glass_26"
+            "value": "Wine Glass_12"
           }
         },
         "636": {
           "json": {
-            "value": "Wine Glass_27"
+            "value": "Wine Glass_13"
           }
         },
         "637": {
           "json": {
-            "value": "Wine Glass_28"
+            "value": "Wine Glass_14"
           }
         },
         "638": {
           "json": {
-            "value": "Wine Glass_29"
+            "value": "Wine Glass_15"
           }
         },
         "639": {
           "json": {
-            "value": "Wine Glass_30"
+            "value": "Wine Glass_16"
           }
         },
         "640": {
           "json": {
-            "value": "Wine Glass_31"
+            "value": "Wine Glass_17"
           }
         },
         "641": {
           "json": {
-            "value": "Wine Glass_32"
+            "value": "Rubbish Bag_4"
           }
         },
         "642": {
           "json": {
-            "value": "Wine Glass_33"
+            "value": "Rubbish Bag_5"
           }
         },
         "643": {
@@ -9712,7 +9512,7 @@
         },
         "644": {
           "json": {
-            "value": "Trash Group"
+            "value": "StickyPatch_8"
           }
         },
         "645": {
@@ -9735,9 +9535,49 @@
             "value": "Rubbish"
           }
         },
+        "649": {
+          "json": {
+            "value": "StickyPatch"
+          }
+        },
         "650": {
           "json": {
-            "value": "Bottle_Test"
+            "value": "Bottle_13"
+          }
+        },
+        "651": {
+          "json": {
+            "value": "StickyPatch_2"
+          }
+        },
+        "652": {
+          "json": {
+            "value": "StickyPatch_3"
+          }
+        },
+        "653": {
+          "json": {
+            "value": "StickyPatch_4"
+          }
+        },
+        "654": {
+          "json": {
+            "value": "StickyPatch_5"
+          }
+        },
+        "655": {
+          "json": {
+            "value": "StickyPatch_6"
+          }
+        },
+        "656": {
+          "json": {
+            "value": "StickyPatches"
+          }
+        },
+        "657": {
+          "json": {
+            "value": "Bottle_14"
           }
         }
       }
@@ -10789,7 +10629,7 @@
         "563": {
           "json": {
             "src": "https://player.vimeo.com/external/552481870.m3u8?s=c312c8533f97e808fccc92b0510b085c8122a875",
-            "playing": true
+            "playing": false
           }
         }
       }
@@ -11022,9 +10862,9 @@
         "serializationType": "map"
       },
       "data": {
-        "0": {
+        "644": {
           "json": {
-            "gizmo": 0
+            "gizmo": 1
           }
         }
       }
@@ -11083,14 +10923,6 @@
                   561,
                   563,
                   564,
-                  565,
-                  567,
-                  568,
-                  569,
-                  570,
-                  571,
-                  572,
-                  573,
                   530,
                   556,
                   513,
@@ -11175,7 +11007,7 @@
                   643,
                   647,
                   648,
-                  650
+                  656
                 ]
               },
               {
@@ -11216,38 +11048,6 @@
               },
               {
                 "entity": 564,
-                "children": []
-              },
-              {
-                "entity": 565,
-                "children": []
-              },
-              {
-                "entity": 567,
-                "children": []
-              },
-              {
-                "entity": 568,
-                "children": []
-              },
-              {
-                "entity": 569,
-                "children": []
-              },
-              {
-                "entity": 570,
-                "children": []
-              },
-              {
-                "entity": 571,
-                "children": []
-              },
-              {
-                "entity": 572,
-                "children": []
-              },
-              {
-                "entity": 573,
                 "children": []
               },
               {
@@ -11591,34 +11391,6 @@
                 "children": []
               },
               {
-                "entity": 522,
-                "children": []
-              },
-              {
-                "entity": 523,
-                "children": []
-              },
-              {
-                "entity": 524,
-                "children": []
-              },
-              {
-                "entity": 525,
-                "children": []
-              },
-              {
-                "entity": 526,
-                "children": []
-              },
-              {
-                "entity": 527,
-                "children": []
-              },
-              {
-                "entity": 528,
-                "children": []
-              },
-              {
                 "entity": 529,
                 "children": []
               },
@@ -11628,34 +11400,6 @@
               },
               {
                 "entity": 532,
-                "children": []
-              },
-              {
-                "entity": 533,
-                "children": []
-              },
-              {
-                "entity": 534,
-                "children": []
-              },
-              {
-                "entity": 535,
-                "children": []
-              },
-              {
-                "entity": 536,
-                "children": []
-              },
-              {
-                "entity": 537,
-                "children": []
-              },
-              {
-                "entity": 538,
-                "children": []
-              },
-              {
-                "entity": 539,
                 "children": []
               },
               {
@@ -11699,14 +11443,6 @@
                 "children": []
               },
               {
-                "entity": 641,
-                "children": []
-              },
-              {
-                "entity": 642,
-                "children": []
-              },
-              {
                 "entity": 643,
                 "open": true,
                 "children": [
@@ -11714,23 +11450,9 @@
                   519,
                   520,
                   521,
-                  522,
-                  523,
-                  524,
-                  525,
-                  526,
-                  527,
-                  528,
                   529,
                   531,
                   532,
-                  533,
-                  534,
-                  535,
-                  536,
-                  537,
-                  538,
-                  539,
                   562,
                   632,
                   633,
@@ -11740,14 +11462,8 @@
                   637,
                   638,
                   639,
-                  640,
-                  641,
-                  642
+                  640
                 ]
-              },
-              {
-                "entity": 644,
-                "children": []
               },
               {
                 "entity": 645,
@@ -11761,19 +11477,145 @@
                 "entity": 647,
                 "open": true,
                 "children": [
-                  646
+                  646,
+                  522,
+                  523,
+                  524,
+                  525,
+                  526,
+                  528,
+                  534,
+                  535,
+                  536,
+                  537,
+                  538,
+                  650,
+                  657
                 ]
               },
               {
                 "entity": 648,
                 "open": true,
                 "children": [
-                  644,
-                  645
+                  645,
+                  533,
+                  539,
+                  641,
+                  642
                 ]
               },
               {
+                "entity": 649,
+                "children": []
+              },
+              {
+                "entity": 651,
+                "children": []
+              },
+              {
+                "entity": 652,
+                "children": []
+              },
+              {
+                "entity": 653,
+                "children": []
+              },
+              {
+                "entity": 654,
+                "children": []
+              },
+              {
+                "entity": 655,
+                "children": []
+              },
+              {
+                "entity": 656,
+                "open": true,
+                "children": [
+                  649,
+                  651,
+                  652,
+                  653,
+                  654,
+                  655,
+                  527,
+                  644
+                ]
+              },
+              {
+                "entity": 522,
+                "children": []
+              },
+              {
+                "entity": 523,
+                "children": []
+              },
+              {
+                "entity": 524,
+                "children": []
+              },
+              {
+                "entity": 525,
+                "children": []
+              },
+              {
+                "entity": 526,
+                "children": []
+              },
+              {
+                "entity": 527,
+                "children": []
+              },
+              {
+                "entity": 528,
+                "children": []
+              },
+              {
+                "entity": 533,
+                "children": []
+              },
+              {
+                "entity": 534,
+                "children": []
+              },
+              {
+                "entity": 535,
+                "children": []
+              },
+              {
+                "entity": 536,
+                "children": []
+              },
+              {
+                "entity": 537,
+                "children": []
+              },
+              {
+                "entity": 538,
+                "children": []
+              },
+              {
+                "entity": 539,
+                "children": []
+              },
+              {
+                "entity": 641,
+                "children": []
+              },
+              {
+                "entity": 642,
+                "children": []
+              },
+              {
+                "entity": 644,
+                "children": []
+              },
+              {
                 "entity": 650,
+                "children": []
+              },
+              {
+                "entity": 657,
                 "children": []
               }
             ]
@@ -11957,31 +11799,7 @@
         "564": {
           "json": {}
         },
-        "565": {
-          "json": {}
-        },
         "566": {
-          "json": {}
-        },
-        "567": {
-          "json": {}
-        },
-        "568": {
-          "json": {}
-        },
-        "569": {
-          "json": {}
-        },
-        "570": {
-          "json": {}
-        },
-        "571": {
-          "json": {}
-        },
-        "572": {
-          "json": {}
-        },
-        "573": {
           "json": {}
         },
         "574": {
@@ -12209,7 +12027,31 @@
         "648": {
           "json": {}
         },
+        "649": {
+          "json": {}
+        },
         "650": {
+          "json": {}
+        },
+        "651": {
+          "json": {}
+        },
+        "652": {
+          "json": {}
+        },
+        "653": {
+          "json": {}
+        },
+        "654": {
+          "json": {}
+        },
+        "655": {
+          "json": {}
+        },
+        "656": {
+          "json": {}
+        },
+        "657": {
           "json": {}
         }
       }
@@ -13322,33 +13164,6 @@
             "version": 2
           }
         },
-        "565": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "ba1cc208-fd8a-4b5d-849c-8c5f02430af3",
-            "label": "Discord Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "Discord Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter a Discord server URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
         "566": {
           "json": {
             "isBasicViewEnabled": false,
@@ -13365,195 +13180,6 @@
               }
             ],
             "assetId": "ce374705-d5f6-4837-b9ca-c0744527cfd5"
-          }
-        },
-        "567": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "723848029-b2b3-47fd-8ae1-1424903dd7bb",
-            "label": "Instagram Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "Instagram Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter an Instagram URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "568": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "c107c1fc-c193-4c21-ac23-d7b2e426acd1",
-            "label": "X Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "X Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter an X URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "569": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "ef61190a-a48c-4a5f-a183-21ca7587e0b6",
-            "label": "YouTube Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "YouTube Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter a YouTube URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "570": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "ba1cc208-fd8a-4b5d-849c-8c5f02430af3",
-            "label": "Discord Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "Discord Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter a Discord server URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "571": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "723848029-b2b3-47fd-8ae1-1424903dd7bb",
-            "label": "Instagram Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "Instagram Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter an Instagram URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "572": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "ef61190a-a48c-4a5f-a183-21ca7587e0b6",
-            "label": "YouTube Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "YouTube Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter a YouTube URL to open when the item is clicked."
-            },
-            "version": 2
-          }
-        },
-        "573": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "",
-            "fields": [],
-            "assetId": "c107c1fc-c193-4c21-ac23-d7b2e426acd1",
-            "label": "X Link",
-            "sections": [
-              {
-                "id": "link",
-                "items": [
-                  {
-                    "component": "asset-packs::Actions",
-                    "widget": "TextField",
-                    "label": "X Link",
-                    "path": "url",
-                    "basicViewId": "open-link"
-                  }
-                ]
-              }
-            ],
-            "helpTooltip": {
-              "text": "Enter an X URL to open when the item is clicked."
-            },
-            "version": 2
           }
         },
         "574": {
@@ -16783,20 +16409,6 @@
             ]
           }
         },
-        "565": {
-          "json": {
-            "id": 6,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://discord.gg/decentraland-417796904760639509\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
         "566": {
           "json": {
             "id": 48,
@@ -16852,104 +16464,6 @@
                 "name": "Show text",
                 "type": "batch",
                 "jsonPayload": "{\"actions\":[\"Hide text\",\"Print text\"]}"
-              }
-            ]
-          }
-        },
-        "567": {
-          "json": {
-            "id": 8,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://www.instagram.com/decentraland_foundation/\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "568": {
-          "json": {
-            "id": 9,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://twitter.com/decentraland\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "569": {
-          "json": {
-            "id": 10,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://www.youtube.com/@decentraland_foundation\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "570": {
-          "json": {
-            "id": 11,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://discord.gg/decentraland-417796904760639509\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "571": {
-          "json": {
-            "id": 12,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://www.instagram.com/decentraland_foundation/\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "572": {
-          "json": {
-            "id": 13,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://www.youtube.com/@decentraland_foundation\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
-              }
-            ]
-          }
-        },
-        "573": {
-          "json": {
-            "id": 14,
-            "value": [
-              {
-                "name": "Open Link",
-                "type": "open_link",
-                "jsonPayload": "{\"url\":\"https://twitter.com/decentraland\"}",
-                "allowedInBasicView": true,
-                "basicViewId": "open-link"
               }
             ]
           }
@@ -19080,22 +18594,6 @@
             ]
           }
         },
-        "565": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 6,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
         "566": {
           "json": {
             "value": [
@@ -19148,118 +18646,6 @@
                   {
                     "id": 48,
                     "name": "Show text"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "567": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 8,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "568": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 9,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "569": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 10,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "570": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 11,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "571": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 12,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "572": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 13,
-                    "name": "Open Link"
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        "573": {
-          "json": {
-            "value": [
-              {
-                "type": "on_click",
-                "conditions": [],
-                "actions": [
-                  {
-                    "id": 14,
-                    "name": "Open Link"
                   }
                 ]
               }
