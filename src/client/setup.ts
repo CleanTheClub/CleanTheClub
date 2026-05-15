@@ -1,4 +1,5 @@
-import { setupUi } from '../ui'
+import { setupUi, resetIntro } from '../ui'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
@@ -19,6 +20,7 @@ export function initClient() {
   initMusicManager()
   initEmoteManager()
   setupUi()
+  onEnterSceneObservable.add(() => resetIntro())
   initCleaningSystem()
   initGlassSystem()
   initCollectibleGroup({

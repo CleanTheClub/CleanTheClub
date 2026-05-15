@@ -4,7 +4,7 @@ import { onEnterSceneObservable, onLeaveSceneObservable } from '@dcl/sdk/observa
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
-import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish } from '../shared/glassDiscovery'
+import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, getPhase } from './RoundManager'
 
 export function initServer() {
@@ -29,6 +29,7 @@ export function initServer() {
     ...discoverGlasses(),
     ...discoverBottles(),
     ...discoverRubbish(),
+    ...discoverStickyPatches(),
   ]) {
     ClutterSync.create(entity, { itemId, isCleaned: false, cleanedAt: 0, cleanedBy: '' })
     syncEntity(entity, [ClutterSync.componentId], enumId++)

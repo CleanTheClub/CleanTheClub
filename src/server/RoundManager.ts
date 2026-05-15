@@ -8,7 +8,7 @@ import {
 } from '../shared/config'
 
 export type Phase   = 'playing' | 'open'
-export type Outcome = '' | 'optimal' | 'adequate' | 'suboptimal'
+export type Outcome = '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
 
 let itemEntities:    Map<string, Entity>
 let gameStateEntity: Entity
@@ -39,6 +39,7 @@ function countCleaned(): number {
 }
 
 function computeOutcome(pct: number): Outcome {
+  if (pct >= 1.0)              return 'perfect'
   if (pct >= OUTCOME_OPTIMAL)  return 'optimal'
   if (pct >= OUTCOME_ADEQUATE) return 'adequate'
   return 'suboptimal'

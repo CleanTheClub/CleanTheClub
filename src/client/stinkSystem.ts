@@ -10,7 +10,7 @@ import {
 import { Color4, Vector3 } from '@dcl/sdk/math'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS } from '../shared/config'
-import { discoverGlasses, discoverBottles, discoverRubbish } from '../shared/glassDiscovery'
+import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 
 // ── Particle enum values ──────────────────────────────────────────────────────
 // These are 'const enum' in @dcl/ecs internals — not re-exported from @dcl/sdk/ecs.
@@ -113,7 +113,7 @@ export function initStinkSystem() {
   }
 
   // Scene-placed groups — read world Transform at init time
-  for (const { entity, itemId } of [...discoverGlasses(), ...discoverBottles(), ...discoverRubbish()]) {
+  for (const { entity, itemId } of [...discoverGlasses(), ...discoverBottles(), ...discoverRubbish(), ...discoverStickyPatches()]) {
     const pos = Transform.getOrNull(entity)?.position
     if (pos) {
       tryAllocate(itemId, pos)

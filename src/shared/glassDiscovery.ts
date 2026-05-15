@@ -4,9 +4,10 @@ import { engine, Entity, Name, Transform } from '@dcl/sdk/ecs'
 export const GLASS_ID_PREFIX   = 'glass_'
 export const BOTTLE_ID_PREFIX  = 'bottle_'
 export const RUBBISH_ID_PREFIX = 'rubbish_'
+export const STICKY_ID_PREFIX  = 'sticky_'
 
 // All scene-item prefixes — used server-side to route cleanItem messages
-export const SCENE_ITEM_PREFIXES = [GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, RUBBISH_ID_PREFIX]
+export const SCENE_ITEM_PREFIXES = [GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, RUBBISH_ID_PREFIX, STICKY_ID_PREFIX]
 
 export type SceneItemDef = { entity: Entity; itemId: string }
 
@@ -43,6 +44,7 @@ export const LOOSE_BOTTLE_NAMES: string[] = [
 
 export const LOOSE_GLASS_NAMES:   string[] = []
 export const LOOSE_RUBBISH_NAMES: string[] = []
+export const LOOSE_STICKY_NAMES:  string[] = []
 
 // Finds scene entities by their Name component value.
 // Uses entity ID as the unique itemId suffix — consistent across server and client.
@@ -71,6 +73,10 @@ export const discoverBottles = () => [
 export const discoverRubbish = () => [
   ...discoverChildren('Rubbish', RUBBISH_ID_PREFIX),
   ...discoverByName(LOOSE_RUBBISH_NAMES, RUBBISH_ID_PREFIX),
+]
+export const discoverStickyPatches = () => [
+  ...discoverChildren('StickyPatches', STICKY_ID_PREFIX),
+  ...discoverByName(LOOSE_STICKY_NAMES, STICKY_ID_PREFIX),
 ]
 
 // Legacy type alias — keeps glassSystem.ts import happy during migration

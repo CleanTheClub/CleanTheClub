@@ -64,7 +64,7 @@ function enableClick(id: string) {
       }
     )
     pointerEventsSystem.onPointerUp(
-      { entity, opts: { button: InputAction.IA_POINTER } },
+      { entity, opts: { button: InputAction.IA_POINTER, showFeedback: false } },
       () => {
         if (activeHold?.id !== id) return
         activeHold = null
@@ -114,6 +114,25 @@ function disableClick(id: string) {
   PointerEvents.deleteFrom(ref.entity)
 }
 
+// ─── Scene GLB entity swap ────────────────────────────────────────────────────
+// Called by the deferred GLB setup system in cleaningSystem once the GltfContainer
+// entity is ready and its collision mask has been set to CL_POINTER.
+// Moves any already-registered pointer events from the placeholder entity to the
+// real mesh entity, then re-enables click if the item is not already cleaned.
+export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
+  const ref = itemRefs.get(itemId)
+  if (!ref || ref.entity === gltfEntity) return
+  const old = ref.entity
+  pointerEventsSystem.removeOnPointerDown(old)
+  pointerEventsSystem.removeOnPointerHoverEnter(old)
+  PointerEvents.deleteFrom(old)
+  ref.entity = gltfEntity
+  if (!pendingCleans.has(itemId)) {
+    const syncEnt = findClutterEntity(itemId)
+    if (!syncEnt || !ClutterSync.get(syncEnt).isCleaned) enableClick(itemId)
+  }
+}
+
 // ─── Refs captured at init so enable/disable closures can call them ──────────
 // (avoids threading callbacks through every helper)
 
@@ -124,10 +143,11 @@ let updateHoldBarRef:   (id: string, progress: number) => void   = () => {}
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 export function initInteractionManager(
-  dirtyEntities:   Map<string, Entity>,
-  applyCleanState: (id: string, isCleaned: boolean) => void,
-  showHoldBar:     (id: string, visible: boolean) => void,
-  updateHoldBar:   (id: string, progress: number) => void,
+  dirtyEntities:     Map<string, Entity>,
+  applyCleanState:   (id: string, isCleaned: boolean) => void,
+  showHoldBar:       (id: string, visible: boolean) => void,
+  updateHoldBar:     (id: string, progress: number) => void,
+  sceneHoldEntities?: Map<string, Entity>,
 ) {
   applyCleanStateRef = applyCleanState
   showHoldBarRef     = showHoldBar
@@ -136,6 +156,12 @@ export function initInteractionManager(
   // Populate item refs immediately — enable/disable can be called as soon as sync fires
   for (const def of CLUTTER_DEFS) {
     itemRefs.set(def.id, { entity: dirtyEntities.get(def.id)!, type: def.type ?? 'quick' })
+  }
+  // Scene-discovered hold entities (e.g. StickyPatches from GLB) — type is always 'hold'
+  if (sceneHoldEntities) {
+    for (const [itemId, entity] of sceneHoldEntities) {
+      itemRefs.set(itemId, { entity, type: 'hold' })
+    }
   }
 
   // Frame system: drives hold progress + fires on completion
@@ -162,6 +188,9 @@ export function initInteractionManager(
     if (!isStateSyncronized() || registered) return
     registered = true
     for (const def of CLUTTER_DEFS) enableClick(def.id)
+    if (sceneHoldEntities) {
+      for (const [itemId] of sceneHoldEntities) enableClick(itemId)
+    }
   })
 
   // Watch ClutterSync → apply authoritative state + manage click availability

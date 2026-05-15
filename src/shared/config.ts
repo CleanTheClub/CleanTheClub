@@ -38,18 +38,6 @@ export type ClutterDef = {
 }
 
 export const CLUTTER_DEFS: ClutterDef[] = [
-  // Main scene items
-  { id: 'mess_1', position: { x: 4,  y: 0.5, z: 4  } },
-  { id: 'mess_2', position: { x: 24, y: 0.5, z: 4  } },
-  { id: 'mess_3', position: { x: 4,  y: 0.5, z: 20 } },
-  { id: 'mess_4', position: { x: 12, y: 0.5, z: 8  }, fast: true },
-  { id: 'mess_5', position: { x: 16, y: 0.5, z: 12 }, fast: true },
-
-  // Test row — one of each interaction type, near spawn
-  { id: 'test_quick',   position: { x: 8,  y: 0.5, z: 26 }, type: 'quick'   },
-  { id: 'test_hold',    position: { x: 12, y: 0.5, z: 26 }, type: 'hold'    },
-  { id: 'test_collect', position: { x: 16, y: 0.5, z: 26 }, type: 'collect' },
-  { id: 'test_reset',   position: { x: 20, y: 0.5, z: 26 }, type: 'reset'   },
+  // Reset item — placeholder primitive until a GLB is ready
+  { id: 'test_reset', position: { x: 20, y: 0.5, z: 26 }, type: 'reset' },
 ]
-
-export const TOTAL_CLUTTER = CLUTTER_DEFS.length

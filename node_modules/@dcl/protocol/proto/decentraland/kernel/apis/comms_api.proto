@@ -1,0 +1,61 @@
+syntax = "proto3";
+package decentraland.kernel.apis;
+
+enum VideoTrackSourceType {
+  VTST_UNKNOWN = 0;
+  VTST_CAMERA = 1;
+  VTST_SCREEN_SHARE = 2;
+}
+
+message VideoTracksActiveStreamsRequest {
+}
+
+message VideoTracksActiveStreamsResponse {
+    repeated VideoTracksActiveStreamsData streams = 1;
+}
+
+message VideoTracksActiveStreamsData {
+    string identity = 1;
+    string track_sid = 2;
+    VideoTrackSourceType source_type = 3;
+}
+
+message SubscribeToTopicRequest {
+  string topic = 1;
+}
+
+message SubscribeToTopicResponse {}
+
+message UnsubscribeFromTopicRequest {
+  string topic = 1;
+}
+
+message UnsubscribeFromTopicResponse {}
+
+message PublishDataRequest {
+  string topic = 1;
+  string data = 2;
+}
+
+message PublishDataResponse {}
+
+message ConsumeMessagesRequest {
+  string topic = 1;
+}
+
+message ConsumeMessages {
+  string sender = 1;
+  string data = 2;
+}
+
+message ConsumeMessagesResponse {
+  repeated ConsumeMessages messages = 1;
+}
+
+service CommsApiService {
+  rpc GetActiveVideoStreams(VideoTracksActiveStreamsRequest) returns (VideoTracksActiveStreamsResponse) {}
+  rpc SubscribeToTopic(SubscribeToTopicRequest) returns (SubscribeToTopicResponse) {}
+  rpc UnsubscribeFromTopic(UnsubscribeFromTopicRequest) returns (UnsubscribeFromTopicResponse) {}
+  rpc PublishData(PublishDataRequest) returns (PublishDataResponse) {}
+  rpc ConsumeMessages(ConsumeMessagesRequest) returns (ConsumeMessagesResponse) {}
+}

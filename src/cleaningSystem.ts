@@ -5,6 +5,9 @@ import {
   Billboard, BillboardMode,
   Material,
 } from '@dcl/sdk/ecs'
+import { discoverStickyPatches } from './shared/glassDiscovery'
+import { findGltfEntity, setupClickProxy } from './shared/sceneItemHelpers'
+import { updateSceneHoldGltf } from './client/InteractionManager'
 import { Vector3, Color4 } from '@dcl/sdk/math'
 import { CLUTTER_DEFS, InteractionType } from './shared/config'
 import { initInteractionManager } from './client/InteractionManager'
@@ -18,8 +21,13 @@ const originalDirtyScales = new Map<string, { x: number; y: number; z: number }>
 type HoldBar = { bg: Entity; fill: Entity }
 const holdBars = new Map<string, HoldBar>()
 
-const BAR_WIDTH  = 0.8
-const BAR_HEIGHT = 0.1
+const BAR_WIDTH         = 0.8
+const BAR_HEIGHT        = 0.18    // taller → easier to see
+const BAR_Y_OFFSET      = 1.1     // metres above item origin (was 1.4; -0.3 m lower)
+const BAR_BG_COLOR      = Color4.create(0.05, 0.05, 0.05, 0.92)
+const BAR_FILL_COLOR    = Color4.create(0.15, 1.00, 0.40, 1)
+const BAR_FILL_EMISSIVE = { r: 0.15, g: 1.00, b: 0.40 }  // matching emissive for glow
+const BAR_FILL_INTENSITY = 4.0    // emissive intensity — increase for more glow
 const CLEAN_COLOR = Color4.create(0.88, 0.94, 0.88, 1)
 
 // Swaps dirty visuals — driven by ClutterSync.isCleaned on all clients.
@@ -49,8 +57,15 @@ export function applyCleanState(id: string, isCleaned: boolean) {
 export function showHoldBar(id: string, visible: boolean) {
   const bar = holdBars.get(id)
   if (!bar) return
-  VisibilityComponent.createOrReplace(bar.bg,   { visible })
-  VisibilityComponent.createOrReplace(bar.fill, { visible })
+  // Only toggle the background track — the fill stays in the render pipeline always
+  // (emissive shader stays compiled). Its width is controlled by updateHoldBar.
+  VisibilityComponent.createOrReplace(bar.bg, { visible })
+  if (!visible) {
+    // Collapse the fill to imperceptible width so it doesn't glow when hidden
+    const t = Transform.getMutable(bar.fill)
+    t.scale.x    = 0.001
+    t.position.x = -BAR_WIDTH / 2
+  }
 }
 
 export function updateHoldBar(id: string, progress: number) {
@@ -106,16 +121,16 @@ function getVisualConfig(type: InteractionType): VisualConfig {
 
 // ─── Hold bar ────────────────────────────────────────────────────────────────
 
-function createHoldBar(def: (typeof CLUTTER_DEFS)[number]): HoldBar {
+function createHoldBar(pos: { x: number; y: number; z: number }): HoldBar {
   const pivot = engine.addEntity()
   Billboard.create(pivot, { billboardMode: BillboardMode.BM_ALL })
   Transform.create(pivot, {
-    position: Vector3.create(def.position.x, def.position.y + 1.4, def.position.z),
+    position: Vector3.create(pos.x, pos.y + BAR_Y_OFFSET, pos.z),
   })
 
   const bg = engine.addEntity()
   MeshRenderer.setPlane(bg)
-  Material.setPbrMaterial(bg, { albedoColor: Color4.create(0.08, 0.08, 0.08, 0.88) })
+  Material.setPbrMaterial(bg, { albedoColor: BAR_BG_COLOR })
   Transform.create(bg, {
     parent: pivot,
     position: Vector3.create(0, 0, 0),
@@ -125,13 +140,19 @@ function createHoldBar(def: (typeof CLUTTER_DEFS)[number]): HoldBar {
 
   const fill = engine.addEntity()
   MeshRenderer.setPlane(fill)
-  Material.setPbrMaterial(fill, { albedoColor: Color4.create(0.2, 0.9, 0.35, 1) })
+  Material.setPbrMaterial(fill, {
+    albedoColor:       BAR_FILL_COLOR,
+    emissiveColor:     BAR_FILL_EMISSIVE,
+    emissiveIntensity: BAR_FILL_INTENSITY,
+  })
   Transform.create(fill, {
     parent: pivot,
     position: Vector3.create(-BAR_WIDTH / 2, 0, -0.002),
     scale:    Vector3.create(0.001, BAR_HEIGHT, 0.01),
   })
-  VisibilityComponent.create(fill, { visible: false })
+  // Fill is NOT hidden via VisibilityComponent — it stays in the render pipeline
+  // at all times so the emissive shader is compiled and active from round 1.
+  // Visibility is controlled purely by scale.x (0.001 = imperceptible, set by updateHoldBar).
 
   return { bg, fill }
 }
@@ -164,9 +185,43 @@ export function initCleaningSystem() {
     cleanEntities.set(def.id, clean)
 
     if (type === 'hold') {
-      holdBars.set(def.id, createHoldBar(def))
+      holdBars.set(def.id, createHoldBar(def.position))
     }
   }
 
-  initInteractionManager(dirtyEntities, applyCleanState, showHoldBar, updateHoldBar)
+  // Scene-discovered sticky patches — GLB entities that slot into the hold pipeline.
+  // No primitives are created; the composite entity itself is the interactable.
+  // The container entity is registered immediately; a deferred system then finds
+  // the actual GltfContainer entity, sets CL_POINTER, and hands it to InteractionManager.
+  const sceneHoldEntities = new Map<string, Entity>()  // itemId → container entity
+  for (const { entity, itemId } of discoverStickyPatches()) {
+    dirtyEntities.set(itemId, entity)
+    sceneHoldEntities.set(itemId, entity)
+    const tf = Transform.getOrNull(entity)
+    if (tf) holdBars.set(itemId, createHoldBar(tf.position))
+  }
+
+  initInteractionManager(dirtyEntities, applyCleanState, showHoldBar, updateHoldBar, sceneHoldEntities)
+
+  // Deferred GLB setup — mirrors collectibleSystem's setupSystem.
+  // Runs every frame until each patch's GltfContainer has loaded, then removes itself.
+  if (sceneHoldEntities.size > 0) {
+    const needsGltfSetup = new Set(sceneHoldEntities.keys())
+    const stickyGltfSetup = () => {
+      for (const [itemId, containerEntity] of sceneHoldEntities) {
+        if (!needsGltfSetup.has(itemId)) continue
+        const gltfEnt = findGltfEntity(containerEntity)
+        if (!gltfEnt) continue
+        needsGltfSetup.delete(itemId)
+
+        setupClickProxy(gltfEnt)
+
+        // Tell InteractionManager to use the gltfEntity for pointer events
+        updateSceneHoldGltf(itemId, gltfEnt)
+        console.log(`[SCENE] StickyPatch "${itemId}" GLB entity ready → ${gltfEnt}`)
+      }
+      if (needsGltfSetup.size === 0) engine.removeSystem(stickyGltfSetup)
+    }
+    engine.addSystem(stickyGltfSetup)
+  }
 }
