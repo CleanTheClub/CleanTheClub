@@ -18,6 +18,7 @@ const lastState         = new Map<string, boolean>()
 type GltfRecord = {
   containerEntity: Entity
   gltfEntity:      Entity
+  clickEntity:     Entity   // enlarged proxy (or gltfEntity itself when multiplier=1)
   originalScale:   { x: number; y: number; z: number }
 }
 const gltfRecords = new Map<string, GltfRecord>()
@@ -36,18 +37,18 @@ function setVisible(itemId: string, visible: boolean) {
 function disableClick(itemId: string) {
   const rec = gltfRecords.get(itemId)
   if (!rec) return
-  pointerEventsSystem.removeOnPointerDown(rec.gltfEntity)
-  pointerEventsSystem.removeOnPointerHoverEnter(rec.gltfEntity)
-  PointerEvents.deleteFrom(rec.gltfEntity)
+  pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
+  pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
+  PointerEvents.deleteFrom(rec.clickEntity)
 }
 
 function enableClick(itemId: string) {
   const rec = gltfRecords.get(itemId)
   if (!rec) return
-  const { gltfEntity, containerEntity } = rec
-  pointerEventsSystem.onPointerHoverEnter({ entity: gltfEntity }, () => playHoverSound())
+  const { clickEntity, containerEntity } = rec
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
-    { entity: gltfEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
+    { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
     () => {
       if (pendingCleans.has(itemId)) return
       pendingCleans.add(itemId)
@@ -108,9 +109,9 @@ export function initRubbishSystem() {
         ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }
         : { x: 1, y: 1, z: 1 }
 
-      setupClickProxy(gltfEnt)
+      const clickEnt = setupClickProxy(gltfEnt, 2.5)
 
-      gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, originalScale })
+      gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, clickEntity: clickEnt, originalScale })
       needsSetup.delete(itemId)
       console.log(`[RUBBISH] "${itemId}" ready → gltf ${gltfEnt}`)
 

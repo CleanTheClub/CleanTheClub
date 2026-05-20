@@ -12,7 +12,6 @@ export enum EntityNames {
   Bottle_12 = "Bottle_12",
   Bottle_13 = "Bottle_13",
   Bottle_14 = "Bottle_14",
-  Bottle_15 = "Bottle_15",
   Bottle_2 = "Bottle_2",
   Bottle_3 = "Bottle_3",
   Bottle_4 = "Bottle_4",
