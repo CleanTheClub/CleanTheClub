@@ -90,8 +90,23 @@ export function initServer() {
       // Hide the item by collapsing its scale — server is HOST so CRDT propagates to all clients
       const tf = Transform.getMutableOrNull(entity)
       if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
-      // Scene items (glasses, bottles, rubbish) stay cleaned for the whole round — no respawn
-      onSceneItemCleaned()
+      // Decay: restore the item after CLUTTER_RESPAWN_MS, same as regular clutter.
+      // The callback flips isCleaned and restores the original scale so clients
+      // pick it up via ClutterSync and re-enable clicks automatically.
+      const itemId = data.itemId
+      onSceneItemCleaned(itemId, () => {
+        const e = itemEntities.get(itemId)
+        if (!e) return
+        const cs = ClutterSync.getMutable(e)
+        cs.isCleaned = false
+        cs.cleanedAt = 0
+        cs.cleanedBy = ''
+        const orig = sceneItemScales.get(itemId)
+        if (orig) {
+          const t2 = Transform.getMutableOrNull(e)
+          if (t2) t2.scale = { x: orig.x, y: orig.y, z: orig.z }
+        }
+      })
     } else {
       const def = CLUTTER_DEFS.find(d => d.id === data.itemId)!
       onItemCleaned(def)

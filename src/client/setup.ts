@@ -7,7 +7,7 @@ import { initGlassSystem } from './glassSystem'
 import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
-import { initBarStoolSystem } from './barStoolSystem'
+import { initRestoreSystem } from './restoreSystem'
 import { initStinkSystem } from './stinkSystem'
 import { initSparkleSystem } from './sparkleSystem'
 import { initConfettiSystem } from './confettiSystem'
@@ -31,7 +31,26 @@ export function initClient() {
     toastKind:  'bottles',
   })
   initRubbishSystem()
-  initBarStoolSystem()
+  initRestoreSystem([
+    {
+      itemId:         'test_reset',
+      nameDirty:      'dirtyBarStool',
+      nameAnim:       'cleanBarStoolAnim',
+      nameClean:      'cleanBarStool',
+      animClip:       'restore',
+      animDurationMs: 2000,
+      hoverText:      'Clean',
+    },
+    {
+      itemId:         'stool_2',
+      nameDirty:      'dirtyBarStool_2',
+      nameAnim:       'cleanBarStoolAnim_2',
+      nameClean:      'cleanBarStool_2',
+      animClip:       'restore',
+      animDurationMs: 2000,
+      hoverText:      'Clean',
+    },
+  ])
   initSparkleSystem()
   initStinkSystem()
   initConfettiSystem()

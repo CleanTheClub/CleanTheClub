@@ -5,8 +5,8 @@ const _ROUND_DURATIONS_MS  = [3 * 60_000, 2.5 * 60_000, 2 * 60_000, 1.5 * 60_000
 const _DEBUG_DURATIONS_MS  = [30_000, 25_000, 20_000, 15_000]
 export const ROUND_DURATIONS_MS = DEBUG ? _DEBUG_DURATIONS_MS : _ROUND_DURATIONS_MS
 
-export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 60_000   // celebration window
-export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  : 15_000   // min before early-start unlocks
+export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // celebration window
+export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  :  8_000   // min before early-start unlocks
 export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 90_000
 export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
 export const HOLD_DURATION_MS   = DEBUG ? 500    : 1_500   // hold-to-clean duration
@@ -36,12 +36,17 @@ export type ClutterDef = {
   fast?: boolean
   type?: InteractionType   // defaults to 'quick'
   // When true, no primitive entity is created and no InteractionManager click is
-  // registered — a scene-side system (e.g. barStoolSystem) owns the visuals and
+  // registered — a scene-side system (e.g. restoreSystem) owns the visuals and
   // click handling, but the server still tracks the itemId via ClutterSync.
   sceneGlb?: boolean
+  // Optional world-space position for the stink emitter — use when the GLB origin
+  // doesn't match where the mesh actually sits in the scene (e.g. origin at floor
+  // level but mesh on an upper floor). Falls back to `position` if not set.
+  stinkPos?: { x: number; y: number; z: number }
 }
 
 export const CLUTTER_DEFS: ClutterDef[] = [
-  // Reset item — visuals & click owned by barStoolSystem; server tracks via this id
-  { id: 'test_reset', position: { x: 20, y: 0.5, z: 26 }, type: 'reset', sceneGlb: true },
+  // Reset items — visuals & click owned by restoreSystem; server tracks via these ids
+  { id: 'test_reset', position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 5.28, y: 7.41, z: 24.07 } },
+  { id: 'stool_2',    position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 8.51, y: 7.41, z: 27.14 } },
 ]

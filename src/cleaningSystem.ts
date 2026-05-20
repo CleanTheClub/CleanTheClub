@@ -26,8 +26,6 @@ const BAR_HEIGHT        = 0.18    // taller → easier to see
 const BAR_Y_OFFSET      = 1.1     // metres above item origin (was 1.4; -0.3 m lower)
 const BAR_BG_COLOR      = Color4.create(0.05, 0.05, 0.05, 0.92)
 const BAR_FILL_COLOR    = Color4.create(0.15, 1.00, 0.40, 1)
-const BAR_FILL_EMISSIVE = { r: 0.15, g: 1.00, b: 0.40 }  // matching emissive for glow
-const BAR_FILL_INTENSITY = 4.0    // emissive intensity — increase for more glow
 const CLEAN_COLOR = Color4.create(0.88, 0.94, 0.88, 1)
 
 // Swaps dirty visuals — driven by ClutterSync.isCleaned on all clients.
@@ -140,16 +138,14 @@ function createHoldBar(pos: { x: number; y: number; z: number }): HoldBar {
 
   const fill = engine.addEntity()
   MeshRenderer.setPlane(fill)
-  Material.setPbrMaterial(fill, {
-    albedoColor:       BAR_FILL_COLOR,
-    emissiveColor:     BAR_FILL_EMISSIVE,
-    emissiveIntensity: BAR_FILL_INTENSITY,
-  })
   Transform.create(fill, {
     parent: pivot,
     position: Vector3.create(-BAR_WIDTH / 2, 0, -0.002),
     scale:    Vector3.create(0.001, BAR_HEIGHT, 0.01),
   })
+  // Basic (unlit) material — renders at full brightness regardless of scene lighting.
+  // PBR emissive is too lighting-dependent for a UI-style progress bar.
+  Material.setBasicMaterial(fill, { diffuseColor: BAR_FILL_COLOR })
   // Fill is NOT hidden via VisibilityComponent — it stays in the render pipeline
   // at all times so the emissive shader is compiled and active from round 1.
   // Visibility is controlled purely by scale.x (0.001 = imperceptible, set by updateHoldBar).

@@ -44,7 +44,7 @@ const BAR_HEIGHT          = 16
 // Info strip (round label + next-round controls only — bar has moved above)
 const STRIP_TOP           = 258     // absolute top offset — just below bar row
 const STRIP_WIDTH         = 440     // base width before MOBILE_SCALE
-const ROUND_FONT_SIZE     = 12
+const ROUND_FONT_SIZE     = 22
 const METER_FONT_SIZE     = 13
 const LABEL_MARGIN_SMALL  = 4       // bottom margin under round label
 
@@ -75,7 +75,7 @@ const OUTCOME_IMAGES: Record<string, string> = {
 }
 
 // Text colours
-const COLOR_SUBTLE        = { r: 0.60, g: 0.60, b: 0.60, a: 1 } as const  // round label
+const COLOR_SUBTLE        = { r: 0.85, g: 0.85, b: 0.85, a: 1 } as const  // round label
 const COLOR_DIM           = { r: 0.85, g: 0.85, b: 0.85, a: 1 } as const  // meter / next-round
 
 // Toast notifications
@@ -93,7 +93,7 @@ const NARR_FONT_SIZE      = 17     // narrative body text
 const TOAST_LABEL_TOP     = 0.5    // glasses / bottles count: vertical position
 const TOAST_LABEL_LEFT    = 0.35   // glasses / bottles count: horizontal position
 const NARR_LABEL_TOP      = 0.5   // narrative body text: vertical position
-const NARR_LABEL_LEFT     = 0.2   // narrative body text: horizontal position
+const NARR_LABEL_LEFT     = 0.325   // narrative body text: horizontal position
 const NARR_LABEL_W_FRAC   = 0.77   // narrative text box width as fraction of toast width
 // Toast container anchor — percentage strings scale with the canvas on all devices
 const TOAST_POS_DESKTOP   = { top: '33%', right: '2%'  } as const
@@ -140,7 +140,7 @@ const TOAST_DURATION: Record<ToastKind, number> = {
   cleaned:   2_000,
   glasses:   2_800,
   bottles:   2_800,
-  narrative: 4_500,
+  narrative: 7_000,
 }
 
 function _addToast(entry: Omit<ToastEntry, 'id' | 'timerId'>) {
@@ -291,6 +291,10 @@ const ui = () => {
   const narrFont     = Math.round(NARR_FONT_SIZE     * S)
   const toastPos     = mobile ? TOAST_POS_MOBILE : TOAST_POS_DESKTOP
   const toastAlign   = mobile ? 'flex-start' as const : 'flex-end' as const
+  // When the round-end banner fills the centre of the screen (desktop only),
+  // push the toast stack down by 2 slots so it clears the banner.
+  // Mobile toasts anchor at top:9% — already above the banner — no offset needed.
+  const toastTopSlots = isOpen && !mobile ? 2 : 0
 
   const barColor = pct >= 0.8 ? BAR_COLOR_GOOD
                  : pct >= 0.5 ? BAR_COLOR_MID
@@ -557,6 +561,10 @@ const ui = () => {
             alignItems:    toastAlign,
           }}
         >
+          {/* Transparent spacer — pushes stack below the round-end banner on desktop */}
+          {toastTopSlots > 0 && (
+            <UiEntity uiTransform={{ width: toastW, height: toastTopSlots * toastH }} />
+          )}
           {activeToasts.map((toast, idx) => (
             <UiEntity
               key={String(toast.id)}
@@ -589,6 +597,7 @@ const ui = () => {
                   value={toast.text}
                   fontSize={narrFont}
                   color={WHITE}
+                  textAlign="middle-left"
                   uiTransform={{
                     positionType: 'absolute',
                     position: { top: Math.round(toastH * NARR_LABEL_TOP), left: Math.round(toastW * NARR_LABEL_LEFT) },

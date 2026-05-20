@@ -25,8 +25,8 @@ const DEBUG_CONFETTI = false      // fire immediately on init; set false to ship
 
 // ── Pool ─────────────────────────────────────────────────────────────────────
 // Must comfortably hold: (pieces_per_burst) × (LIFE_MAX_MS / LOOP_INTERVAL_MS)
-// Optimal steady state: 72 pieces/burst × (8 000 ms / 2 000 ms) = 288 → 350 is safe
-const POOL_SIZE = 350
+// Optimal steady state: 72 pieces/burst × (8 000 ms / 1 000 ms) = 576 → 750 is safe
+const POOL_SIZE = 750
 
 // ── Piece appearance ──────────────────────────────────────────────────────────
 const PIECE_W           = 0.22   // width  (metres)
@@ -65,7 +65,7 @@ const FADE_START_FRAC    = 0.80  // fraction of lifetime when fade-out begins
 const SPAWN_JITTER       = 1.0   // random radius around each cannon origin (metres)
 
 // ── Celebration loop ──────────────────────────────────────────────────────────
-const LOOP_INTERVAL_MS   = 2_000  // ms between continuous bursts during open phase
+const LOOP_INTERVAL_MS   = 1_000  // ms between continuous bursts during open phase
 const FIRST_BURST_DELAY_MS = 0    // ms before the very first burst (0 = instant)
 
 // ── Outcome burst sizes (pieces per cannon per burst) ─────────────────────────

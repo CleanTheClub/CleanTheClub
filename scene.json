@@ -15,16 +15,16 @@
   "main": "bin/index.js",
   "tags": [
     "social",
-    "music"
+    "game"
   ],
   "scene": {
+    "base": "0,0",
     "parcels": [
       "0,1",
       "1,1",
       "0,0",
       "1,0"
-    ],
-    "base": "0,0"
+    ]
   },
   "spawnPoints": [
     {
@@ -59,12 +59,17 @@
     "voiceChat": "enabled",
     "portableExperiences": "enabled"
   },
-  "skyboxConfig": {},
+  "skyboxConfig": {
+    "fixedTime": 43200
+  },
   "source": {
     "origin": "creator-hub",
     "projectId": "c234e010-bf2f-4a35-9404-b57f360b3964"
   },
   "rating": "T",
   "authoritativeMultiplayer": true,
-  "creator": ""
+  "creator": "",
+  "worldConfiguration": {
+    "name": "afkj.dcl.eth"
+  }
 }

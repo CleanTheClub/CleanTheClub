@@ -19,6 +19,7 @@ import { setupClickProxy } from '../shared/sceneItemHelpers'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { showCleanedToast } from '../ui'
+import { registerStinkEmitter } from './stinkSystem'
 
 // ── Config ──────────────────────────────────────────────────────────────────
 const ITEM_ID = 'test_reset'
@@ -31,13 +32,13 @@ const NAME_CLEAN = 'cleanBarStool'
 // authored in Blender, this is usually 'Action' or whatever the NLA strip was
 // named. Update here if your clip is named differently — Animator will silently
 // no-op if the name doesn't match.
-const ANIM_CLIP = 'Action'
+const ANIM_CLIP = 'restore'
 
 // How long the restore animation plays before the final clean GLB takes over.
 // Tune to match the actual clip length.
 const ANIM_DURATION_MS = 2000
 
-const HOVER_TEXT = 'Restore'
+const HOVER_TEXT = 'Clean'
 
 // ── State ───────────────────────────────────────────────────────────────────
 let dirtyEnt: Entity | undefined
@@ -133,6 +134,10 @@ export function initBarStoolSystem(): void {
 
     allFound = true
     console.log(`[BarStool] discovered  dirty=${dirtyEnt}  anim=${animEnt}  clean=${cleanEnt}`)
+
+    // Register stink emitter at the dirty GLB's actual world position
+    const dirtyPos = Transform.getOrNull(dirtyEnt)?.position
+    if (dirtyPos) registerStinkEmitter(ITEM_ID, dirtyPos)
 
     // Click target: dirty GLB. setupClickProxy guarantees a reliable raycast hit
     // and asserts CL_POINTER on the visible mesh layer.

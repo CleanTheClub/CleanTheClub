@@ -80,6 +80,7 @@ export function initSoundManager() {
 export function playHoverSound()  { playAt(hoverEntity) }
 export function playClickSound()  { playAt(clickEntity) }
 export function playStickySound() { playAt(stickyEntity) }
+export function stopStickySound() { AudioSource.getMutable(stickyEntity).playing = false }
 export function playCleanSound()  {
   // Grab the next entity in the pool — guaranteed to not be mid-play from a
   // recent call, so the false→true retrigger always fires correctly.

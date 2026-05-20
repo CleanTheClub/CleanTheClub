@@ -1,11 +1,11 @@
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { room } from '../shared/messages'
-import { ClutterSync } from '../shared/schemas'
+import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast } from '../ui'
-import { playHoverSound, playClickSound, playStickySound, playCleanSound } from './soundManager'
+import { showCleanedToast, showNarrativeToast } from '../ui'
+import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 
@@ -19,6 +19,22 @@ const itemRefs = new Map<string, ItemRef>()
 
 type ActiveHold = { id: string; startMs: number }
 let activeHold: ActiveHold | null = null
+
+// ─── Open-phase gate ──────────────────────────────────────────────────────────
+const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
+let lastOpenPhaseToastMs = 0
+
+function getPhase(): string {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
+  return 'playing'
+}
+
+function maybeShowOpenPhaseToast() {
+  const now = Date.now()
+  if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastOpenPhaseToastMs = now
+  showNarrativeToast('Wait for the next round!')
+}
 
 function findClutterEntity(itemId: string): Entity | undefined {
   for (const [entity] of engine.getEntitiesWith(ClutterSync)) {
@@ -57,6 +73,7 @@ function enableClick(id: string) {
         if (pendingCleans.has(id) || activeHold) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+        if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         playStickySound()
         activeHold = { id, startMs: Date.now() }
         showHoldBarRef(id, true)
@@ -68,6 +85,7 @@ function enableClick(id: string) {
       () => {
         if (activeHold?.id !== id) return
         activeHold = null
+        stopStickySound()
         showHoldBarRef(id, false)
         updateHoldBarRef(id, 0)
       }
@@ -79,6 +97,7 @@ function enableClick(id: string) {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+        if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
 
         playClickSound()
         playCleanSound()               // instant audio feedback on click

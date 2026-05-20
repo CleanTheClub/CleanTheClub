@@ -8,9 +8,10 @@
 //  timer warning — fires when secondsLeft drops below a threshold (once per round)
 //  round end     — fires when doors open (phase → 'open'), outcome-flavoured
 
-import { engine } from '@dcl/sdk/ecs'
+import { engine, timers } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
 import { showNarrativeToast } from '../ui'
+import { playPartyEmote } from './emoteManager'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Messages — edit these ────────────────────────────────────────────────────
@@ -19,40 +20,40 @@ import { showNarrativeToast } from '../ui'
 // Round-start messages — indexed by roundNumber (0-based).
 // Falls back to DEFAULT if the round index isn't listed.
 const ROUND_START: Record<number, string> & { DEFAULT: string } = {
-  0:         "The club's a mess — let's clean it up!",
-  1:         "Round 2 — the crowd expects better!",
-  2:         "Round 3 — no excuses, make it shine!",
-  3:         "Final round — give it everything!",
-  DEFAULT:   "New round — keep the momentum going!",
+  0:         "The club's a mess, let's clean it!",
+  1:         "Round 2: the crowd expects better!",
+  2:         "Round 3: no excuses, make it shine!",
+  3:         "Next round: give it everything!",
+  DEFAULT:   "New round: keep it up!",
 }
 
 // Cleanliness milestones — fires once per round when pct crosses the threshold.
 // Keys are percentages (0–100). Add or remove entries freely.
 const MILESTONES: { pct: number; text: string }[] = [
-  { pct: 25, text: "Good start — keep it moving!" },
-  { pct: 50, text: "Halfway there — looking better already!" },
-  { pct: 75, text: "Nearly clean — finish strong!" },
-  { pct: 90, text: "Almost spotless — just a little more!" },
+  { pct: 25, text: "Good start, keep it moving!" },
+  { pct: 50, text: "Half clean, looking better already!" },
+  { pct: 75, text: "Nearly clean, finish strong!" },
+  { pct: 90, text: "Almost spotless, just a little more!" },
 ]
 
 // Timer warnings — fires once per round when secondsLeft drops to or below the value.
 // Multiple entries are fine; each fires independently.
 const TIMER_WARNINGS: { seconds: number; text: string }[] = [
-  { seconds: 60, text: "One minute left — hustle!" },
-  { seconds: 30, text: "Thirty seconds! Push push push!" },
+  { seconds: 60, text: "One minute left, hustle!" },
+  { seconds: 30, text: "Thirty seconds! Hurry!" },
 ]
 
 // Round-end messages, keyed by outcome string from GameState.
 const ROUND_END: Record<string, string> = {
-  optimal:    "Incredible — the club is immaculate! 🎉",
-  adequate:   "Not bad! The doors are open — room to improve though.",
-  suboptimal: "Yikes… it'll do. The crowd isn't happy.",
-  DEFAULT:    "Round over — the doors are open!",
+  optimal:    "Incredible, the club is immaculate!",
+  adequate:   "Not bad! The doors are open but it smells...",
+  suboptimal: "Yikes… The crowd isn't happy.",
+  DEFAULT:    "Round over: doors are open!",
 }
 
 // Delay (ms) after phase changes before the narrative toast fires.
 // A small gap lets the confetti / outcome banner land first.
-const ROUND_END_DELAY_MS   = 800
+const ROUND_END_DELAY_MS   = 3_000
 const ROUND_START_DELAY_MS = 600
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,13 +96,15 @@ export function initNarrativeSystem(): void {
 
       if (phase === 'open') {
         // Doors opened — show outcome message after a short delay
-        const msg = ROUND_END[prev === 'playing' ? '' : ''] // resolved below
         const outcome = (() => {
           for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.outcome
           return ''
         })()
         const text = ROUND_END[outcome] ?? ROUND_END.DEFAULT
-        setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS)
+        timers.setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS)
+        // Party emote — fires slightly before the toast so the player is already
+        // dancing when the outcome message pops up
+        timers.setTimeout(() => playPartyEmote(), 500)
       }
     }
 
@@ -113,7 +116,7 @@ export function initNarrativeSystem(): void {
       if (prev !== -1 || phase === 'playing') {
         // Fire for every round including round 0 on first load
         const text = ROUND_START[roundNumber] ?? ROUND_START.DEFAULT
-        setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
+        timers.setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
       }
     }
 

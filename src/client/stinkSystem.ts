@@ -97,6 +97,23 @@ function resumeEmitter(e: Entity) {
   ps.playbackState = PS_PLAYING
 }
 
+// ── Public registration — for sceneGlb items whose position is discovered at runtime ──
+// Call once after the scene entity's Transform is available (e.g. after GLB discovery).
+// Safe to call before or after initStinkSystem — the per-frame watcher picks it up automatically.
+export function registerStinkEmitter(itemId: string, pos: { x: number; y: number; z: number }) {
+  if (emitterFor.has(itemId)) return   // already registered
+  if (emitterFor.size >= MAX_STINK_EMITTERS) {
+    console.log(`[STINK] Pool full — cannot register emitter for "${itemId}"`)
+    return
+  }
+  const emitter = createEmitter(pos)
+  emitterFor.set(itemId, emitter)
+  // Respect current clean state if already known
+  const cleaned = lastCleaned.get(itemId)
+  if (cleaned === true) pauseEmitter(emitter)
+  console.log(`[STINK] Registered scene GLB emitter for "${itemId}"`)
+}
+
 // ── Public init ───────────────────────────────────────────────────────────────
 export function initStinkSystem() {
   let allocated = 0
@@ -107,9 +124,11 @@ export function initStinkSystem() {
     allocated++
   }
 
-  // CLUTTER_DEFS — positions come from config (same coords used by cleaningSystem)
+  // CLUTTER_DEFS — positions come from config.
+  // sceneGlb items use the world-space position stored in def.position directly —
+  // their GLB origin may be at local (0,0,0) but the correct world coords are in config.
   for (const def of CLUTTER_DEFS) {
-    tryAllocate(def.id, def.position)
+    tryAllocate(def.id, def.stinkPos ?? def.position)
   }
 
   // Scene-placed groups — read world Transform at init time

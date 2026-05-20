@@ -2,11 +2,11 @@
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
-import { ClutterSync } from '../shared/schemas'
+import { ClutterSync, GameState } from '../shared/schemas'
 import { SceneItemDef } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
-import { showCollectionToast } from '../ui'
+import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
@@ -16,6 +16,20 @@ export type CollectibleConfig = {
   items:     SceneItemDef[]
   idPrefix:  string
   toastKind: 'glasses' | 'bottles' | null
+}
+
+function getPhase(): string {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
+  return 'playing'
+}
+
+const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
+let lastOpenPhaseToastMs = 0
+function maybeShowOpenPhaseToast() {
+  const now = Date.now()
+  if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastOpenPhaseToastMs = now
+  showNarrativeToast('Wait for the next round!')
 }
 
 export function initCollectibleGroup(cfg: CollectibleConfig) {
@@ -59,6 +73,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
       { entity: gltfEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Collect' } },
       () => {
         if (pendingCleans.has(itemId)) return
+        if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         pendingCleans.add(itemId)
         const pos = Transform.getOrNull(containerEntity)?.position
         disableClick(itemId)

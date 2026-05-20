@@ -138,9 +138,18 @@ export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
   syncGameState()
 }
 
-// Scene items (glasses, bottles, rubbish) stay collected all round — no respawn timer
-export function onSceneItemCleaned() {
+// Scene items (glasses, bottles, rubbish, sticky patches) — same respawn timer as
+// regular clutter. onRespawn callback is responsible for flipping isCleaned and
+// restoring the entity's scale on the server.
+export function onSceneItemCleaned(itemId: string, onRespawn: () => void, fast = false) {
   if (phase !== 'playing') return
+  const delay = fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS
+  const t = setTimeout(() => {
+    respawnTimers.delete(itemId)
+    onRespawn()
+    syncGameState()
+  }, delay)
+  respawnTimers.set(itemId, t)
   syncGameState()
 }
 

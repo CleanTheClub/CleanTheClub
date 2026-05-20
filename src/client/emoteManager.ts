@@ -3,6 +3,8 @@ import { movePlayerTo, triggerSceneEmote } from '~system/RestrictedActions'
 import { PICKUP_EMOTE_MS } from '../shared/config'
 
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
+const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
+const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
 const EMOTE_TRIGGER_MS  = 200   // ms — delay after movePlayerTo before emote fires
 
@@ -36,6 +38,16 @@ function emoteWatchSystem(): void {
 // Call once from initClient so the watch system runs every frame
 export function initEmoteManager() {
   engine.addSystem(emoteWatchSystem)
+}
+
+// Fires the party emote on the local player at round end.
+// No movement — player dances where they stand.
+// Cancels immediately if the player moves (same emoteWatchSystem guard).
+export function playPartyEmote() {
+  if (emoteActive) stopPickupEmote()
+  emoteActive = true
+  triggerSceneEmote({ src: PARTY_EMOTE_SRC, loop: false })
+  timers.setTimeout(() => stopPickupEmote(), PARTY_EMOTE_MS)
 }
 
 // targetPos — world-space position of the item being collected.
