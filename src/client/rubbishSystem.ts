@@ -109,7 +109,7 @@ export function initRubbishSystem() {
         ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }
         : { x: 1, y: 1, z: 1 }
 
-      const clickEnt = setupClickProxy(gltfEnt, 2.5)
+      const clickEnt = setupClickProxy(gltfEnt)
 
       gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, clickEntity: clickEnt, originalScale })
       needsSetup.delete(itemId)

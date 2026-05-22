@@ -211,10 +211,10 @@ export function initCleaningSystem() {
         if (!gltfEnt) continue
         needsGltfSetup.delete(itemId)
 
-        const proxyEnt = setupClickProxy(gltfEnt, 2.0)
+        const clickEnt = setupClickProxy(gltfEnt)
 
-        // Tell InteractionManager to use the proxy entity for pointer events
-        updateSceneHoldGltf(itemId, proxyEnt)
+        // Tell InteractionManager to use the click entity for pointer events
+        updateSceneHoldGltf(itemId, clickEnt)
         console.log(`[SCENE] StickyPatch "${itemId}" GLB entity ready → ${gltfEnt}`)
       }
       if (needsGltfSetup.size === 0) engine.removeSystem(stickyGltfSetup)

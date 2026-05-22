@@ -48,5 +48,6 @@ export type ClutterDef = {
 export const CLUTTER_DEFS: ClutterDef[] = [
   // Reset items — visuals & click owned by restoreSystem; server tracks via these ids
   { id: 'test_reset', position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 5.28, y: 7.41, z: 24.07 } },
-  { id: 'stool_2',    position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 8.51, y: 7.41, z: 27.14 } },
+  { id: 'stool_2',       position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 8.51,  y: 7.41, z: 27.14 } },
+  { id: 'chaise_cushion', position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 24.86, y: 7.3,  z: 13.66 } },
 ]

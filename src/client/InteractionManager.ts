@@ -81,7 +81,7 @@ function enableClick(id: string) {
       }
     )
     pointerEventsSystem.onPointerUp(
-      { entity, opts: { button: InputAction.IA_POINTER, showFeedback: false } },
+      { entity, opts: { button: InputAction.IA_POINTER } },
       () => {
         if (activeHold?.id !== id) return
         activeHold = null

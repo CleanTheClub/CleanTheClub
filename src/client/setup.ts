@@ -38,7 +38,7 @@ export function initClient() {
       nameAnim:       'cleanBarStoolAnim',
       nameClean:      'cleanBarStool',
       animClip:       'restore',
-      animDurationMs: 2000,
+      animDurationMs: 500,
       hoverText:      'Clean',
     },
     {
@@ -47,7 +47,16 @@ export function initClient() {
       nameAnim:       'cleanBarStoolAnim_2',
       nameClean:      'cleanBarStool_2',
       animClip:       'restore',
-      animDurationMs: 2000,
+      animDurationMs: 500,
+      hoverText:      'Clean',
+    },
+    {
+      itemId:         'chaise_cushion',
+      nameDirty:      'dirtyChaiseCushion',
+      nameAnim:       'cleanChaiseCushionAnim',
+      nameClean:      'cleanChaiseCushion',
+      animClip:       'restore',
+      animDurationMs: 500,
       hoverText:      'Clean',
     },
   ])
