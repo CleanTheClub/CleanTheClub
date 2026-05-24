@@ -1,11 +1,51 @@
-import { engine, Entity, Transform } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, executeTask } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
+import { Storage } from '@dcl/sdk/server'
 import { onEnterSceneObservable, onLeaveSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, getPhase } from './RoundManager'
+
+// ── Leaderboard ───────────────────────────────────────────────
+interface LeaderboardEntry { displayName: string; total: number }
+const leaderboard = new Map<string, LeaderboardEntry>()  // address → entry
+let leaderboardLoaded = false
+
+async function loadLeaderboard(): Promise<void> {
+  const raw = await Storage.get<string>('leaderboard')
+  if (!raw) { console.log('[SERVER] No leaderboard data — starting fresh') }
+  else {
+    const records: Array<{ address: string; displayName: string; total: number }> = JSON.parse(raw)
+    for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
+    console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+  }
+  leaderboardLoaded = true
+}
+
+async function saveLeaderboard(): Promise<void> {
+  const records = [...leaderboard.entries()].map(([address, e]) => ({ address, ...e }))
+  await Storage.set('leaderboard', JSON.stringify(records))
+}
+
+function leaderboardJson(): string {
+  return JSON.stringify(
+    [...leaderboard.values()]
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 10)
+      .map(e => ({ displayName: e.displayName, count: e.total }))
+  )
+}
+
+function broadcastLeaderboard(to?: string[]): void {
+  const entriesJson = leaderboardJson()
+  if (to) {
+    room.send('leaderboardUpdate', { entriesJson }, { to })
+  } else {
+    room.send('leaderboardUpdate', { entriesJson })
+  }
+}
 
 export function initServer() {
   console.log('[SERVER] started')
@@ -65,7 +105,16 @@ export function initServer() {
 
   initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales)
 
-  onEnterSceneObservable.add(() => onPlayerEnter())
+  // Load persisted leaderboard from Storage (async — data arrives soon after startup)
+  executeTask(async () => {
+    await loadLeaderboard()
+  })
+
+  onEnterSceneObservable.add(() => {
+    onPlayerEnter()
+    // Leaderboard is pushed via registerPlayer after client gets their display name.
+    // No broadcast here to avoid a race with loadLeaderboard() on startup.
+  })
   onLeaveSceneObservable.add(() => onPlayerLeave())
 
   room.onMessage('cleanItem', (data, context) => {
@@ -84,6 +133,21 @@ export function initServer() {
     cs.isCleaned = true
     cs.cleanedAt = now
     cs.cleanedBy = context.from
+
+    // Update all-time leaderboard score for this player
+    if (leaderboardLoaded) {
+      const address = context.from
+      const entry = leaderboard.get(address)
+      if (entry) {
+        entry.total += 1
+      } else {
+        leaderboard.set(address, { displayName: address.slice(0, 8) + '…', total: 1 })
+      }
+      executeTask(async () => {
+        await saveLeaderboard()
+        broadcastLeaderboard()
+      })
+    }
 
     const isSceneItem = SCENE_ITEM_PREFIXES.some(p => data.itemId.startsWith(p))
     if (isSceneItem) {
@@ -115,6 +179,24 @@ export function initServer() {
 
   room.onMessage('startNextRound', (_data, _context) => {
     onNextRoundRequest()
+  })
+
+  room.onMessage('registerPlayer', (data, context) => {
+    if (!context) return
+    const address = context.from
+    executeTask(async () => {
+      // Wait for the initial load to finish before touching the map
+      if (!leaderboardLoaded) await loadLeaderboard()
+      const existing = leaderboard.get(address)
+      if (existing) {
+        existing.displayName = data.displayName
+      } else {
+        leaderboard.set(address, { displayName: data.displayName, total: 0 })
+      }
+      await saveLeaderboard()
+      broadcastLeaderboard([address])
+      console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
+    })
   })
 
   room.onMessage('adminReset', (_data, context) => {

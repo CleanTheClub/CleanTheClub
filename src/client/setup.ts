@@ -1,5 +1,7 @@
 import { setupUi, resetIntro } from '../ui'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { executeTask } from '@dcl/sdk/ecs'
+import { getUserData } from '~system/UserIdentity'
 import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
@@ -15,6 +17,8 @@ import { initEmissionSystem } from './emissionSystem'
 import { initGrungeSystem } from './grungeSystem'
 import { initNarrativeSystem } from './narrativeSystem'
 import { initMusicManager } from './musicManager'
+import { setupLeaderboardBoard, updateLeaderboardDisplay } from './leaderboardSystem'
+import { room } from '../shared/messages'
 
 export function initClient() {
   console.log('[CLIENT] started')
@@ -66,4 +70,29 @@ export function initClient() {
   initEmissionSystem()
   initGrungeSystem()
   initNarrativeSystem()
+
+  // ── Leaderboard ──────────────────────────────────────────────
+  setupLeaderboardBoard()
+
+  // Handle leaderboard updates from server
+  room.onMessage('leaderboardUpdate', (data) => {
+    try {
+      const entries = JSON.parse(data.entriesJson)
+      updateLeaderboardDisplay(entries)
+    } catch {
+      console.log('[CLIENT] Failed to parse leaderboardUpdate')
+    }
+  })
+
+  // Register display name so leaderboard shows real names
+  executeTask(async () => {
+    try {
+      const { data } = await getUserData({})
+      if (data?.displayName) {
+        room.send('registerPlayer', { displayName: data.displayName })
+      }
+    } catch {
+      console.log('[CLIENT] Could not get user data for leaderboard registration')
+    }
+  })
 }

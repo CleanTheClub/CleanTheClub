@@ -9,10 +9,11 @@ export function findGltfEntity(containerEntity: Entity): Entity | undefined {
 }
 
 // Makes a scene-discovered GLB entity reliably clickable:
-// 1. Asserts CL_POINTER on the visible mesh layer for the hover outline.
-// 2. Adds a primitive box collider as a guaranteed pointer target — the box is a
-//    unit cube scaled by the entity's Transform, so sizing is controlled via
-//    Creator Hub scale. We intentionally do NOT touch invisibleMeshesCollisionMask.
+// 1. visibleMeshesCollisionMask |= CL_POINTER — needed for the hover outline;
+//    Creator Hub sets this per-model, this is a safety-net no-op if already set.
+// 2. MeshCollider.setBox — guarantees a hittable collider regardless of whether
+//    the GLB's visible mesh geometry registers pointer raycasts reliably.
+//    Size = entity Transform scale, so tune click feel via Creator Hub scale.
 export function setupClickProxy(gltfEnt: Entity): Entity {
   const g = GltfContainer.getMutable(gltfEnt)
   g.visibleMeshesCollisionMask = (g.visibleMeshesCollisionMask ?? 0) | ColliderLayer.CL_POINTER

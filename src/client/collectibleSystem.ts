@@ -70,7 +70,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     const { gltfEntity, containerEntity } = rec
     pointerEventsSystem.onPointerHoverEnter({ entity: gltfEntity }, () => playHoverSound())
     pointerEventsSystem.onPointerDown(
-      { entity: gltfEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Collect' } },
+      { entity: gltfEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
       () => {
         if (pendingCleans.has(itemId)) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }

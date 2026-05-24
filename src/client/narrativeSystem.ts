@@ -10,7 +10,7 @@
 
 import { engine, timers } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
-import { showNarrativeToast } from '../ui'
+import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,6 +92,7 @@ export function initNarrativeSystem(): void {
         // New round started (not the very first tick)
         firedMilestones.clear()
         firedWarnings.clear()
+        triggerRoundStartIntro()
       }
 
       if (phase === 'open') {

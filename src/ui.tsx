@@ -21,8 +21,9 @@ const INSTR_H_MOBILE      = 79      // display height — 630 × (128/1024)
 const INSTR_MARGIN_TOP    = 8
 
 // Entry intro animation — image centred on screen, then pops to its normal top position
-const INTRO_HOLD_S      = 6.0   // seconds to hold at centre before popping
-const INTRO_TWEEN_S     = 0.35  // duration of the pop to normal position (short = snappy)
+const INTRO_HOLD_S       = 6.0   // seconds to hold at centre on player entry
+const ROUND_START_HOLD_S = 2.5   // seconds to hold InstructionsUI at centre between rounds
+const INTRO_TWEEN_S      = 0.35  // duration of the pop to normal position (short = snappy)
 const INTRO_SIZE_MULT   = 1.75  // intro image is this much bigger than its normal size
 const INTRO_CENTER_Y    = 400   // virtual px from canvas top — where the intro image centre sits
 const INTRO_TIMER_BELOW = 100  // px relative to INTRO_CENTER_Y where the timer sits during intro
@@ -205,7 +206,7 @@ function formatTime(s: number): string {
 }
 
 function getRoundLabel(n: number): string {
-  const labels = ['Round 1', 'Round 2', 'Round 3', 'Final Round']
+  const labels = ['Round 1', 'Round 2', 'Round 3', 'Round 4', 'Final Round']
   return labels[Math.min(n, labels.length - 1)]
 }
 
@@ -228,6 +229,13 @@ function lerp(a: number, b: number, t: number): number { return a + (b - a) * t 
 export function resetIntro() {
   introStartMs = Date.now()
   introHoldS   = INTRO_HOLD_S
+}
+
+/** Called by narrativeSystem when a new round starts — shows InstructionsUI at centre then pops to top. */
+export function triggerRoundStartIntro() {
+  introStartMs   = Date.now()
+  introHoldS     = ROUND_START_HOLD_S
+  outcomeStartMs = -1
 }
 
 export function setupUi() {
@@ -256,12 +264,8 @@ const ui = () => {
     outcomeStartMs = Date.now()
     introStartMs   = -1   // cancel any pending player-entry intro
   }
-  if (!isOpen && prevIsOpen) {
-    // New round started — tween instructions from centre back to normal, no hold.
-    introStartMs   = Date.now()
-    introHoldS     = 0
-    outcomeStartMs = -1
-  }
+  // Round-start intro is triggered explicitly via triggerRoundStartIntro() from
+  // narrativeSystem — more reliable than render-loop detection for button-click starts.
   prevIsOpen = isOpen
 
   // isMobile() resolves asynchronously — returns false until the client reports
@@ -294,7 +298,7 @@ const ui = () => {
   // When the round-end banner fills the centre of the screen (desktop only),
   // push the toast stack down by 2 slots so it clears the banner.
   // Mobile toasts anchor at top:9% — already above the banner — no offset needed.
-  const toastTopSlots = isOpen && !mobile ? 2 : 0
+  // introHolding is computed after elapsedS/introActive below and factored in there.
 
   const barColor = pct >= 0.8 ? BAR_COLOR_GOOD
                  : pct >= 0.5 ? BAR_COLOR_MID
@@ -318,6 +322,9 @@ const ui = () => {
   // introHoldS = INTRO_HOLD_S for player entry (holds at centre), 0 for round start (snaps immediately).
   const elapsedS      = introStartMs >= 0 ? (Date.now() - introStartMs) / 1000 : 9999
   const introActive   = elapsedS < introHoldS + INTRO_TWEEN_S
+  // Banner is at centre when: round-end outcome is showing, OR intro is in its hold phase.
+  const introHolding  = introActive && elapsedS < introHoldS
+  const toastTopSlots = (isOpen || introHolding) && !mobile ? 2 : 0
   const introProgress = elapsedS < introHoldS ? 0
     : Math.min(1, (elapsedS - introHoldS) / INTRO_TWEEN_S)
   // Ease-in quad — accelerates into the snap, feels like a quick pop
