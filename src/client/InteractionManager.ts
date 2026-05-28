@@ -1,5 +1,6 @@
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
@@ -81,7 +82,7 @@ function enableClick(id: string) {
       }
     )
     pointerEventsSystem.onPointerUp(
-      { entity, opts: { button: InputAction.IA_POINTER } },
+      { entity, opts: { button: InputAction.IA_POINTER, showFeedback: false } },
       () => {
         if (activeHold?.id !== id) return
         activeHold = null
@@ -171,6 +172,19 @@ export function initInteractionManager(
   applyCleanStateRef = applyCleanState
   showHoldBarRef     = showHoldBar
   updateHoldBarRef   = updateHoldBar
+
+  // On scene (re-)entry clear all stale client state so the ClutterSync watcher
+  // treats every item as freshly unseen and correctly re-enables uncleaned ones.
+  onEnterSceneObservable.add(() => {
+    if (activeHold) {
+      showHoldBar(activeHold.id, false)
+      stopStickySound()
+      activeHold = null
+    }
+    pendingCleans.clear()
+    pendingVisualHide.clear()
+    lastState.clear()
+  })
 
   // Populate item refs immediately — enable/disable can be called as soon as sync fires
   for (const def of CLUTTER_DEFS) {

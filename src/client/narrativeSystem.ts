@@ -23,7 +23,8 @@ const ROUND_START: Record<number, string> & { DEFAULT: string } = {
   0:         "The club's a mess, let's clean it!",
   1:         "Round 2: the crowd expects better!",
   2:         "Round 3: no excuses, make it shine!",
-  3:         "Next round: give it everything!",
+  3:         "Round 4: you're on fire, keep going!",
+  4:         "Final round — give it everything you've got!",
   DEFAULT:   "New round: keep it up!",
 }
 
@@ -74,12 +75,14 @@ export function initNarrativeSystem(): void {
     let phase       = 'playing'
     let roundNumber = 0
     let secondsLeft = 0
+    let outcome     = ''
 
     for (const [, gs] of engine.getEntitiesWith(GameState)) {
       pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
       phase       = gs.phase
       roundNumber = gs.roundNumber
       secondsLeft = gs.secondsLeft
+      outcome     = gs.outcome
       break
     }
 
@@ -97,10 +100,6 @@ export function initNarrativeSystem(): void {
 
       if (phase === 'open') {
         // Doors opened — show outcome message after a short delay
-        const outcome = (() => {
-          for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.outcome
-          return ''
-        })()
         const text = ROUND_END[outcome] ?? ROUND_END.DEFAULT
         timers.setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS)
         // Party emote — fires slightly before the toast so the player is already

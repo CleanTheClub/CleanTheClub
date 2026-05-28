@@ -8,6 +8,8 @@ export const Messages = {
   startNextRound:   Schemas.Map({ dummy: Schemas.Boolean }),  // any player
   /** Sent on join so the server can map address → display name for the leaderboard. */
   registerPlayer:   Schemas.Map({ displayName: Schemas.String }),
+  /** Sent immediately on client start (no async wait) to wake a cold server ASAP. */
+  ping:             Schemas.Map({ dummy: Schemas.Boolean }),
 
   // ── Server → Client ─────────────────────────────────────────
   cleanRejected:    Schemas.Map({ itemId: Schemas.String }),

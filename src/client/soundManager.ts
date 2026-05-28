@@ -1,16 +1,17 @@
-import { engine, Entity, Transform, AudioSource } from '@dcl/sdk/ecs'
-import { timers } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, AudioSource, timers } from '@dcl/sdk/ecs'
 
 const SND_HOVER         = 'assets/scene/Sounds/hover.mp3'
 const SND_CLICK         = 'assets/scene/Sounds/click.mp3'
 const SND_STICKY        = 'assets/scene/Sounds/stickySound.mp3'
 const SND_CLEAN         = 'assets/scene/Sounds/cleanSound.mp3'
 const SND_NOTIFICATION  = 'assets/scene/Sounds/notificationSound.mp3'
+const SND_SQUELCH       = 'assets/scene/Sounds/squelch.mp3'
 
-const VOL_HOVER  = 0.7
-const VOL_CLICK  = 0.9
-const VOL_STICKY = 0.9
-const VOL_CLEAN  = 0.9
+const VOL_HOVER   = 0.7
+const VOL_CLICK   = 0.9
+const VOL_STICKY  = 0.9
+const VOL_CLEAN   = 0.9
+const VOL_SQUELCH = 2.0
 
 const INIT_POS = { x: 8, y: 1, z: 8 }
 
@@ -34,6 +35,7 @@ let lastNotificationMs = 0
 let hoverEntity:        Entity
 let clickEntity:        Entity
 let stickyEntity:       Entity
+let squelchEntity:      Entity
 let notificationEntity: Entity
 
 // Pool of 3 clean-sound entities, round-robined on each play call.
@@ -72,11 +74,16 @@ export function initSoundManager() {
     cleanPool.push(e)
   }
 
+  squelchEntity = engine.addEntity()
+  Transform.create(squelchEntity, { position: INIT_POS })
+  AudioSource.create(squelchEntity, { audioClipUrl: SND_SQUELCH, playing: false, loop: false, volume: VOL_SQUELCH })
+
   notificationEntity = engine.addEntity()
   Transform.create(notificationEntity, { position: INIT_POS })
   AudioSource.create(notificationEntity, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.7, pitch: 1.0 })
 }
 
+export function playSquelchSound() { playAt(squelchEntity) }
 export function playHoverSound()  { playAt(hoverEntity) }
 export function playClickSound()  { playAt(clickEntity) }
 export function playStickySound() { playAt(stickyEntity) }

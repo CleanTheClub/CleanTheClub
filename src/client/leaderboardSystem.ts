@@ -12,8 +12,11 @@ import {
   Transform,
   TextShape,
   TextAlignMode,
+  executeTask,
 } from '@dcl/sdk/ecs'
 import { Quaternion } from '@dcl/sdk/math'
+import { getUserData } from '~system/UserIdentity'
+import { room } from '../shared/messages'
 
 // ===============================================================
 //  ██████╗ ██████╗ ███╗   ██╗███████╗██╗ ██████╗
@@ -59,15 +62,16 @@ const LB_COLOR_SCORE  = { r: 0.8, g: 0.6,  b: 1,    a: 1 }   // lilac
 
 // ── Mock data ─────────────────────────────────────────────────
 // Shown immediately on load until the server sends real data.
+// Kept neutral so the swap to real scores isn't jarring.
 const LB_MOCK_DATA: Array<{ displayName: string; count: number }> = [
-  { displayName: 'CleanQueen',    count: 187 },
-  { displayName: 'MopMaster',     count: 154 },
-  { displayName: 'ScrubLord',     count: 121 },
-  { displayName: 'SparkleKing',   count:  98 },
-  { displayName: 'DustBuster',    count:  76 },
-  { displayName: 'GlowGetter',    count:  53 },
-  { displayName: 'TidyTiger',     count:  34 },
-  { displayName: 'NeatFreak',     count:  18 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
+  { displayName: '---', count: 0 },
 ]
 
 // =============================================================
@@ -75,7 +79,11 @@ const LB_MOCK_DATA: Array<{ displayName: string; count: number }> = [
 // =============================================================
 
 // Two label entities per row: [nameLabel, scoreLabel, nameLabel, scoreLabel …]
+// Module-level — populated once by setupLeaderboardBoard().
 const leaderboardLabels: Entity[] = []
+// Idempotency guard: prevents duplicate entities if setupLeaderboardBoard()
+// is ever called more than once (e.g. during hot-reload in the SDK playground).
+let boardInitialised = false
 
 function getLabels(entryIdx: number): { name: Entity; score: Entity } {
   const base = entryIdx * 2
@@ -83,6 +91,8 @@ function getLabels(entryIdx: number): { name: Entity; score: Entity } {
 }
 
 export function setupLeaderboardBoard(): void {
+  if (boardInitialised) return
+  boardInitialised = true
   const quat = Quaternion.fromEulerDegrees(
     LB_ROTATION.x,
     LB_ROTATION.y,
@@ -149,4 +159,41 @@ export function updateLeaderboardDisplay(entries: Array<{ displayName: string; c
     TextShape.getMutable(name).text  = entry ? `${i + 1}.  ${entry.displayName}` : ''
     TextShape.getMutable(score).text = entry ? `${entry.count}` : ''
   }
+}
+
+// ── Leaderboard system init ───────────────────────────────────
+// Call once from setup.ts. Creates the in-world board, registers the server
+// message handler, and sends the player's display name to the server so it
+// can map address → name for the leaderboard.
+export function initLeaderboardSystem(): void {
+  setupLeaderboardBoard()
+
+  // Wake the server immediately — sent synchronously before any async getUserData call.
+  // The server shuts down when the scene is empty; this message ensures it starts up
+  // ASAP so the first round of player interactions isn't delayed by cold-start latency.
+  room.send('ping', { dummy: true })
+
+  // Handle real-time leaderboard updates pushed from the server
+  room.onMessage('leaderboardUpdate', (data) => {
+    try {
+      const entries = JSON.parse(data.entriesJson)
+      updateLeaderboardDisplay(entries)
+    } catch {
+      console.log('[Leaderboard] Failed to parse leaderboardUpdate')
+    }
+  })
+
+  // Send display name to server so leaderboard shows real names, not addresses
+  executeTask(async () => {
+    try {
+      const { data } = await getUserData({})
+      if (data?.displayName) {
+        room.send('registerPlayer', { displayName: data.displayName })
+      }
+    } catch {
+      console.log('[Leaderboard] Could not get user data for registration')
+    }
+  })
+
+  console.log('[Leaderboard] System ready')
 }

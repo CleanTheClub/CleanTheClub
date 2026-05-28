@@ -2,6 +2,7 @@
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { SceneItemDef } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
@@ -40,10 +41,20 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   const pendingVisualHide = new Set<string>()
   const lastState         = new Map<string, boolean>()
 
+  // On scene (re-)entry clear stale state so the ClutterSync watcher re-applies
+  // authoritative state and re-enables clicks on any newly-uncleaned items.
+  onEnterSceneObservable.add(() => {
+    pendingCleans.clear()
+    pendingVisualHide.clear()
+    lastState.clear()
+  })
+
   type GltfRecord = {
     containerEntity: Entity
     gltfEntity:      Entity
-    originalScale:   { x: number; y: number; z: number }
+    // null = joined while this item was already cleaned; real scale not yet captured.
+    // Captured the first time we call setVisible(false) and see a non-zero scale.
+    originalScale:   { x: number; y: number; z: number } | null
   }
   const gltfRecords = new Map<string, GltfRecord>()
 
@@ -51,9 +62,22 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     const rec = gltfRecords.get(itemId)
     if (!rec) return
     const tf = Transform.getMutable(rec.containerEntity)
-    tf.scale = visible
-      ? { x: rec.originalScale.x, y: rec.originalScale.y, z: rec.originalScale.z }
-      : { x: 0.001, y: 0.001, z: 0.001 }
+    if (visible) {
+      if (rec.originalScale !== null) {
+        tf.scale = rec.originalScale
+      }
+      // If originalScale is still null (joined while item was cleaned), don't write
+      // 0.001 — the server's CRDT has already, or will shortly, restore the real scale.
+    } else {
+      // Capture real scale before hiding if we haven't yet (item was cleaned on join).
+      if (rec.originalScale === null) {
+        const curr = Transform.getOrNull(rec.containerEntity)
+        if (curr && curr.scale.x > 0.01) {
+          rec.originalScale = { x: curr.scale.x, y: curr.scale.y, z: curr.scale.z }
+        }
+      }
+      tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
+    }
   }
 
   function disableClick(itemId: string) {
@@ -132,9 +156,11 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
       if (!gltfEnt) continue
 
       const tf = Transform.getOrNull(entity)
-      const originalScale = tf
-        ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }
-        : { x: 1, y: 1, z: 1 }
+      // If the item is already cleaned (scale ≈ 0) when we join, don't record 0.001 as
+      // the original scale — that would keep the item invisible after every respawn.
+      // originalScale stays null and is captured the first time we call setVisible(false).
+      const rawScale = tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : null
+      const originalScale = (rawScale && rawScale.x > 0.01) ? rawScale : null
 
       setupClickProxy(gltfEnt)
 

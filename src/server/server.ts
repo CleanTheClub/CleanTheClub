@@ -11,7 +11,15 @@ import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onP
 // ── Leaderboard ───────────────────────────────────────────────
 interface LeaderboardEntry { displayName: string; total: number }
 const leaderboard = new Map<string, LeaderboardEntry>()  // address → entry
-let leaderboardLoaded = false
+
+// Single-promise guard — ensures loadLeaderboard() only ever runs once,
+// even if ensureLeaderboardLoaded() is called concurrently by multiple handlers.
+let leaderboardLoadPromise: Promise<void> | null = null
+
+function ensureLeaderboardLoaded(): Promise<void> {
+  if (!leaderboardLoadPromise) leaderboardLoadPromise = loadLeaderboard()
+  return leaderboardLoadPromise
+}
 
 async function loadLeaderboard(): Promise<void> {
   const raw = await Storage.get<string>('leaderboard')
@@ -21,7 +29,6 @@ async function loadLeaderboard(): Promise<void> {
     for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
     console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
   }
-  leaderboardLoaded = true
 }
 
 async function saveLeaderboard(): Promise<void> {
@@ -45,6 +52,22 @@ function broadcastLeaderboard(to?: string[]): void {
   } else {
     room.send('leaderboardUpdate', { entriesJson })
   }
+}
+
+// Trailing debounce — collapses rapid back-to-back cleanItem score updates
+// into a single save+broadcast after LB_DEBOUNCE_MS of quiet.
+const LB_DEBOUNCE_MS = 4_000
+let lbDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleLbUpdate(): void {
+  if (lbDebounceTimer !== null) clearTimeout(lbDebounceTimer)
+  lbDebounceTimer = setTimeout(() => {
+    lbDebounceTimer = null
+    executeTask(async () => {
+      await saveLeaderboard()
+      broadcastLeaderboard()
+    })
+  }, LB_DEBOUNCE_MS)
 }
 
 export function initServer() {
@@ -105,17 +128,38 @@ export function initServer() {
 
   initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales)
 
-  // Load persisted leaderboard from Storage (async — data arrives soon after startup)
+  // Load persisted leaderboard from Storage (async — data arrives soon after startup).
+  // ensureLeaderboardLoaded() guarantees only one load ever runs, even if registerPlayer
+  // fires concurrently before this completes.
   executeTask(async () => {
-    await loadLeaderboard()
+    await ensureLeaderboardLoaded()
   })
 
-  onEnterSceneObservable.add(() => {
+  // Track which session IDs are currently counted as "in scene".
+  // Guards against double-counting when both onEnterSceneObservable AND
+  // registerPlayer fire for the same player (the normal walk-in path), and
+  // ensures teleport-in players (who skip the boundary event) are still counted
+  // once registerPlayer arrives.
+  const activeSessions = new Set<string>()
+
+  function playerEntered(sessionId: string) {
+    if (activeSessions.has(sessionId)) return
+    activeSessions.add(sessionId)
     onPlayerEnter()
-    // Leaderboard is pushed via registerPlayer after client gets their display name.
-    // No broadcast here to avoid a race with loadLeaderboard() on startup.
+  }
+
+  function playerLeft(sessionId: string) {
+    if (!activeSessions.has(sessionId)) return
+    activeSessions.delete(sessionId)
+    onPlayerLeave()
+  }
+
+  onEnterSceneObservable.add((player) => {
+    playerEntered(player.userId)
   })
-  onLeaveSceneObservable.add(() => onPlayerLeave())
+  onLeaveSceneObservable.add((player) => {
+    playerLeft(player.userId)
+  })
 
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
@@ -124,7 +168,7 @@ export function initServer() {
       return
     }
     const entity = itemEntities.get(data.itemId)
-    if (!entity || ClutterSync.get(entity).isCleaned) {
+    if (!entity || ClutterSync.getOrNull(entity)?.isCleaned) {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
@@ -134,8 +178,10 @@ export function initServer() {
     cs.cleanedAt = now
     cs.cleanedBy = context.from
 
-    // Update all-time leaderboard score for this player
-    if (leaderboardLoaded) {
+    // Update all-time leaderboard score for this player.
+    // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
+    // scheduleLbUpdate() debounces rapid back-to-back saves — one disk write per burst.
+    if (leaderboardLoadPromise !== null) {
       const address = context.from
       const entry = leaderboard.get(address)
       if (entry) {
@@ -143,10 +189,7 @@ export function initServer() {
       } else {
         leaderboard.set(address, { displayName: address.slice(0, 8) + '…', total: 1 })
       }
-      executeTask(async () => {
-        await saveLeaderboard()
-        broadcastLeaderboard()
-      })
+      scheduleLbUpdate()
     }
 
     const isSceneItem = SCENE_ITEM_PREFIXES.some(p => data.itemId.startsWith(p))
@@ -172,10 +215,17 @@ export function initServer() {
         }
       })
     } else {
-      const def = CLUTTER_DEFS.find(d => d.id === data.itemId)!
+      const def = CLUTTER_DEFS.find(d => d.id === data.itemId)
+      if (!def) {
+        console.log(`[SERVER] cleanItem: unknown itemId '${data.itemId}' — skipped`)
+        return
+      }
       onItemCleaned(def)
     }
   })
+
+  // No-op: client sends this immediately on join (before getUserData) to wake a cold server.
+  room.onMessage('ping', (_data, _context) => {})
 
   room.onMessage('startNextRound', (_data, _context) => {
     onNextRoundRequest()
@@ -184,15 +234,22 @@ export function initServer() {
   room.onMessage('registerPlayer', (data, context) => {
     if (!context) return
     const address = context.from
+
+    // Fallback enter-trigger for players who teleport directly into the scene
+    // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
+    playerEntered(address)
+
     executeTask(async () => {
-      // Wait for the initial load to finish before touching the map
-      if (!leaderboardLoaded) await loadLeaderboard()
+      // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,
+      // so concurrent registerPlayer calls never start a second disk read.
+      await ensureLeaderboardLoaded()
       const existing = leaderboard.get(address)
       if (existing) {
         existing.displayName = data.displayName
       } else {
         leaderboard.set(address, { displayName: data.displayName, total: 0 })
       }
+      // Persist the updated display name; broadcast top-10 only to this player.
       await saveLeaderboard()
       broadcastLeaderboard([address])
       console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)

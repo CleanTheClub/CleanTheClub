@@ -22,8 +22,8 @@ const PS_PLAYING = 0
 const PS_STOPPED = 2
 
 // ── Pool config ───────────────────────────────────────────────────────────────
-const MAX_STINK_EMITTERS = 50   // hard cap on emitter entities
-const PARTICLES_PER_ITEM = 5   // maxParticles per emitter → ≤ 250 total
+const MAX_STINK_EMITTERS = 100  // hard cap on emitter entities (scene currently has ~83 items)
+const PARTICLES_PER_ITEM = 5   // maxParticles per emitter → ≤ 500 total
 const STINK_Y_OFFSET     = 0.6 // metres above the item's Transform position
 
 // ── Internal maps ─────────────────────────────────────────────────────────────
@@ -182,11 +182,13 @@ export function initStinkSystem() {
         for (const emitter of emitterFor.values()) pauseEmitter(emitter)
         console.log('[STINK] Party mode — all emitters paused')
       } else if (prev === 'open') {
-        // New round started — resume emitters for any item still uncleaned
-        for (const [itemId, emitter] of emitterFor) {
-          if (!(lastCleaned.get(itemId) ?? false)) resumeEmitter(emitter)
-        }
-        console.log('[STINK] Round started — emitters resumed')
+        // New round started — ClutterSync changes that arrived during party mode
+        // were skipped by the per-frame watcher (partyMode guard), so lastCleaned
+        // can be stale. Clear it entirely and resume every emitter; the watcher
+        // will re-pause any that are genuinely still cleaned on its first tick.
+        lastCleaned.clear()
+        for (const emitter of emitterFor.values()) resumeEmitter(emitter)
+        console.log('[STINK] Round started — all emitters resumed')
       }
       return
     }

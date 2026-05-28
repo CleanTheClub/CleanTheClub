@@ -15,8 +15,11 @@ export function findGltfEntity(containerEntity: Entity): Entity | undefined {
 //    the GLB's visible mesh geometry registers pointer raycasts reliably.
 //    Size = entity Transform scale, so tune click feel via Creator Hub scale.
 export function setupClickProxy(gltfEnt: Entity): Entity {
-  const g = GltfContainer.getMutable(gltfEnt)
-  g.visibleMeshesCollisionMask = (g.visibleMeshesCollisionMask ?? 0) | ColliderLayer.CL_POINTER
+  const g = GltfContainer.getOrNull(gltfEnt)
+  if (g) {
+    GltfContainer.getMutable(gltfEnt).visibleMeshesCollisionMask =
+      (g.visibleMeshesCollisionMask ?? 0) | ColliderLayer.CL_POINTER
+  }
   MeshCollider.setBox(gltfEnt, ColliderLayer.CL_POINTER)
   return gltfEnt
 }

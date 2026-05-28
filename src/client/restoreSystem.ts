@@ -13,10 +13,11 @@
 
 import {
   engine, Entity, Name,
-  VisibilityComponent, Animator,
+  VisibilityComponent, Animator, GltfContainer,
   pointerEventsSystem, PointerEvents, InputAction,
   Transform, timers,
 } from '@dcl/sdk/ecs'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync } from '../shared/schemas'
 import { room } from '../shared/messages'
 import { setupClickProxy } from '../shared/sceneItemHelpers'
@@ -60,6 +61,17 @@ function showDirty(s: ItemState) {
   if (s.dirtyEnt !== undefined) enableClick(s)
 }
 
+function hideAnimEntity(s: ItemState) {
+  if (s.animEnt === undefined) return
+  // Reset the Animator back to a clean resting state before hiding.
+  // Leaving the animation mid-frame can prevent VisibilityComponent from
+  // fully clearing the render in some DCL contexts.
+  Animator.createOrReplace(s.animEnt, {
+    states: [{ clip: s.def.animClip, playing: false, loop: false }],
+  })
+  setVisible(s.animEnt, false)
+}
+
 function showAnimAndScheduleClean(s: ItemState) {
   setVisible(s.dirtyEnt, false)
   setVisible(s.animEnt,  true)
@@ -69,19 +81,27 @@ function showAnimAndScheduleClean(s: ItemState) {
   if (s.pendingAnimSwapTimer !== undefined) timers.clearTimeout(s.pendingAnimSwapTimer)
   s.pendingAnimSwapTimer = timers.setTimeout(() => {
     s.pendingAnimSwapTimer = undefined
-    setVisible(s.animEnt,  false)
+    hideAnimEntity(s)
     setVisible(s.cleanEnt, true)
+    // Sparkle burst when the clean model appears
+    const pos = s.dirtyEnt !== undefined ? Transform.getOrNull(s.dirtyEnt)?.position : undefined
+    if (pos) playSparkle(pos)
   }, s.def.animDurationMs)
 }
 
-function showCleanInstant(s: ItemState) {
+// spark=false suppresses the sparkle on initial scene load (item was already clean)
+function showCleanInstant(s: ItemState, spark = true) {
   if (s.pendingAnimSwapTimer !== undefined) {
     timers.clearTimeout(s.pendingAnimSwapTimer)
     s.pendingAnimSwapTimer = undefined
   }
   setVisible(s.dirtyEnt, false)
-  setVisible(s.animEnt,  false)
+  hideAnimEntity(s)
   setVisible(s.cleanEnt, true)
+  if (spark) {
+    const pos = s.dirtyEnt !== undefined ? Transform.getOrNull(s.dirtyEnt)?.position : undefined
+    if (pos) playSparkle(pos)
+  }
 }
 
 // ── Click registration ───────────────────────────────────────────────────────
@@ -131,6 +151,19 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
     })
   }
 
+  // On scene (re-)entry reset all pending state so the ClutterSync watcher
+  // treats each prop as unseen and correctly re-shows dirty/clean on next tick.
+  onEnterSceneObservable.add(() => {
+    for (const s of states.values()) {
+      s.pendingClean = false
+      s.lastSyncCleaned = null
+      if (s.pendingAnimSwapTimer !== undefined) {
+        timers.clearTimeout(s.pendingAnimSwapTimer)
+        s.pendingAnimSwapTimer = undefined
+      }
+    }
+  })
+
   // ── One-shot discovery system — removed once all props are found ─────────────
   // Builds a reverse lookup: Name value → itemId + slot ('dirty'|'anim'|'clean')
   type Slot = 'dirty' | 'anim' | 'clean'
@@ -150,11 +183,24 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
       if (!entry) continue
 
       const s = states.get(entry.itemId)!
-      if (entry.slot === 'dirty' && s.dirtyEnt === undefined) s.dirtyEnt = e
-      if (entry.slot === 'anim'  && s.animEnt  === undefined) s.animEnt  = e
-      if (entry.slot === 'clean' && s.cleanEnt === undefined) s.cleanEnt = e
+      if (entry.slot === 'dirty' && s.dirtyEnt === undefined) {
+        s.dirtyEnt = e
+        // Dirty starts visible — correct default, no change needed
+      }
+      if (entry.slot === 'anim' && s.animEnt === undefined) {
+        s.animEnt = e
+        setVisible(e, false)   // hide immediately — only shown during animation
+      }
+      if (entry.slot === 'clean' && s.cleanEnt === undefined) {
+        s.cleanEnt = e
+        setVisible(e, false)   // hide immediately — only shown once cleaned
+      }
 
       if (!s.allFound && s.dirtyEnt !== undefined && s.animEnt !== undefined && s.cleanEnt !== undefined) {
+        // GltfContainer may not have synced yet even though Name has — wait until it arrives
+        // before completing discovery, so setupClickProxy never throws mid-block.
+        if (!GltfContainer.getOrNull(s.dirtyEnt)) continue
+
         s.allFound = true
         remaining--
         console.log(`[Restore] "${s.def.itemId}" discovered — dirty=${s.dirtyEnt} anim=${s.animEnt} clean=${s.cleanEnt}`)
@@ -164,7 +210,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })
 
-        if (s.lastSyncCleaned === true) showCleanInstant(s)
+        if (s.lastSyncCleaned === true) showCleanInstant(s, false)  // no sparkle on load
         else                            showDirty(s)
       }
     }

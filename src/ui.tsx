@@ -93,9 +93,9 @@ const NARR_FONT_SIZE      = 17     // narrative body text
 // Tune each set independently to align with the text area in each PNG asset.
 const TOAST_LABEL_TOP     = 0.5    // glasses / bottles count: vertical position
 const TOAST_LABEL_LEFT    = 0.35   // glasses / bottles count: horizontal position
-const NARR_LABEL_TOP      = 0.5   // narrative body text: vertical position
+const NARR_LABEL_TOP      = 0.6   // narrative body text: vertical position
 const NARR_LABEL_LEFT     = 0.325   // narrative body text: horizontal position
-const NARR_LABEL_W_FRAC   = 0.77   // narrative text box width as fraction of toast width
+const NARR_LABEL_W_FRAC   = 0.6   // narrative text box width as fraction of toast width
 // Toast container anchor — percentage strings scale with the canvas on all devices
 const TOAST_POS_DESKTOP   = { top: '33%', right: '2%'  } as const
 const TOAST_POS_MOBILE    = { top: '9%',  left: '38%'  } as const

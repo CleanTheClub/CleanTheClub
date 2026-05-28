@@ -3,7 +3,7 @@ import { ClutterSync, GameState } from '../shared/schemas'
 import {
   CLUTTER_DEFS,
   ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, NEXT_ROUND_LOCK_MS,
-  CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS,
+  CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS,
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
 
@@ -52,7 +52,9 @@ function syncGameState() {
   gs.cleanedCount = countCleaned()
   gs.totalCount   = itemEntities.size
   gs.secondsLeft  = phase === 'playing'
-    ? Math.max(0, Math.ceil((getRoundDurationMs() - (now - roundStartMs)) / 1000))
+    ? roundStartMs === 0
+      ? Math.ceil(getRoundDurationMs() / 1000)   // timer not yet started — show full duration
+      : Math.max(0, Math.ceil((getRoundDurationMs() - (now - roundStartMs)) / 1000))
     : phase === 'open'
     ? Math.max(0, Math.ceil((OPEN_DISPLAY_MS - (now - openStartMs)) / 1000))
     : 0
@@ -114,17 +116,33 @@ function startNextRound(fullReset: boolean) {
 
   currentOutcome = ''
   resetClutter()
-  phase        = 'playing'
-  roundStartMs = Date.now()
-  syncGameState()
+  phase = 'playing'
 
-  roundTimer = setTimeout(triggerOpen, getRoundDurationMs())
+  if (playerCount > 0) {
+    // Players are present — start the countdown immediately
+    roundStartMs = Date.now()
+    roundTimer   = setTimeout(triggerOpen, getRoundDurationMs())
+  } else {
+    // Scene is empty — hold at full duration until someone enters
+    roundStartMs = 0
+    console.log('[ROUND] No players — round timer paused until first player enters')
+  }
+
+  syncGameState()
+}
+
+// Returns baseMs divided by the scale factor for the current player count.
+// More players → smaller delay → items respawn faster → more mess to handle.
+function scaledRespawnMs(baseMs: number): number {
+  const idx    = Math.min(Math.max(playerCount - 1, 0), RESPAWN_SCALE_FACTORS.length - 1)
+  const factor = RESPAWN_SCALE_FACTORS[idx]
+  return Math.round(baseMs / factor)
 }
 
 export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
   if (phase !== 'playing') return
 
-  const delay = def.fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS
+  const delay = scaledRespawnMs(def.fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS)
   const t = setTimeout(() => {
     respawnTimers.delete(def.id)
     const entity = itemEntities.get(def.id)!
@@ -143,7 +161,7 @@ export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
 // restoring the entity's scale on the server.
 export function onSceneItemCleaned(itemId: string, onRespawn: () => void, fast = false) {
   if (phase !== 'playing') return
-  const delay = fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS
+  const delay = scaledRespawnMs(fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS)
   const t = setTimeout(() => {
     respawnTimers.delete(itemId)
     onRespawn()
@@ -162,14 +180,32 @@ export function onNextRoundRequest() {
   startNextRound(false)
 }
 
+function logScaling() {
+  const idx    = Math.min(Math.max(playerCount - 1, 0), RESPAWN_SCALE_FACTORS.length - 1)
+  const factor = RESPAWN_SCALE_FACTORS[idx]
+  console.log(`[ROUND] Respawn rate: ${factor.toFixed(2)}× (${Math.round(CLUTTER_RESPAWN_MS / factor / 1000)}s standard / ${Math.round(FAST_RESPAWN_MS / factor / 1000)}s fast)`)
+}
+
 export function onPlayerEnter() {
   playerCount++
   console.log(`[ROUND] Player entered — count: ${playerCount}`)
+  logScaling()
+
+  // If the round timer isn't running yet (server just started, or scene was
+  // empty after a reset), kick it off now so the countdown only begins once
+  // someone has actually made it into the scene.
+  if (playerCount === 1 && roundTimer === null && phase === 'playing') {
+    roundStartMs = Date.now()
+    roundTimer   = setTimeout(triggerOpen, getRoundDurationMs())
+    syncGameState()
+    console.log('[ROUND] First player entered — round timer started')
+  }
 }
 
 export function onPlayerLeave() {
   playerCount = Math.max(0, playerCount - 1)
   console.log(`[ROUND] Player left — count: ${playerCount}`)
+  if (playerCount > 0) logScaling()
   if (playerCount === 0) {
     nextRoundTriggered = true   // block any in-flight startNextRound messages
     if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
@@ -195,11 +231,10 @@ export function initRoundManager(
 
   roundNumber    = 0
   currentOutcome = ''
-  roundStartMs   = Date.now()
+  roundStartMs   = 0       // timer hasn't started — waits for first player enter
   phase          = 'playing'
   syncGameState()
-
-  roundTimer = setTimeout(triggerOpen, getRoundDurationMs())
+  // roundTimer intentionally not started here — onPlayerEnter starts it
 
   setInterval(() => {
     if (phase === 'playing' || phase === 'open') syncGameState()

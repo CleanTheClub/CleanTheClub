@@ -1,7 +1,5 @@
 import { setupUi, resetIntro } from '../ui'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { executeTask } from '@dcl/sdk/ecs'
-import { getUserData } from '~system/UserIdentity'
 import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
@@ -16,9 +14,9 @@ import { initConfettiSystem } from './confettiSystem'
 import { initEmissionSystem } from './emissionSystem'
 import { initGrungeSystem } from './grungeSystem'
 import { initNarrativeSystem } from './narrativeSystem'
+import { initStickyHazardSystem } from './stickyHazardSystem'
 import { initMusicManager } from './musicManager'
-import { setupLeaderboardBoard, updateLeaderboardDisplay } from './leaderboardSystem'
-import { room } from '../shared/messages'
+import { initLeaderboardSystem } from './leaderboardSystem'
 
 export function initClient() {
   console.log('[CLIENT] started')
@@ -63,6 +61,33 @@ export function initClient() {
       animDurationMs: 500,
       hoverText:      'Clean',
     },
+    {
+      itemId:         'sofa_cushion_1',
+      nameDirty:      'dirtySofaCushion',
+      nameAnim:       'SofaCushionAnim_1',
+      nameClean:      'cleanSofaCushion',
+      animClip:       'restore2',
+      animDurationMs: 1000,  // 30 frames @ 30 fps
+      hoverText:      'Clean',
+    },
+    {
+      itemId:         'sofa_cushion_2',
+      nameDirty:      'dirtySofaCushion2',
+      nameAnim:       'SofaCushionAnim_2',
+      nameClean:      'cleanSofaCushion2',
+      animClip:       'restore3',
+      animDurationMs: 1000,  // 30 frames @ 30 fps
+      hoverText:      'Clean',
+    },
+    {
+      itemId:         'sofa_cushion_3',
+      nameDirty:      'dirtySofaCushion3',
+      nameAnim:       'SofaCushionAnim_3',
+      nameClean:      'cleanSofaCushion3',
+      animClip:       'restore4',
+      animDurationMs: 1000,  // 30 frames @ 30 fps
+      hoverText:      'Clean',
+    },
   ])
   initSparkleSystem()
   initStinkSystem()
@@ -70,29 +95,6 @@ export function initClient() {
   initEmissionSystem()
   initGrungeSystem()
   initNarrativeSystem()
-
-  // ── Leaderboard ──────────────────────────────────────────────
-  setupLeaderboardBoard()
-
-  // Handle leaderboard updates from server
-  room.onMessage('leaderboardUpdate', (data) => {
-    try {
-      const entries = JSON.parse(data.entriesJson)
-      updateLeaderboardDisplay(entries)
-    } catch {
-      console.log('[CLIENT] Failed to parse leaderboardUpdate')
-    }
-  })
-
-  // Register display name so leaderboard shows real names
-  executeTask(async () => {
-    try {
-      const { data } = await getUserData({})
-      if (data?.displayName) {
-        room.send('registerPlayer', { displayName: data.displayName })
-      }
-    } catch {
-      console.log('[CLIENT] Could not get user data for leaderboard registration')
-    }
-  })
+  initStickyHazardSystem()
+  initLeaderboardSystem()
 }
