@@ -14,6 +14,7 @@ import {
   TextAlignMode,
   executeTask,
 } from '@dcl/sdk/ecs'
+import { isStateSyncronized } from '@dcl/sdk/network'
 import { Quaternion } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { room } from '../shared/messages'
@@ -183,17 +184,30 @@ export function initLeaderboardSystem(): void {
     }
   })
 
-  // Send display name to server so leaderboard shows real names, not addresses
+  // Send display name to server so leaderboard shows real names, not addresses.
+  // Two async gates must both pass before sending:
+  //   1. getUserData resolves (identity service call — happens first, stores name here)
+  //   2. isStateSyncronized() — CRDT snapshot received from server (checked by a system)
+  // Sending registerPlayer before CRDT sync can race the server's cold-start state.
+  let pendingDisplayName: string | null = null
+
   executeTask(async () => {
     try {
       const { data } = await getUserData({})
-      if (data?.displayName) {
-        room.send('registerPlayer', { displayName: data.displayName })
-      }
+      if (data?.displayName) pendingDisplayName = data.displayName
     } catch {
       console.log('[Leaderboard] Could not get user data for registration')
     }
   })
+
+  // One-shot system: fires registerPlayer once BOTH conditions are met.
+  // Removes itself immediately so the send happens exactly once.
+  const registerSystem = () => {
+    if (!isStateSyncronized() || pendingDisplayName === null) return
+    engine.removeSystem(registerSystem)
+    room.send('registerPlayer', { displayName: pendingDisplayName })
+  }
+  engine.addSystem(registerSystem)
 
   console.log('[Leaderboard] System ready')
 }

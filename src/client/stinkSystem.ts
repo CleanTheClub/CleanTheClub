@@ -8,6 +8,7 @@ import {
   ParticleSystem,
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3 } from '@dcl/sdk/math'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS } from '../shared/config'
 import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
@@ -116,6 +117,16 @@ export function registerStinkEmitter(itemId: string, pos: { x: number; y: number
 
 // ── Public init ───────────────────────────────────────────────────────────────
 export function initStinkSystem() {
+  // On scene (re-)entry clear lastCleaned so the per-frame watcher re-evaluates
+  // every item's clean state on the next tick.  Without this, brief leaves and
+  // re-entries leave lastCleaned stale: items that were cleaned before leaving
+  // never get their emitters re-paused (or re-resumed) when state changes while
+  // the player is away.
+  onEnterSceneObservable.add(() => {
+    lastCleaned.clear()
+    console.log('[STINK] onEnterSceneObservable — lastCleaned cleared')
+  })
+
   let allocated = 0
 
   function tryAllocate(itemId: string, pos: { x: number; y: number; z: number }) {

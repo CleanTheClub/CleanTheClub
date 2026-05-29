@@ -22,17 +22,26 @@ function ensureLeaderboardLoaded(): Promise<void> {
 }
 
 async function loadLeaderboard(): Promise<void> {
-  const raw = await Storage.get<string>('leaderboard')
-  if (!raw) { console.log('[SERVER] No leaderboard data — starting fresh') }
-  else {
-    const records: Array<{ address: string; displayName: string; total: number }> = JSON.parse(raw)
-    for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
-    console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+  try {
+    const raw = await Storage.get<string>('leaderboard')
+    if (!raw) {
+      console.log('[SERVER] No leaderboard data — starting fresh')
+    } else {
+      const records: Array<{ address: string; displayName: string; total: number }> = JSON.parse(raw)
+      for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
+      console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+    }
+  } catch (e) {
+    // Reject the promise so all callers that await ensureLeaderboardLoaded() also
+    // fail — preventing any save that would overwrite good data with an empty map.
+    console.log('[SERVER] ERROR: leaderboard load failed — saves blocked to prevent data loss:', e)
+    throw e
   }
 }
 
 async function saveLeaderboard(): Promise<void> {
   const records = [...leaderboard.entries()].map(([address, e]) => ({ address, ...e }))
+  console.log(`[SERVER] Saving leaderboard: ${records.length} players`)
   await Storage.set('leaderboard', JSON.stringify(records))
 }
 
@@ -64,6 +73,15 @@ function scheduleLbUpdate(): void {
   lbDebounceTimer = setTimeout(() => {
     lbDebounceTimer = null
     executeTask(async () => {
+      // Always wait for the load to complete before saving — prevents overwriting
+      // good stored data with an empty map on a cold server start where a player
+      // cleans an item within the first 4 seconds (before Storage.get resolves).
+      try {
+        await ensureLeaderboardLoaded()
+      } catch {
+        console.log('[SERVER] Leaderboard load failed — skipping save to prevent data loss')
+        return
+      }
       await saveLeaderboard()
       broadcastLeaderboard()
     })

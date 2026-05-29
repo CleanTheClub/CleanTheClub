@@ -2,6 +2,7 @@
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
+import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { SceneItemDef } from '../shared/glassDiscovery'
@@ -109,8 +110,18 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
 
         pendingVisualHide.add(itemId)
         timers.setTimeout(() => {
-          if (!pendingVisualHide.has(itemId)) return
+          // Always delete the pending-hide guard first so the ClutterSync watcher
+          // can take over if it hasn't already (e.g. after re-entry clear).
+          const wasPending = pendingVisualHide.has(itemId)
           pendingVisualHide.delete(itemId)
+          // Hide + sparkle if:
+          //   (a) normal path — we were still in the pending set, OR
+          //   (b) onEnterSceneObservable wiped pendingVisualHide but the ClutterSync
+          //       watcher already confirmed clean (lastState=true) so this is a
+          //       guaranteed-safe visual update.
+          // In case (b) setVisible is a no-op (watcher already hid the item), but
+          // the sparkle still plays at the correct emote-touch moment.
+          if (!wasPending && lastState.get(itemId) !== true) return
           setVisible(itemId, false)
           if (pos) playSparkle(pos)
         }, PICKUP_TOUCH_MS)
@@ -169,12 +180,18 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
 
       const knownCleaned = lastState.get(itemId)
       if (knownCleaned !== undefined) {
+        // ClutterSync watcher already processed authoritative state — apply it now.
         setVisible(itemId, !knownCleaned)
         if (knownCleaned) disableClick(itemId)
         else              enableClick(itemId)
-      } else {
+      } else if (isStateSyncronized()) {
+        // State is fully synced but watcher hasn't seen this item yet (rare race).
+        // Enable as a safe default; watcher will disableClick if the item turns out
+        // to be already cleaned when its ClutterSync component arrives.
         enableClick(itemId)
       }
+      // else: CRDT not yet complete — do NOT enable clicks.  The ClutterSync watcher
+      // will call enableClick / disableClick once the authoritative state arrives.
     }
 
     if (needsSetup.size === 0) { engine.removeSystem(setupSystem); return }

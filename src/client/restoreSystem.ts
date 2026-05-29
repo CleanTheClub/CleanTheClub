@@ -17,6 +17,7 @@ import {
   pointerEventsSystem, PointerEvents, InputAction,
   Transform, timers,
 } from '@dcl/sdk/ecs'
+import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync } from '../shared/schemas'
 import { room } from '../shared/messages'
@@ -210,8 +211,15 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })
 
-        if (s.lastSyncCleaned === true) showCleanInstant(s, false)  // no sparkle on load
-        else                            showDirty(s)
+        if (s.lastSyncCleaned === true) {
+          showCleanInstant(s, false)  // no sparkle on load
+        } else if (s.lastSyncCleaned === false || isStateSyncronized()) {
+          // Either ClutterSync confirmed dirty, or CRDT is complete — safe to show dirty.
+          showDirty(s)
+        }
+        // else: lastSyncCleaned=null AND CRDT not yet complete — do NOT show dirty or enable
+        // clicks.  The ClutterSync watcher will call showDirty / showCleanInstant once the
+        // authoritative isCleaned value arrives (it checks allFound=true so it will proceed).
       }
     }
     if (remaining === 0) engine.removeSystem(discoverSystem)

@@ -67,8 +67,11 @@
     "projectId": "c234e010-bf2f-4a35-9404-b57f360b3964"
   },
   "rating": "T",
+  "logsPermissions": [
+    "0x8967AD851cCbD4C1a2D57A128D3C606fCAB29bad"
+  ],
   "authoritativeMultiplayer": true,
-  "creator": "",
+  "creator": "0x8967AD851cCbD4C1a2D57A128D3C606fCAB29bad",
   "worldConfiguration": {
     "name": "afkj.dcl.eth"
   }

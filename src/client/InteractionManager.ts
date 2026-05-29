@@ -116,8 +116,16 @@ function enableClick(id: string) {
         room.send('cleanItem', { itemId: id })
 
         timers.setTimeout(() => {
-          if (!pendingVisualHide.has(id)) return   // rejected — leave item visible
+          // Always delete the pending-hide guard first so the ClutterSync watcher
+          // can take over if it hasn't already (e.g. after re-entry clear).
+          const wasPending = pendingVisualHide.has(id)
           pendingVisualHide.delete(id)
+          // Hide + sparkle if:
+          //   (a) normal path — still in the pending set (cleanRejected didn't fire), OR
+          //   (b) onEnterSceneObservable wiped pendingVisualHide but the ClutterSync
+          //       watcher already confirmed clean (lastState=true).
+          // In case (b) applyCleanState is a no-op, but sparkle plays at the right moment.
+          if (!wasPending && lastState.get(id) !== true) return
           applyCleanStateRef(id, true)
           if (pos) playSparkle(pos)
         }, PICKUP_TOUCH_MS)
