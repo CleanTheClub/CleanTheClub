@@ -13,18 +13,18 @@
 
 import {
   engine, Entity, Name,
-  VisibilityComponent, Animator, GltfContainer,
+  VisibilityComponent, Animator,
   pointerEventsSystem, PointerEvents, InputAction,
   Transform, timers,
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { ClutterSync } from '../shared/schemas'
+import { ClutterSync, GameState } from '../shared/schemas'
 import { room } from '../shared/messages'
 import { setupClickProxy } from '../shared/sceneItemHelpers'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
-import { showCleanedToast } from '../ui'
+import { showCleanedToast, showNarrativeToast } from '../ui'
 
 // ── Public config type ───────────────────────────────────────────────────────
 export type RestoreDef = {
@@ -47,6 +47,24 @@ type ItemState = {
   pendingClean:         boolean
   pendingAnimSwapTimer: number | undefined
   lastSyncCleaned:      boolean | null
+}
+
+// ── Open-phase cleaning gate ───────────────────────────────────────────────────
+// Cleaning is disabled while the club is in the 'open' (intermission) phase so
+// players get a clear round → intermission → round cadence.  Mirrors the gate in
+// collectibleSystem.ts / InteractionManager.ts.
+function getPhase(): string {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
+  return 'playing'
+}
+
+const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
+let lastOpenPhaseToastMs = 0
+function maybeShowOpenPhaseToast() {
+  const now = Date.now()
+  if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastOpenPhaseToastMs = now
+  showNarrativeToast('Wait for the next round!')
 }
 
 // ── Visibility helpers ───────────────────────────────────────────────────────
@@ -96,6 +114,11 @@ function showCleanInstant(s: ItemState, spark = true) {
     timers.clearTimeout(s.pendingAnimSwapTimer)
     s.pendingAnimSwapTimer = undefined
   }
+  // Defensive: ensure the (now-invisible) dirty mesh can never be clicked while clean.
+  // Covers the join-race where discovery calls showDirty/enableClick and the ClutterSync
+  // watcher corrects to clean in the same frame without otherwise removing the handler.
+  // disableClick is a safe no-op when no handler is registered.
+  disableClick(s)
   setVisible(s.dirtyEnt, false)
   hideAnimEntity(s)
   setVisible(s.cleanEnt, true)
@@ -114,6 +137,7 @@ function enableClick(s: ItemState) {
   pointerEventsSystem.onPointerDown(
     { entity, opts: { button: InputAction.IA_POINTER, hoverText } },
     () => {
+      if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (s.pendingClean) return
       s.pendingClean = true
       disableClick(s)
@@ -176,6 +200,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   }
 
   let remaining = defs.length   // items still waiting for all 3 GLBs
+  const discoverStartMs = Date.now()
 
   const discoverSystem = () => {
     for (const [e] of engine.getEntitiesWith(Name)) {
@@ -198,14 +223,14 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
       }
 
       if (!s.allFound && s.dirtyEnt !== undefined && s.animEnt !== undefined && s.cleanEnt !== undefined) {
-        // GltfContainer may not have synced yet even though Name has — wait until it arrives
-        // before completing discovery, so setupClickProxy never throws mid-block.
-        if (!GltfContainer.getOrNull(s.dirtyEnt)) continue
-
         s.allFound = true
         remaining--
         console.log(`[Restore] "${s.def.itemId}" discovered — dirty=${s.dirtyEnt} anim=${s.animEnt} clean=${s.cleanEnt}`)
 
+        // setupClickProxy enables CL_POINTER on the GLB's own meshes (clickable +
+        // hover outline) and self-defers if the GltfContainer hasn't streamed in
+        // yet, retrying until it has — so a slow-loading cushion is never left
+        // permanently un-clickable (the round-1 sofa-cushion bug).
         setupClickProxy(s.dirtyEnt)
         Animator.createOrReplace(s.animEnt, {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
@@ -222,7 +247,17 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
         // authoritative isCleaned value arrives (it checks allFound=true so it will proceed).
       }
     }
-    if (remaining === 0) engine.removeSystem(discoverSystem)
+
+    if (remaining === 0) {
+      engine.removeSystem(discoverSystem)
+    } else if (Date.now() - discoverStartMs > 10_000) {
+      for (const [itemId, s] of states) {
+        if (!s.allFound) {
+          console.log(`[Restore] WARNING "${itemId}" not fully discovered after 10 s — dirty=${s.dirtyEnt} anim=${s.animEnt} clean=${s.cleanEnt}`)
+        }
+      }
+      engine.removeSystem(discoverSystem)
+    }
   }
   engine.addSystem(discoverSystem)
 

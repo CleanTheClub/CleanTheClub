@@ -13,9 +13,10 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   cleanedCount: Schemas.Int,
   totalCount:   Schemas.Int,
   secondsLeft:  Schemas.Int,
-  roundNumber:   Schemas.Int,      // 0-indexed; caps at 3 for minimum duration
-  outcome:       Schemas.String,   // '' | 'optimal' | 'adequate' | 'suboptimal'
+  roundNumber:   Schemas.Int,      // 0-indexed; final round = ROUND_DURATIONS_MS.length - 1
+  outcome:       Schemas.String,   // '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
   canStartEarly: Schemas.Boolean,  // true once NEXT_ROUND_LOCK_MS has elapsed during open phase
+  isFinale:      Schemas.Boolean,  // true during the open phase that follows the final round (victory hold)
 })
 
 ClutterSync.validateBeforeChange((v) => v.senderAddress === AUTH_SERVER_PEER_ID)

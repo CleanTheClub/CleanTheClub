@@ -1,11 +1,14 @@
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
-import { engine } from '@dcl/sdk/ecs'
+import { engine, EasingFunction } from '@dcl/sdk/ecs'
+import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
 import { GameState } from './shared/schemas'
 import { ADMIN_ADDRESSES, DEBUG } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
+import { tweenColor, applyEasing } from './client/tween'
+import { theme } from './client/theme'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
@@ -55,16 +58,39 @@ const BTN_WIDTH           = 240
 const BTN_HEIGHT          = 48
 const BTN_FONT_SIZE       = 16
 
-// Timer colour thresholds — countdown text shifts white → yellow → orange → red
+// Timer colour thresholds — countdown text shifts white → yellow → orange → red.
+// Rather than hard-snapping at each boundary, we ease between bands with
+// tweenColor (see the timer-colour state block below).
 const TIMER_YELLOW_S      = 45   // seconds remaining when text turns yellow
 const TIMER_ORANGE_S      = 30   // seconds remaining when text turns orange
 const TIMER_RED_S         = 15   // seconds remaining when text turns red
 
-// Progress bar colours (keyed to cleanliness %)
-const BAR_BG_COLOR        = { r: 0.12, g: 0.12, b: 0.12, a: 0.85 } as const
-const BAR_COLOR_GOOD      = { r: 0.20, g: 0.90, b: 0.30, a: 1 }    as const  // ≥ 80 %
-const BAR_COLOR_MID       = { r: 0.90, g: 0.75, b: 0.10, a: 1 }    as const  // 50–80 %
-const BAR_COLOR_LOW       = { r: 0.90, g: 0.30, b: 0.15, a: 1 }    as const  // < 50 %
+// Band colours (index 0 = calm → 3 = critical) — sourced from the shared theme.
+const TIMER_BAND_COLORS = theme.timer
+// How long the colour takes to ease from one band into the next.
+const TIMER_COLOR_TWEEN_S = 0.6
+
+function timerBandOf(seconds: number): number {
+  if (seconds > TIMER_YELLOW_S) return 0
+  if (seconds > TIMER_ORANGE_S) return 1
+  if (seconds > TIMER_RED_S)    return 2
+  return 3
+}
+
+// Progress bar colours (keyed to cleanliness %) — sourced from the shared theme.
+const BAR_BG_COLOR        = theme.bar.bg
+const BAR_COLOR_GOOD      = theme.bar.good   // ≥ 80 %
+const BAR_COLOR_MID       = theme.bar.mid    // 50–80 %
+const BAR_COLOR_LOW       = theme.bar.low    // < 50 %
+// How long the bar fill takes to ease from one band into the next.
+const BAR_COLOR_TWEEN_S   = 0.4
+
+function barBandOf(pct: number): number {
+  if (pct >= 0.8) return 0
+  if (pct >= 0.5) return 1
+  return 2
+}
+const BAR_BAND_COLORS = [BAR_COLOR_GOOD, BAR_COLOR_MID, BAR_COLOR_LOW] as const
 
 // Outcome images — shown in place of the instructions image during the open phase
 // All outcome images are 1024×128 — same aspect ratio as InstructionsUI
@@ -75,9 +101,9 @@ const OUTCOME_IMAGES: Record<string, string> = {
   suboptimal: 'assets/scene/UI/BadClean.png',
 }
 
-// Text colours
-const COLOR_SUBTLE        = { r: 0.85, g: 0.85, b: 0.85, a: 1 } as const  // round label
-const COLOR_DIM           = { r: 0.85, g: 0.85, b: 0.85, a: 1 } as const  // meter / next-round
+// Text colours — sourced from the shared theme.
+const COLOR_SUBTLE        = theme.text.subtle  // round label
+const COLOR_DIM           = theme.text.dim     // meter / next-round
 
 // Toast notifications
 // Toast images are 1024×256 (4:1 ratio)
@@ -99,6 +125,14 @@ const NARR_LABEL_W_FRAC   = 0.6   // narrative text box width as fraction of toa
 // Toast container anchor — percentage strings scale with the canvas on all devices
 const TOAST_POS_DESKTOP   = { top: '33%', right: '2%'  } as const
 const TOAST_POS_MOBILE    = { top: '9%',  left: '38%'  } as const
+
+// HUD backdrop — single semi-transparent scrim behind all top-centre elements.
+// Sized to the banner width + padding so it frames the whole cluster cleanly.
+// Height adapts: grows to cover the next-round button during the open phase.
+const HUD_BG_COLOR   = theme.hud.bg
+const HUD_BG_PAD_X   = 28   // horizontal padding beyond the banner on each side (px)
+const HUD_BG_PAD_TOP =  6   // gap above the banner image
+const HUD_BG_PAD_BOT = 18   // gap below the round label / next-round button
 
 // Admin panel (desktop only — right edge is unsafe on mobile)
 const ADMIN_TOP           = 20
@@ -223,6 +257,19 @@ let introHoldS     = INTRO_HOLD_S
 let outcomeStartMs = -1
 let prevIsOpen     = false
 
+// ── Countdown timer colour state ──────────────────────────────────────────────
+// `currentTimerColor` is read by the timer Label each render; tweenColor mutates
+// it over time whenever the countdown crosses into a new band.  We track the
+// active tween's system so a fresh band change can cancel a still-running ease.
+let currentTimerColor: Color4 = Color4.create(1, 1, 1, 1)
+let lastTimerBand            = -1
+let activeTimerTween: ((dt: number) => void) | null = null
+
+// ── Progress bar colour state — same band-tween pattern as the timer ──────────
+let currentBarColor: Color4 = Color4.create(0.90, 0.30, 0.15, 1)  // starts at "low"
+let lastBarBand           = -1
+let activeBarTween: ((dt: number) => void) | null = null
+
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
 
 /** Called each time the local player enters the scene — restarts the full intro (with hold). */
@@ -243,7 +290,7 @@ export function setupUi() {
   ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: 1920, virtualHeight: 1080 })
 }
 
-const WHITE = { r: 1, g: 1, b: 1, a: 1 } as const
+const WHITE = theme.colors.white
 
 const ui = () => {
   const gs            = getGameState()
@@ -253,7 +300,7 @@ const ui = () => {
   const phase         = gs?.phase ?? 'playing'
   const roundNumber   = gs?.roundNumber ?? 0
   const outcome       = gs?.outcome ?? ''
-  const canStartEarly = gs?.canStartEarly ?? false
+  const isFinale      = gs?.isFinale ?? false
   const pct           = Math.min(1, cleaned / total)
   const isOpen        = phase === 'open'
 
@@ -300,14 +347,44 @@ const ui = () => {
   // Mobile toasts anchor at top:9% — already above the banner — no offset needed.
   // introHolding is computed after elapsedS/introActive below and factored in there.
 
-  const barColor = pct >= 0.8 ? BAR_COLOR_GOOD
-                 : pct >= 0.5 ? BAR_COLOR_MID
-                 :              BAR_COLOR_LOW
+  // ── Bar fill colour — ease between bands as cleanliness crosses 50 % / 80 % ──
+  if (!isOpen) {
+    const band = barBandOf(pct)
+    if (band !== lastBarBand) {
+      lastBarBand = band
+      if (activeBarTween) engine.removeSystem(activeBarTween)
+      activeBarTween = tweenColor(
+        currentBarColor,
+        BAR_BAND_COLORS[band],
+        BAR_COLOR_TWEEN_S,
+        (v) => { currentBarColor = v },
+        () => { activeBarTween = null },
+        EasingFunction.EF_EASEOUTCUBIC,
+      )
+    }
+  }
+  const barColor = currentBarColor
 
-  const timerColor = seconds > TIMER_YELLOW_S ? WHITE
-                   : seconds > TIMER_ORANGE_S  ? { r: 1, g: 0.85, b: 0.0,  a: 1 }
-                   : seconds > TIMER_RED_S     ? { r: 1, g: 0.45, b: 0.0,  a: 1 }
-                   :                             { r: 1, g: 0.10, b: 0.05, a: 1 }
+  // ── Countdown colour — ease between bands instead of hard-snapping ────────────
+  // Only react while actively counting down (playing phase).  When the band
+  // changes we cancel any in-flight tween and start a new ease toward the new
+  // band colour; `currentTimerColor` is what the Label actually renders.
+  if (!isOpen) {
+    const band = timerBandOf(seconds)
+    if (band !== lastTimerBand) {
+      lastTimerBand = band
+      if (activeTimerTween) engine.removeSystem(activeTimerTween)
+      activeTimerTween = tweenColor(
+        currentTimerColor,
+        TIMER_BAND_COLORS[band],
+        TIMER_COLOR_TWEEN_S,
+        (v) => { currentTimerColor = v },
+        () => { activeTimerTween = null },
+        EasingFunction.EF_EASEOUTCUBIC,
+      )
+    }
+  }
+  const timerColor = currentTimerColor
 
   // ── Shared lerp targets (used by both intro and outcome animations) ───────────
   // eased = 0 → image at centre/big;  eased = 1 → image at normal top position
@@ -327,22 +404,28 @@ const ui = () => {
   const toastTopSlots = (isOpen || introHolding) && !mobile ? 2 : 0
   const introProgress = elapsedS < introHoldS ? 0
     : Math.min(1, (elapsedS - introHoldS) / INTRO_TWEEN_S)
-  // Ease-in quad — accelerates into the snap, feels like a quick pop
-  const eased           = introProgress * introProgress
-  const animW           = Math.round(lerp(introImgW, instrW,    eased))
-  const animH           = Math.round(lerp(introImgH, instrH,    eased))
-  const animTop         = Math.round(lerp(centredTop,  normTop,  eased))
-  const animLeft        = Math.round(lerp(centredLeft, normLeft, eased))
-  // Timer tracks the image and scales to match during the animation
-  const timerAnimTop    = Math.round(lerp(INTRO_CENTER_Y + INTRO_TIMER_BELOW, TIMER_ROW_TOP, eased))
-  const animTimerIconSz = Math.round(lerp(timerIconSz * INTRO_SIZE_MULT, timerIconSz, eased))
-  const animTimerFont   = Math.round(lerp(timerFont   * INTRO_SIZE_MULT, timerFont,   eased))
+  // Two curves: position eases out smoothly (no overshoot — avoids clipping the
+  // top of the canvas), while size uses EF_EASEOUTBACK so the banner springs in
+  // with a little pop as it settles to its normal scale.
+  const easedPos        = applyEasing(introProgress, EasingFunction.EF_EASEOUTCUBIC)
+  const easedSize       = applyEasing(introProgress, EasingFunction.EF_EASEOUTBACK)
+  const animW           = Math.round(lerp(introImgW, instrW,    easedSize))
+  const animH           = Math.round(lerp(introImgH, instrH,    easedSize))
+  const animTop         = Math.round(lerp(centredTop,  normTop,  easedPos))
+  const animLeft        = Math.round(lerp(centredLeft, normLeft, easedPos))
+  // Timer tracks the image: position with the smooth curve, scale with the pop.
+  const timerAnimTop    = Math.round(lerp(INTRO_CENTER_Y + INTRO_TIMER_BELOW, TIMER_ROW_TOP, easedPos))
+  const animTimerIconSz = Math.round(lerp(timerIconSz * INTRO_SIZE_MULT, timerIconSz, easedSize))
+  const animTimerFont   = Math.round(lerp(timerFont   * INTRO_SIZE_MULT, timerFont,   easedSize))
 
   // ── Outcome animation (normal → centre): round ends ──────────────────────────
   // Ease-out feel: moves quickly from normal position then settles at centre.
   const outcomeSec      = outcomeStartMs >= 0 ? (Date.now() - outcomeStartMs) / 1000 : 9999
   const outcomeProgress = Math.min(1, outcomeSec / INTRO_TWEEN_S)
-  const outcomeEased    = (1 - outcomeProgress) * (1 - outcomeProgress)  // 1→0 (ease-out)
+  // EF_EASEOUTBACK overshoots slightly past the centred size before settling,
+  // giving the outcome banner a punchy "zoom-in" as the round ends.  1→0 maps
+  // normal-position (progress 0) to centre/big (progress 1).
+  const outcomeEased    = 1 - applyEasing(outcomeProgress, EasingFunction.EF_EASEOUTBACK)
   const outcomeAnimW    = Math.round(lerp(introImgW, instrW,    outcomeEased))
   const outcomeAnimH    = Math.round(lerp(introImgH, instrH,    outcomeEased))
   const outcomeAnimTop  = Math.round(lerp(centredTop,  normTop,  outcomeEased))
@@ -353,17 +436,50 @@ const ui = () => {
     ? (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal'])
     : 'assets/scene/UI/InstructionsUI.png'
 
+  // Virtual canvas width — matches the virtualWidth passed to ReactEcsRenderer.
+  // Used explicitly on all top-centre elements so every element centres using the
+  // same arithmetic, regardless of how the layout engine resolves '100%'.
+  const VIRT_W = 1920
+
+  // ── HUD backdrop geometry ─────────────────────────────────────────────────────
+  // Anchored to normLeft (same as the banner) so it is guaranteed co-centred.
+  // Height stretches to cover the round label during playing, or the next-round
+  // button/countdown during the open phase. roundFont * 1.5 ≈ rendered line height.
+  const hudBgLeft    = normLeft - HUD_BG_PAD_X
+  const hudBgTop     = INSTR_MARGIN_TOP - HUD_BG_PAD_TOP
+  const hudBgWidth   = instrW + HUD_BG_PAD_X * 2
+  const hudBgBottomY = STRIP_TOP + Math.round(roundFont * 1.5)
+    + (isOpen ? LABEL_MARGIN_SMALL + btnH : 0)
+    + HUD_BG_PAD_BOT
+  const hudBgHeight  = hudBgBottomY - hudBgTop
+
   return (
     <UiEntity
-      uiTransform={{ width: '100%', height: '100%', alignItems: 'center', flexDirection: 'column' }}
+      uiTransform={{ width: '100%', height: '100%' }}
     >
 
-      {/* ── Top image slot ───────────────────────────────────────────────────────
-           Hidden whenever an animated overlay covers it (intro or open phase).
-           Always sits at its normal top position so it snaps into view correctly
-           once the overlay finishes.                                             */}
+      {/* ── HUD backdrop — renders first so it sits behind all other elements ─── */}
       <UiEntity
-        uiTransform={{ width: instrW, height: instrH, margin: { top: INSTR_MARGIN_TOP } }}
+        uiTransform={{
+          positionType: 'absolute',
+          position:     { top: hudBgTop, left: hudBgLeft },
+          width:        hudBgWidth,
+          height:       hudBgHeight,
+        }}
+        uiBackground={{ color: HUD_BG_COLOR }}
+      />
+
+      {/* ── Top image slot ───────────────────────────────────────────────────────
+           Absolutely positioned using the same (VIRT_W - instrW) / 2 arithmetic
+           as the animated overlays so all three share one centering method.
+           Hidden whenever an animated overlay covers it (intro or open phase).  */}
+      <UiEntity
+        uiTransform={{
+          positionType: 'absolute',
+          position:     { top: INSTR_MARGIN_TOP, left: normLeft },
+          width:        instrW,
+          height:       instrH,
+        }}
         uiBackground={{
           texture:     { src: topImageSrc },
           textureMode: 'stretch',
@@ -411,8 +527,8 @@ const ui = () => {
         <UiEntity
           uiTransform={{
             positionType:   'absolute',
-            position:       { top: TIMER_ROW_TOP },
-            width:          '100%',
+            position:       { top: TIMER_ROW_TOP, left: 0 },
+            width:          VIRT_W,
             flexDirection:  'row',
             alignItems:     'center',
             justifyContent: 'center',
@@ -435,8 +551,8 @@ const ui = () => {
         <UiEntity
           uiTransform={{
             positionType:   'absolute',
-            position:       { top: timerAnimTop },
-            width:          '100%',
+            position:       { top: timerAnimTop, left: 0 },
+            width:          VIRT_W,
             flexDirection:  'row',
             alignItems:     'center',
             justifyContent: 'center',
@@ -459,8 +575,8 @@ const ui = () => {
         <UiEntity
           uiTransform={{
             positionType:   'absolute',
-            position:       { top: BAR_ROW_TOP },
-            width:          '100%',
+            position:       { top: BAR_ROW_TOP, left: 0 },
+            width:          VIRT_W,
             flexDirection:  'row',
             justifyContent: 'center',
             alignItems:     'center',
@@ -490,8 +606,8 @@ const ui = () => {
       <UiEntity
         uiTransform={{
           positionType:   'absolute',
-          position:       { top: STRIP_TOP },
-          width:          '100%',
+          position:       { top: STRIP_TOP, left: 0 },
+          width:          VIRT_W,
           flexDirection:  'row',
           justifyContent: 'center',
         }}
@@ -510,21 +626,21 @@ const ui = () => {
             <UiEntity
               uiTransform={{ flexDirection: 'column', alignItems: 'center', width: '100%' }}
             >
-              {canStartEarly ? (
-                <Button
-                  value="▶  Start Next Round"
-                  variant="primary"
-                  fontSize={btnFont}
-                  onMouseDown={() => room.send('startNextRound', { dummy: true })}
-                  uiTransform={{ width: btnW, height: btnH }}
-                />
-              ) : (
+              {isFinale && (
                 <Label
-                  value={`Next round in ${formatTime(seconds)}`}
-                  fontSize={nextFont}
-                  color={COLOR_DIM}
+                  value="🏆  Club Complete!"
+                  fontSize={Math.round(nextFont * 1.25)}
+                  color={WHITE}
+                  uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
                 />
               )}
+              {/* Intermission is no longer skippable — always a fixed countdown.        */}
+              {/* Finale loops the game back to round 1, so the label reflects that.     */}
+              <Label
+                value={isFinale ? `New game in ${formatTime(seconds)}` : `Next round in ${formatTime(seconds)}`}
+                fontSize={nextFont}
+                color={COLOR_DIM}
+              />
             </UiEntity>
           )}
         </UiEntity>

@@ -1,8 +1,9 @@
 import { engine, Transform, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
 import { movePlayerTo, triggerSceneEmote } from '~system/RestrictedActions'
-import { PICKUP_EMOTE_MS } from '../shared/config'
+import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
+const MOPPING_EMOTE_SRC = 'assets/scene/Emotes/Mopping_emote.glb'
 const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
@@ -50,10 +51,17 @@ export function playPartyEmote() {
   timers.setTimeout(() => stopPickupEmote(), PARTY_EMOTE_MS)
 }
 
-// targetPos — world-space position of the item being collected.
-// Player is stepped to INTERACT_DISTANCE away from it, facing it,
-// then the emote fires after EMOTE_TRIGGER_MS.
-export function playPickupEmote(targetPos: { x: number; y: number; z: number }) {
+// Shared "step to item, face it, then fire a one-shot emote" helper.
+// targetPos — world-space position of the item being interacted with.
+// Player is stepped to INTERACT_DISTANCE away from it, facing it, then the
+// emote at `src` fires after EMOTE_TRIGGER_MS and is cleared after `durationMs`.
+// Like the pickup emote it also auto-cancels the moment the player moves
+// (handled by the shared emoteWatchSystem).
+function playStepEmote(
+  targetPos: { x: number; y: number; z: number },
+  src:       string,
+  durationMs: number,
+) {
   if (emoteActive) stopPickupEmote()
 
   const playerPos = Transform.getOrNull(engine.PlayerEntity)?.position
@@ -77,9 +85,19 @@ export function playPickupEmote(targetPos: { x: number; y: number; z: number }) 
 
   timers.setTimeout(() => {
     if (!emoteActive) return
-    triggerSceneEmote({ src: PICKUP_EMOTE_SRC, loop: false })
+    triggerSceneEmote({ src, loop: false })
     timers.setTimeout(() => {
       stopPickupEmote()
-    }, PICKUP_EMOTE_MS)
+    }, durationMs)
   }, EMOTE_TRIGGER_MS)
+}
+
+// Fires the pickup emote — quick-clean items (rubbish, bottles, glasses, clutter).
+export function playPickupEmote(targetPos: { x: number; y: number; z: number }) {
+  playStepEmote(targetPos, PICKUP_EMOTE_SRC, PICKUP_EMOTE_MS)
+}
+
+// Fires the mopping emote — hold-to-clean sticky patches.
+export function playMoppingEmote(targetPos: { x: number; y: number; z: number }) {
+  playStepEmote(targetPos, MOPPING_EMOTE_SRC, MOPPING_EMOTE_MS)
 }

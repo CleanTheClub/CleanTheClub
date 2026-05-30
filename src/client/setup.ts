@@ -17,6 +17,7 @@ import { initNarrativeSystem } from './narrativeSystem'
 import { initStickyHazardSystem } from './stickyHazardSystem'
 import { initMusicManager } from './musicManager'
 import { initLeaderboardSystem } from './leaderboardSystem'
+import { initNpcCrowdSystem } from './npcCrowdSystem'
 
 export function initClient() {
   console.log('[CLIENT] started')
@@ -97,4 +98,5 @@ export function initClient() {
   initNarrativeSystem()
   initStickyHazardSystem()
   initLeaderboardSystem()
+  initNpcCrowdSystem()
 }

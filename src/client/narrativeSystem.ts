@@ -46,11 +46,25 @@ const TIMER_WARNINGS: { seconds: number; text: string }[] = [
 
 // Round-end messages, keyed by outcome string from GameState.
 const ROUND_END: Record<string, string> = {
+  perfect:    "Spotless! Not a speck left — flawless work!",
   optimal:    "Incredible, the club is immaculate!",
   adequate:   "Not bad! The doors are open but it smells...",
   suboptimal: "Yikes… The crowd isn't happy.",
   DEFAULT:    "Round over: doors are open!",
 }
+
+// Finale messages — shown after the FINAL round during the victory hold.
+// The game loops back to round 1 once the hold ends, so this is the big payoff.
+const FINALE_MESSAGES: string[] = [
+  "🏆 CLUB COMPLETE! You cleaned every round!",
+  "The crowd is going wild — what a night!",
+  "Take a bow… then it's back to the top!",
+]
+// Gap between each finale message during the victory hold.
+const FINALE_MESSAGE_GAP_MS = 4_000
+// Party emote re-fires this often during the finale so the player keeps dancing.
+const FINALE_EMOTE_INTERVAL_MS = 3_000
+const FINALE_EMOTE_REPEATS     = 6
 
 // Delay (ms) after phase changes before the narrative toast fires.
 // A small gap lets the confetti / outcome banner land first.
@@ -76,6 +90,7 @@ export function initNarrativeSystem(): void {
     let roundNumber = 0
     let secondsLeft = 0
     let outcome     = ''
+    let isFinale    = false
 
     for (const [, gs] of engine.getEntitiesWith(GameState)) {
       pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
@@ -83,6 +98,7 @@ export function initNarrativeSystem(): void {
       roundNumber = gs.roundNumber
       secondsLeft = gs.secondsLeft
       outcome     = gs.outcome
+      isFinale    = gs.isFinale
       break
     }
 
@@ -99,12 +115,27 @@ export function initNarrativeSystem(): void {
       }
 
       if (phase === 'open') {
-        // Doors opened — show outcome message after a short delay
-        const text = ROUND_END[outcome] ?? ROUND_END.DEFAULT
-        timers.setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS)
-        // Party emote — fires slightly before the toast so the player is already
-        // dancing when the outcome message pops up
-        timers.setTimeout(() => playPartyEmote(), 500)
+        if (isFinale) {
+          // ── Finale victory hold — the big payoff ───────────────────────────────
+          // Roll the celebratory finale messages out one after another, and keep
+          // the player dancing for the duration of the longer hold window.
+          FINALE_MESSAGES.forEach((text, i) =>
+            timers.setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS + i * FINALE_MESSAGE_GAP_MS),
+          )
+          for (let i = 0; i < FINALE_EMOTE_REPEATS; i++) {
+            timers.setTimeout(() => playPartyEmote(), 500 + i * FINALE_EMOTE_INTERVAL_MS)
+          }
+          // ASSET HOOK (finale): drop a bespoke 'Club Complete' banner / fanfare SFX
+          // / fireworks model trigger here — fires once at the start of the victory hold.
+        } else {
+          // Doors opened — show outcome message after a short delay
+          const text = ROUND_END[outcome] ?? ROUND_END.DEFAULT
+          timers.setTimeout(() => showNarrativeToast(text), ROUND_END_DELAY_MS)
+          // Party emote — fires slightly before the toast so the player is already
+          // dancing when the outcome message pops up
+          timers.setTimeout(() => playPartyEmote(), 500)
+          // ASSET HOOK (round end): per-outcome stinger SFX / prop reaction goes here.
+        }
       }
     }
 

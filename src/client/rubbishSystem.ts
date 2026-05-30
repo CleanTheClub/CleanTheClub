@@ -3,11 +3,11 @@
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { ClutterSync } from '../shared/schemas'
+import { ClutterSync, GameState } from '../shared/schemas'
 import { discoverRubbish, RUBBISH_ID_PREFIX } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
-import { showCleanedToast } from '../ui'
+import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
@@ -16,6 +16,24 @@ import { PICKUP_TOUCH_MS } from '../shared/config'
 const pendingCleans     = new Set<string>()
 const pendingVisualHide = new Set<string>()
 const lastState         = new Map<string, boolean>()
+
+// ── Open-phase cleaning gate ───────────────────────────────────────────────────
+// Cleaning is disabled while the club is in the 'open' (intermission) phase so
+// players get a clear round → intermission → round cadence.  Mirrors the gate in
+// collectibleSystem.ts / InteractionManager.ts.
+function getPhase(): string {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
+  return 'playing'
+}
+
+const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
+let lastOpenPhaseToastMs = 0
+function maybeShowOpenPhaseToast() {
+  const now = Date.now()
+  if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastOpenPhaseToastMs = now
+  showNarrativeToast('Wait for the next round!')
+}
 
 type GltfRecord = {
   containerEntity: Entity
@@ -64,6 +82,7 @@ function enableClick(itemId: string) {
   pointerEventsSystem.onPointerDown(
     { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
     () => {
+      if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (pendingCleans.has(itemId)) return
       pendingCleans.add(itemId)
       const pos = Transform.getOrNull(containerEntity)?.position

@@ -211,7 +211,10 @@ export function initCleaningSystem() {
         if (!gltfEnt) continue
         needsGltfSetup.delete(itemId)
 
-        const clickEnt = setupClickProxy(gltfEnt)
+        // addBox=false: sticky patches are flat floor meshes. A primitive box
+        // would sit above the mesh and intercept the ray (clickable but no hover
+        // outline). Using the visible mesh as the collider gives the white outline.
+        const clickEnt = setupClickProxy(gltfEnt, false)
 
         // Tell InteractionManager to use the click entity for pointer events
         updateSceneHoldGltf(itemId, clickEnt)

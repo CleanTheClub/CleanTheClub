@@ -2,7 +2,7 @@ import { Entity } from '@dcl/sdk/ecs'
 import { ClutterSync, GameState } from '../shared/schemas'
 import {
   CLUTTER_DEFS,
-  ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, NEXT_ROUND_LOCK_MS,
+  ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS,
   CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS,
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
@@ -19,6 +19,11 @@ let openStartMs   = 0
 let playerCount   = 0
 let currentOutcome: Outcome = ''
 
+// True during the open phase that follows the FINAL round — the "victory hold".
+// Triggers a longer celebration window and signals clients to show the finale
+// ('Club Complete!') messaging.  The next round loops back to round 0.
+let isFinale = false
+
 // Guards against double-triggering the next round during the open phase
 let nextRoundTriggered = false
 
@@ -30,6 +35,16 @@ export function getRoundNumber(): number { return roundNumber }
 
 function getRoundDurationMs(): number {
   return ROUND_DURATIONS_MS[Math.min(roundNumber, ROUND_DURATIONS_MS.length - 1)]
+}
+
+// The final round is the last entry in ROUND_DURATIONS_MS.
+function isFinalRound(n: number): boolean {
+  return n >= ROUND_DURATIONS_MS.length - 1
+}
+
+// Active open-phase display window — longer for the finale victory hold.
+function openDisplayMs(): number {
+  return isFinale ? FINALE_DISPLAY_MS : OPEN_DISPLAY_MS
 }
 
 function countCleaned(): number {
@@ -56,11 +71,12 @@ function syncGameState() {
       ? Math.ceil(getRoundDurationMs() / 1000)   // timer not yet started — show full duration
       : Math.max(0, Math.ceil((getRoundDurationMs() - (now - roundStartMs)) / 1000))
     : phase === 'open'
-    ? Math.max(0, Math.ceil((OPEN_DISPLAY_MS - (now - openStartMs)) / 1000))
+    ? Math.max(0, Math.ceil((openDisplayMs() - (now - openStartMs)) / 1000))
     : 0
   gs.roundNumber   = roundNumber
   gs.outcome       = currentOutcome
-  gs.canStartEarly = phase === 'open' && (now - openStartMs) >= NEXT_ROUND_LOCK_MS
+  gs.canStartEarly = false   // early start disabled — intermission is no longer skippable
+  gs.isFinale      = isFinale
 }
 
 function clearAllRespawns() {
@@ -87,19 +103,17 @@ function triggerOpen() {
   const total = itemEntities.size
   const pct = total > 0 ? countCleaned() / total : 0
   currentOutcome = computeOutcome(pct)
+  isFinale    = isFinalRound(roundNumber)   // final round just ended → victory hold
   phase       = 'open'
   openStartMs = Date.now()
   syncGameState()
 
-  console.log(`[ROUND] Round ${roundNumber} ended — outcome: ${currentOutcome} (${Math.round(pct * 100)}%)`)
+  console.log(`[ROUND] Round ${roundNumber} ended — outcome: ${currentOutcome} (${Math.round(pct * 100)}%)${isFinale ? ' [FINALE]' : ''}`)
 
-  // Auto-advance after full display window; can be short-circuited by onNextRoundRequest
+  // Auto-advance after the display window (longer for the finale victory hold)
   roundTimer = setTimeout(() => {
     if (!nextRoundTriggered) startNextRound(false)
-  }, OPEN_DISPLAY_MS)
-
-  // Flip canStartEarly once the lock expires
-  setTimeout(syncGameState, NEXT_ROUND_LOCK_MS)
+  }, openDisplayMs())
 }
 
 function startNextRound(fullReset: boolean) {
@@ -109,11 +123,16 @@ function startNextRound(fullReset: boolean) {
   if (fullReset) {
     roundNumber = 0
     console.log('[ROUND] Full reset — back to round 0')
+  } else if (isFinale) {
+    // Final round's victory hold just finished — loop the game back to round 1.
+    roundNumber = 0
+    console.log('[ROUND] Finale complete — looping back to round 0')
   } else {
     roundNumber = Math.min(roundNumber + 1, ROUND_DURATIONS_MS.length - 1)
     console.log(`[ROUND] Starting round ${roundNumber}`)
   }
 
+  isFinale       = false
   currentOutcome = ''
   resetClutter()
   phase = 'playing'
@@ -171,13 +190,12 @@ export function onSceneItemCleaned(itemId: string, onRespawn: () => void, fast =
   syncGameState()
 }
 
-// Any player can request an early start — server guards against double-trigger
+// Early start is intentionally disabled — players asked for a fixed
+// round → intermission → round cadence with no way to skip the intermission
+// (the intermission is the payoff moment).  The intermission always runs its
+// full countdown; this handler is now a no-op kept for message compatibility.
 export function onNextRoundRequest() {
-  if (nextRoundTriggered || phase !== 'open') return
-  if ((Date.now() - openStartMs) < NEXT_ROUND_LOCK_MS) return
-  nextRoundTriggered = true
-  console.log('[ROUND] Early start requested by player')
-  startNextRound(false)
+  // no-op: intermission is no longer skippable
 }
 
 function logScaling() {
@@ -231,6 +249,7 @@ export function initRoundManager(
 
   roundNumber    = 0
   currentOutcome = ''
+  isFinale       = false
   roundStartMs   = 0       // timer hasn't started — waits for first player enter
   phase          = 'playing'
   syncGameState()

@@ -25,8 +25,8 @@ const DEBUG_CONFETTI = false      // fire immediately on init; set false to ship
 
 // ── Pool ─────────────────────────────────────────────────────────────────────
 // Must comfortably hold: (pieces_per_burst) × (LIFE_MAX_MS / LOOP_INTERVAL_MS)
-// Optimal steady state: 72 pieces/burst × (8 000 ms / 1 000 ms) = 576 → 750 is safe
-const POOL_SIZE = 750
+// Finale steady state: 12 pieces/cannon × 9 cannons × (8 000 ms / 1 000 ms) = 864 → 1000 is safe
+const POOL_SIZE = 1000
 
 // ── Piece appearance ──────────────────────────────────────────────────────────
 const PIECE_W           = 0.22   // width  (metres)
@@ -75,6 +75,9 @@ const FIRST_BURST_DELAY_MS = 0    // ms before the very first burst (0 = instant
 const OPTIMAL_PER_CANNON    = 8
 const ADEQUATE_PER_CANNON   = 5
 const SUBOPTIMAL_PER_CANNON = 3
+// Finale victory hold — maximum celebration regardless of the round's outcome.
+// 12 × 9 cannons = 108/burst → steady-state ~864 active (POOL_SIZE 1000 covers it).
+const FINALE_PER_CANNON     = 12
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Colour palette ────────────────────────────────────────────────────────────
@@ -94,15 +97,20 @@ const PALETTE: Color4[] = [
 // ── Burst config ──────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Outcome = '' | 'optimal' | 'adequate' | 'suboptimal'
+type Outcome = '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
 type BurstCfg = { countPerCannon: number; cannonIndices: number[]; paletteSize: number }
 
 // Build the 3×3 cannon grid from the config arrays above
 const CANNONS: { x: number; y: number; z: number }[] = []
 for (const z of CANNON_GRID_Z) for (const x of CANNON_GRID_X) CANNONS.push({ x, y: CANNON_Y, z })
 
-function getBurstCfg(outcome: Outcome): BurstCfg {
+// finale=true overrides the outcome with the maximum celebration (victory hold).
+function getBurstCfg(outcome: Outcome, finale = false): BurstCfg {
+  if (finale) {
+    return { countPerCannon: FINALE_PER_CANNON, cannonIndices: [0,1,2,3,4,5,6,7,8], paletteSize: 7 }
+  }
   switch (outcome) {
+    case 'perfect':
     case 'optimal':
       return { countPerCannon: OPTIMAL_PER_CANNON,    cannonIndices: [0,1,2,3,4,5,6,7,8], paletteSize: 7 }
     case 'adequate':
@@ -204,10 +212,10 @@ function scheduleNextBurst(cfg: BurstCfg): void {
   }, LOOP_INTERVAL_MS)
 }
 
-export function launchCelebration(outcome: Outcome): void {
+export function launchCelebration(outcome: Outcome, finale = false): void {
   const resolved = (outcome === '' ? 'suboptimal' : outcome) as Outcome
-  const cfg = getBurstCfg(resolved)
-  console.log(`[Confetti] Launch — outcome: "${resolved}", looping every ${LOOP_INTERVAL_MS}ms`)
+  const cfg = getBurstCfg(resolved, finale)
+  console.log(`[Confetti] Launch — outcome: "${resolved}"${finale ? ' [FINALE]' : ''}, looping every ${LOOP_INTERVAL_MS}ms`)
 
   celebrationActive = true
 
@@ -292,7 +300,7 @@ export function initConfettiSystem(): void {
       const prev = lastPhase
       lastPhase  = gs.phase
       console.log(`[Confetti] Phase: "${prev}" → "${gs.phase}"`)
-      if (gs.phase === 'open'    && prev === 'playing') launchCelebration(gs.outcome as Outcome)
+      if (gs.phase === 'open'    && prev === 'playing') launchCelebration(gs.outcome as Outcome, gs.isFinale)
       if (gs.phase === 'playing' && prev === 'open')    stopCelebration()
     }
   })

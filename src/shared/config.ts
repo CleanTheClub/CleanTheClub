@@ -5,7 +5,11 @@ const _ROUND_DURATIONS_MS  = [3 * 60_000, 2.5 * 60_000, 2 * 60_000, 1.5 * 60_000
 const _DEBUG_DURATIONS_MS  = [30_000, 25_000, 20_000, 15_000, 10_000]
 export const ROUND_DURATIONS_MS = DEBUG ? _DEBUG_DURATIONS_MS : _ROUND_DURATIONS_MS
 
-export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // celebration window
+export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // normal intermission window
+// Longer "victory hold" shown after the FINAL round before looping back to round 1.
+// Gives players a satisfying 'Club Complete!' celebration / payoff moment —
+// held for ~1.5 min so the full crowd + music celebration can breathe.
+export const FINALE_DISPLAY_MS  = DEBUG ? 30_000 : 90_000   // finale celebration window
 export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  :  8_000   // min before early-start unlocks
 export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 90_000
 export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
@@ -25,6 +29,7 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
 export const RESPAWN_SCALE_FACTORS = [0.75, 1.35, 1.70, 2.00, 2.30]
 export const HOLD_DURATION_MS   = DEBUG ? 500    : 1_500   // hold-to-clean duration
 export const PICKUP_EMOTE_MS    = 1_500                    // match PickUp_Anim_emote.glb clip length
+export const MOPPING_EMOTE_MS   = 2_000                    // match Mopping_emote.glb clip length (tune to clip)
 export const PICKUP_TOUCH_MS   = 800                       // ms from click → hand touches item (tune to match anim)
 
 // Restoration meter thresholds

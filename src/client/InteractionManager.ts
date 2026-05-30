@@ -7,7 +7,7 @@ import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound } from './soundManager'
-import { playPickupEmote } from './emoteManager'
+import { playPickupEmote, playMoppingEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 
 const pendingCleans     = new Set<string>()
@@ -79,10 +79,15 @@ function enableClick(id: string) {
         activeHold = { id, startMs: Date.now() }
         showHoldBarRef(id, true)
         updateHoldBarRef(id, 0)
+
+        // Mopping emote — same step-to-item + emote logic as the pickup animation,
+        // fired while the player holds to clean the sticky patch.
+        const pos = Transform.getOrNull(entity)?.position
+        if (pos) playMoppingEmote(pos)
       }
     )
     pointerEventsSystem.onPointerUp(
-      { entity, opts: { button: InputAction.IA_POINTER, showFeedback: false } },
+      { entity, opts: { button: InputAction.IA_POINTER } },
       () => {
         if (activeHold?.id !== id) return
         activeHold = null
