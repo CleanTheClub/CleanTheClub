@@ -25,6 +25,13 @@ function stopPickupEmote() {
   triggerSceneEmote({ src: '', loop: false })
 }
 
+// Public cancel — stops whatever scene emote is playing (e.g. when a hold-to-clean
+// is released before completing).  Also pre-empts a pending (delayed) emote trigger,
+// since playStepEmote checks emoteActive before firing.
+export function cancelEmote() {
+  stopPickupEmote()
+}
+
 // Persistent per-frame system — cancels the emote the moment the player moves
 function emoteWatchSystem(): void {
   if (!emoteActive) return
@@ -53,14 +60,18 @@ export function playPartyEmote() {
 
 // Shared "step to item, face it, then fire a one-shot emote" helper.
 // targetPos — world-space position of the item being interacted with.
-// Player is stepped to INTERACT_DISTANCE away from it, facing it, then the
-// emote at `src` fires after EMOTE_TRIGGER_MS and is cleared after `durationMs`.
+// Player is stepped to INTERACT_DISTANCE away from it, facing it, then the emote at
+// `src` fires after `triggerDelayMs` and is cleared after `durationMs`.
+// triggerDelayMs lets the player finish stepping over to a DISTANT item before the
+// animation plays (pickup). For the mopping emote the player is already standing on
+// the patch, so it passes 0 to fire immediately — no perceived delay.
 // Like the pickup emote it also auto-cancels the moment the player moves
 // (handled by the shared emoteWatchSystem).
 function playStepEmote(
   targetPos: { x: number; y: number; z: number },
   src:       string,
   durationMs: number,
+  triggerDelayMs: number = EMOTE_TRIGGER_MS,
 ) {
   if (emoteActive) stopPickupEmote()
 
@@ -83,13 +94,13 @@ function playStepEmote(
 
   emoteActive = true
 
-  timers.setTimeout(() => {
+  const fire = () => {
     if (!emoteActive) return
     triggerSceneEmote({ src, loop: false })
-    timers.setTimeout(() => {
-      stopPickupEmote()
-    }, durationMs)
-  }, EMOTE_TRIGGER_MS)
+    timers.setTimeout(() => stopPickupEmote(), durationMs)
+  }
+  if (triggerDelayMs <= 0) fire()
+  else timers.setTimeout(fire, triggerDelayMs)
 }
 
 // Fires the pickup emote — quick-clean items (rubbish, bottles, glasses, clutter).
@@ -97,7 +108,8 @@ export function playPickupEmote(targetPos: { x: number; y: number; z: number }) 
   playStepEmote(targetPos, PICKUP_EMOTE_SRC, PICKUP_EMOTE_MS)
 }
 
-// Fires the mopping emote — hold-to-clean sticky patches.
+// Fires the mopping emote — hold-to-clean sticky patches. The player is already on
+// the patch, so it fires immediately (triggerDelayMs = 0) for an instant response.
 export function playMoppingEmote(targetPos: { x: number; y: number; z: number }) {
-  playStepEmote(targetPos, MOPPING_EMOTE_SRC, MOPPING_EMOTE_MS)
+  playStepEmote(targetPos, MOPPING_EMOTE_SRC, MOPPING_EMOTE_MS, 0)
 }

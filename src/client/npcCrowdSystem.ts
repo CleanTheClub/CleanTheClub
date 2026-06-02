@@ -1,7 +1,12 @@
-// NPC crowd — a celebration crowd that ONLY appears during the final celebration
-// (the finale "victory hold" after the last round).  During normal rounds and
-// regular intermissions the club is empty of NPCs; when the finale begins the
-// crowd spawns in, dances / sits, and is removed again when the finale ends.
+// NPC crowd — a club crowd that fills the venue between rounds and goes full
+// during the finale celebration.
+//
+// PRESENCE MODEL (by phase):
+//   • playing            → club empty (players are cleaning)
+//   • open, not finale   → a ~1/4 "resident" crowd hangs out (intermission vibe)
+//   • open, finale       → the FULL crowd appears to celebrate
+// Avatars are POOLED: each is created once then recycled (scaled in/out) on every
+// transition instead of being destroyed and re-instantiated — far gentler on load.
 //
 // SIT SPOTS: the scene contains smart items named "Sit Spot_1" … "Sit Spot_33".
 // Their transforms are discovered at runtime (by Name) so sitters land at the real
@@ -25,7 +30,6 @@ const MALE   = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const BASE   = 'urn:decentraland:off-chain:base-avatars:'
 
 // Dancers only appear during the finale, so they go straight to the wildest dance.
-// Swap for a custom emote URN if you ship a bespoke animation.
 const DANCE_EMOTE = 'tik'
 // Re-trigger interval (ms) to keep the dance emote looping.
 const DANCE_LOOP_MS = 2_000
@@ -35,25 +39,33 @@ const DANCE_LOOP_MS = 2_000
 const SIT_EMOTES = ['sittingChair1', 'sittingChair2']
 
 const SIT_SPOT_PREFIX = 'Sit Spot_'
-// Cap how many sit spots get occupied (the scene has 33).  Mind the avatar budget.
 const MAX_SITTERS = 16
-// Give up looking for sit spots after this long (they stream in with the scene).
 const SIT_DISCOVERY_TIMEOUT_MS = 10_000
-// Rotate through these body shapes for variety as sitters are placed.
 const SITTER_BODY_CYCLE = [FEMALE, MALE]
 
-// ── Gradual spawn / pop animation ──────────────────────────────────────────────
-// Avatars are created one at a time on a stagger (spreads the load — avoids the
-// frame spike from instantiating the whole crowd at once) and each one "pops" in
-// with a springy scale-up.  On finale end they pop back out and are removed.
-const SPAWN_STAGGER_MS = 140    // gap between each avatar appearing
-const POP_IN_MS        = 380    // scale-up pop duration
-const POP_OUT_MS       = 260    // scale-down duration when leaving
-const DESPAWN_STAGGER_MS = 60   // gap between each avatar starting its pop-out
+// Fraction of the crowd that stays as "residents" between rounds (open, non-finale).
+const RESIDENT_FRACTION = 0.25
+
+// ── Pop / fade animation ───────────────────────────────────────────────────────
+// Avatars pop in one at a time on a stagger (spreads the instantiation load) with a
+// springy scale-up, and scale back down to leave.  When the FULL finale crowd
+// leaves, the pop-outs are spread across FADE_OUT_TOTAL_MS so the club empties
+// gradually rather than vanishing at once.
+const SPAWN_STAGGER_MS         = 140    // gap between each avatar popping IN
+const POP_IN_MS                = 380    // scale-up pop duration
+const POP_OUT_MS               = 700    // scale-down duration when leaving (gentler)
+const RESIDENT_POP_OUT_STAGGER_MS = 80  // quick exit for the small resident set
+const FADE_OUT_TOTAL_MS        = 12_000 // window the FULL finale crowd fades out over
+
+// ── Names (consistent themed clubgoer names for ALL npcs) ──────────────────────
+const NAMES: string[] = [
+  'Nova', 'Rex', 'Lux', 'Dex', 'Mira', 'Zara', 'Kai', 'Echo', 'Jet', 'Vega',
+  'Cleo', 'Ash', 'Onyx', 'Ria', 'Milo', 'Suki', 'Bex', 'Cass', 'Niko', 'Indie',
+  'Roux', 'Tam', 'Wren', 'Zane', 'Lia', 'Fox', 'Sol', 'Juno', 'Pax', 'Remy',
+]
+const nameFor = (i: number) => NAMES[i % NAMES.length]
 
 // ── Outfits ──────────────────────────────────────────────────────────────────
-// Each outfit is a set of base-wearable URNs (hair + upper + lower + feet).
-// Unspecified slots (eyes/eyebrows/mouth) fall back to defaults.  Cycled per NPC.
 const OUTFITS: string[][] = [
   [BASE + 'cornrows',        BASE + 'green_hoodie',          BASE + 'brown_pants',  BASE + 'sneakers'],
   [BASE + 'standard_hair',   BASE + 'blue_tshirt',           BASE + 'f_jeans',      BASE + 'bun_shoes'],
@@ -85,25 +97,23 @@ type DancerDef = {
   position:  { x: number; y: number; z: number }
   rotationY?: number
   bodyShape?: string
-  name?:      string
 }
 
-// Dance-floor layout — real spots from the scene.  rotationY faces roughly toward
-// the dance-floor centre for a coherent cluster.
+// Dance-floor layout — real spots from the scene.
 const DANCER_DEFS: DancerDef[] = [
-  { position: { x: 15.75, y: 0.92, z: 13.25 }, rotationY:   5, bodyShape: FEMALE, name: 'Nova' },
-  { position: { x: 13.25, y: 0.92, z: 16.25 }, rotationY:  95, bodyShape: MALE,   name: 'Rex'  },
-  { position: { x: 14.25, y: 0.92, z: 18.25 }, rotationY: 142, bodyShape: FEMALE, name: 'Lux'  },
-  { position: { x: 18.52, y: 0.92, z: 17.20 }, rotationY: 245, bodyShape: MALE,   name: 'Dex'  },
-  { position: { x: 19.15, y: 0.92, z: 15.45 }, rotationY: 280, bodyShape: FEMALE, name: 'Mira' },
-  { position: { x: 16.00, y: 2.35, z:  5.38 }, rotationY:   0, bodyShape: MALE,   name: 'Zara' },
-  { position: { x:  9.52, y: 0.82, z:  8.19 }, rotationY:  40, bodyShape: FEMALE, name: 'Kai'  },
-  { position: { x: 22.50, y: 0.82, z:  8.19 }, rotationY: 320, bodyShape: MALE,   name: 'Echo' },
-  { position: { x: 21.13, y: 1.16, z: 26.41 }, rotationY: 206, bodyShape: FEMALE, name: 'Jet'  },
+  { position: { x: 15.75, y: 0.92, z: 13.25 }, rotationY:   5, bodyShape: FEMALE },
+  { position: { x: 13.25, y: 0.92, z: 16.25 }, rotationY:  95, bodyShape: MALE   },
+  { position: { x: 14.25, y: 0.92, z: 18.25 }, rotationY: 142, bodyShape: FEMALE },
+  { position: { x: 18.52, y: 0.92, z: 17.20 }, rotationY: 245, bodyShape: MALE   },
+  { position: { x: 19.15, y: 0.92, z: 15.45 }, rotationY: 280, bodyShape: FEMALE },
+  { position: { x: 16.00, y: 2.35, z:  5.38 }, rotationY:   0, bodyShape: MALE   },
+  { position: { x:  9.52, y: 0.82, z:  8.19 }, rotationY:  40, bodyShape: FEMALE },
+  { position: { x: 22.50, y: 0.82, z:  8.19 }, rotationY: 320, bodyShape: MALE   },
+  { position: { x: 21.13, y: 1.16, z: 26.41 }, rotationY: 206, bodyShape: FEMALE },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ── Specs (computed once) → spawned only during the finale ─────────────────────
+// ── Specs + pooled runtime ─────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 
 type NpcKind = 'dancer' | 'sitter'
@@ -119,33 +129,38 @@ type NpcSpec = {
   hairColor: Color3
 }
 
-type PopState = 'in' | 'idle' | 'out'
-type NpcRuntime = {
-  entity:  Entity
-  spec:    NpcSpec
-  stamp:   number     // last expressionTriggerTimestamp written
-  popState: PopState
-  popMs:    number    // elapsed ms in the current pop phase
+type PopPhase = 'hidden' | 'in' | 'idle' | 'out'
+type Npc = {
+  spec:     NpcSpec
+  resident: boolean
+  entity:   Entity | null   // null until first created; reused (pooled) thereafter
+  phase:    PopPhase
+  popMs:    number          // elapsed in current pop; negative = pre-stagger delay
+  stamp:    number          // last expressionTriggerTimestamp written
 }
 
 const specs: NpcSpec[] = []
-const live:  NpcRuntime[] = []
-
-// Spawn queue — specs waiting to pop in, drained on the SPAWN_STAGGER_MS cadence.
-let spawnQueue: NpcSpec[] = []
-let spawnAccMs = 0
+const roster: Npc[] = []
+let rosterReady = false
+// Count of npcs that aren't fully hidden — lets the per-frame system skip its
+// animation + dancer-loop work entirely while the club is empty (all of 'playing').
+let liveNpcs = 0
 
 function buildSpec(
   kind: NpcKind,
   index: number,
-  name: string,
   bodyShape: string,
   position: { x: number; y: number; z: number },
   rotation: Quaternion,
   emote: string,
 ): NpcSpec {
   return {
-    kind, name, bodyShape, position, rotation, emote,
+    kind,
+    name:      nameFor(index),
+    bodyShape,
+    position,
+    rotation,
+    emote,
     wearables: OUTFITS[index % OUTFITS.length],
     skinColor: SKIN_TONES[index % SKIN_TONES.length],
     hairColor: HAIR_COLORS[(index * 2 + 1) % HAIR_COLORS.length],
@@ -160,13 +175,15 @@ function easeOutBack(t: number): number {
   return 1 + c3 * p * p * p + c1 * p * p
 }
 
-function createNpc(spec: NpcSpec) {
+// Lazily instantiate (or re-show) the avatar entity for a pooled NPC.
+function ensureEntity(npc: Npc) {
+  if (npc.entity !== null) return
+  const spec = npc.spec
   const entity = engine.addEntity()
-  // Start invisible-small; the pop-in system scales it up.
   Transform.create(entity, {
     position: spec.position,
     rotation: spec.rotation,
-    scale:    { x: 0.001, y: 0.001, z: 0.001 },
+    scale:    { x: 0.001, y: 0.001, z: 0.001 },  // pop-in scales it up
   })
   AvatarShape.create(entity, {
     id:                         `npc-${spec.kind}-${spec.name}`,
@@ -180,37 +197,32 @@ function createNpc(spec: NpcSpec) {
     expressionTriggerId:        spec.emote,
     expressionTriggerTimestamp: 1,
   })
-  live.push({ entity, spec, stamp: 1, popState: 'in', popMs: 0 })
+  npc.entity = entity
+  npc.stamp  = 1
 }
 
-// Begin a gradual spawn — queue all specs; the spawn system drains them on a stagger.
-function beginSpawn() {
-  // Clear any leftover avatars instantly (shouldn't normally happen).
-  for (const npc of live) engine.removeEntity(npc.entity)
-  live.length = 0
-  spawnQueue = specs.slice()
-  spawnAccMs = 0
-  console.log(`[NPC] Finale crowd spawning gradually — ${spawnQueue.length} avatars`)
+// Re-fire the held emote (used when a pooled avatar pops back in so it resumes its
+// dance/sit pose instead of standing idle).
+function retriggerEmote(npc: Npc) {
+  if (npc.entity === null) return
+  npc.stamp += 1
+  const shape = AvatarShape.getMutable(npc.entity)
+  shape.expressionTriggerId        = npc.spec.emote
+  shape.expressionTriggerTimestamp = npc.stamp
 }
 
-// Begin a graceful exit — stop queuing new spawns and pop everyone back out.
-function beginDespawn() {
-  spawnQueue = []
-  let delay = 0
-  for (const npc of live) {
-    // Negative popMs acts as a stagger delay before the pop-out starts.
-    npc.popState = 'out'
-    npc.popMs    = -delay
-    delay += DESPAWN_STAGGER_MS
-  }
-  console.log('[NPC] Finale crowd fading out')
-}
-
-function isFinaleNow(): boolean {
+function getPhase(): { phase: string; finale: boolean } {
   for (const [, gs] of engine.getEntitiesWith(GameState)) {
-    return gs.phase === 'open' && gs.isFinale
+    return { phase: gs.phase, finale: gs.isFinale }
   }
-  return false
+  return { phase: 'playing', finale: false }
+}
+
+// Whether a given NPC should be present right now.
+function wantsPresent(npc: Npc, phase: string, finale: boolean): boolean {
+  if (phase !== 'open') return false   // empty club during active rounds
+  if (finale) return true              // full crowd celebrates at the finale
+  return npc.resident                  // ~1/4 hang out during normal intermissions
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,7 +235,6 @@ export function initNpcCrowdSystem(): void {
     const d = DANCER_DEFS[i]
     specs.push(buildSpec(
       'dancer', i,
-      d.name ?? `Dancer ${i + 1}`,
       d.bodyShape ?? FEMALE,
       d.position,
       Quaternion.fromEulerDegrees(0, d.rotationY ?? 0, 0),
@@ -254,11 +265,10 @@ export function initNpcCrowdSystem(): void {
         const tf = Transform.getOrNull(entity)
         if (!tf) continue   // transform not streamed in yet — retry next tick
         usedSpots.add(name)
-        const idx = DANCER_DEFS.length + (usedSpots.size - 1)   // continue colour/outfit cycle
+        const idx  = DANCER_DEFS.length + (usedSpots.size - 1)   // continue cycles
         const sIdx = usedSpots.size - 1
         specs.push(buildSpec(
           'sitter', idx,
-          `Guest ${sIdx + 1}`,
           SITTER_BODY_CYCLE[sIdx % SITTER_BODY_CYCLE.length],
           { x: tf.position.x, y: tf.position.y, z: tf.position.z },
           { x: tf.rotation.x, y: tf.rotation.y, z: tf.rotation.z, w: tf.rotation.w },
@@ -268,67 +278,103 @@ export function initNpcCrowdSystem(): void {
     }
 
     if (usedSpots.size >= MAX_SITTERS || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
-      console.log(`[NPC] Crowd ready — ${DANCER_DEFS.length} dancers + ${usedSpots.size} sitters (spawn on finale)`)
+      buildRoster()
+      console.log(`[NPC] Crowd ready — ${DANCER_DEFS.length} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
       engine.removeSystem(discoverSitSpots)
-      // If the finale somehow started while we were still discovering, spawn now.
-      if (isFinaleNow()) beginSpawn()
     }
   }
   engine.addSystem(discoverSitSpots)
 
-  // ── Finale presence + gradual spawn / pop animation / dancer loop ────────────
-  let present     = false
+  // ── Presence + pop animation + dancer loop ───────────────────────────────────
+  let lastKey    = ''
   let sinceLoopMs = 0
 
   engine.addSystem((dt: number) => {
-    const dtMs   = dt * 1_000
-    const finale = isFinaleNow()
+    if (!rosterReady) return
+    const dtMs = dt * 1_000
+    const { phase, finale } = getPhase()
 
-    // Enter / leave the finale.
-    if (finale && !present) { present = true;  beginSpawn();   sinceLoopMs = 0 }
-    if (!finale && present) { present = false; beginDespawn() }
-
-    // ── Drain the spawn queue on a stagger (only while present) ────────────────
-    if (present && spawnQueue.length > 0) {
-      spawnAccMs += dtMs
-      while (spawnAccMs >= SPAWN_STAGGER_MS && spawnQueue.length > 0) {
-        spawnAccMs -= SPAWN_STAGGER_MS
-        createNpc(spawnQueue.shift()!)
-      }
+    // React only on phase/finale transitions.
+    const key = `${phase}|${finale}`
+    if (key !== lastKey) {
+      lastKey = key
+      applyPresence(phase, finale)
     }
 
-    // ── Pop animation (in / out) + cleanup ─────────────────────────────────────
-    for (let i = live.length - 1; i >= 0; i--) {
-      const npc = live[i]
-      npc.popMs += dtMs
+    if (liveNpcs === 0) return   // empty club — nothing to animate or loop
 
-      if (npc.popState === 'in') {
+    // ── Pop animation (in / out), recycling rather than destroying ─────────────
+    for (const npc of roster) {
+      if (npc.phase === 'hidden' || npc.phase === 'idle') continue
+      npc.popMs += dtMs
+      if (npc.popMs < 0) continue   // still in its stagger delay
+
+      if (npc.entity === null) continue
+      const tf = Transform.getMutable(npc.entity)
+
+      if (npc.phase === 'in') {
         const t = Math.min(1, npc.popMs / POP_IN_MS)
         const s = Math.max(0.001, easeOutBack(t))
-        Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
-        if (t >= 1) { npc.popState = 'idle'; npc.popMs = 0 }
-      } else if (npc.popState === 'out') {
-        if (npc.popMs < 0) continue   // still in its stagger delay
+        tf.scale = { x: s, y: s, z: s }
+        if (t >= 1) { npc.phase = 'idle'; npc.popMs = 0 }
+      } else if (npc.phase === 'out') {
         const t = Math.min(1, npc.popMs / POP_OUT_MS)
         const s = Math.max(0.001, 1 - t)
-        Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
-        if (t >= 1) { engine.removeEntity(npc.entity); live.splice(i, 1) }
+        tf.scale = { x: s, y: s, z: s }
+        if (t >= 1) { npc.phase = 'hidden'; liveNpcs--; tf.scale = { x: 0.001, y: 0.001, z: 0.001 } }
       }
     }
 
-    // ── Keep dancers looping by re-triggering the dance emote periodically ─────
-    if (present) {
-      sinceLoopMs += dtMs
-      if (sinceLoopMs >= DANCE_LOOP_MS) {
-        sinceLoopMs = 0
-        for (const npc of live) {
-          if (npc.spec.kind !== 'dancer' || npc.popState === 'out') continue
-          npc.stamp += 1
-          const shape = AvatarShape.getMutable(npc.entity)
-          shape.expressionTriggerId        = npc.spec.emote
-          shape.expressionTriggerTimestamp = npc.stamp
-        }
+    // ── Keep visible dancers looping by re-triggering the dance emote ──────────
+    sinceLoopMs += dtMs
+    if (sinceLoopMs >= DANCE_LOOP_MS) {
+      sinceLoopMs = 0
+      for (const npc of roster) {
+        if (npc.spec.kind !== 'dancer') continue
+        if (npc.phase !== 'in' && npc.phase !== 'idle') continue
+        retriggerEmote(npc)
       }
     }
+  })
+}
+
+// Build the pooled roster once the spec list is final; mark ~1/4 as residents,
+// spread evenly across the crowd (every Nth) for a varied intermission mix.
+function buildRoster() {
+  const stride = Math.max(1, Math.round(1 / RESIDENT_FRACTION))  // 0.25 → every 4th
+  for (let i = 0; i < specs.length; i++) {
+    roster.push({ spec: specs[i], resident: i % stride === 0, entity: null, phase: 'hidden', popMs: 0, stamp: 1 })
+  }
+  rosterReady = true
+}
+
+// Diff the desired presence against current state and start staggered pop-ins /
+// pop-outs.  A large exit (the full finale crowd leaving) is spread across
+// FADE_OUT_TOTAL_MS; a small one (residents leaving) exits quickly.
+function applyPresence(phase: string, finale: boolean) {
+  const entering: Npc[] = []
+  const leaving:  Npc[] = []
+  for (const npc of roster) {
+    const want  = wantsPresent(npc, phase, finale)
+    const shown = npc.phase === 'in' || npc.phase === 'idle'
+    if (want && !shown) entering.push(npc)
+    else if (!want && shown) leaving.push(npc)
+  }
+
+  entering.forEach((npc, i) => {
+    if (npc.phase === 'hidden') liveNpcs++   // was fully hidden — now coming alive
+    ensureEntity(npc)
+    retriggerEmote(npc)
+    npc.phase = 'in'
+    npc.popMs = -i * SPAWN_STAGGER_MS   // stagger the pop-ins
+  })
+
+  // Big exit → gradual fade window; small exit → quick.
+  const stagger = leaving.length > roster.filter(n => n.resident).length
+    ? FADE_OUT_TOTAL_MS / Math.max(1, leaving.length)
+    : RESIDENT_POP_OUT_STAGGER_MS
+  leaving.forEach((npc, i) => {
+    npc.phase = 'out'
+    npc.popMs = -i * stagger
   })
 }

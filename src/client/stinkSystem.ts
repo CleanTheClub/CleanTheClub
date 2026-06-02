@@ -12,6 +12,7 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS } from '../shared/config'
 import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
+import { SYNC_POLL_S } from './phaseGate'
 
 // ── Particle enum values ──────────────────────────────────────────────────────
 // These are 'const enum' in @dcl/ecs internals — not re-exported from @dcl/sdk/ecs.
@@ -158,7 +159,11 @@ export function initStinkSystem() {
   // Skips updates during party mode (phase = 'open') — stink is frozen then.
   let partyMode = false
 
-  engine.addSystem(() => {
+  let syncAcc = 0
+  engine.addSystem((dt: number) => {
+    syncAcc += dt
+    if (syncAcc < SYNC_POLL_S) return
+    syncAcc = 0
     for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
       const state = ClutterSync.get(syncEnt)
       const { itemId, isCleaned } = state

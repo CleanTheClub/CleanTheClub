@@ -126,6 +126,7 @@ function getBurstCfg(outcome: Outcome, finale = false): BurstCfg {
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Slot {
+  idx:         number   // index into `pool` (for O(1) return to the free list)
   entity:      Entity
   colorIdx:    number
   active:      boolean
@@ -142,6 +143,9 @@ interface Slot {
 }
 
 const pool: Slot[] = []
+// Free-list of inactive slot indices — O(1) allocation per piece instead of an
+// O(n) scan of the whole pool (matters at the finale: ~108 pieces/burst, every 1s).
+const freeStack: number[] = []
 
 function makeEntity(colorIdx: number): Entity {
   const c = PALETTE[colorIdx]
@@ -166,15 +170,18 @@ function makeEntity(colorIdx: number): Entity {
 // ─────────────────────────────────────────────────────────────────────────────
 
 let celebrationActive = false
+// Number of pieces currently in flight. Lets the physics system skip its 1000-slot
+// scan entirely whenever no confetti is active (i.e. all of the 'playing' phase).
+let activeCount = 0
 
 function fireBurst(cfg: BurstCfg): void {
   let spawned = 0
   for (const ci of cfg.cannonIndices) {
     const origin = CANNONS[ci]
     for (let i = 0; i < cfg.countPerCannon; i++) {
-      const slot = pool.find(s => !s.active && s.colorIdx < cfg.paletteSize)
-                ?? pool.find(s => !s.active)
-      if (!slot) { console.log('[Confetti] Pool exhausted — skipping remaining pieces'); return }
+      const freeIdx = freeStack.pop()
+      if (freeIdx === undefined) { console.log('[Confetti] Pool exhausted — skipping remaining pieces'); return }
+      const slot = pool[freeIdx]
 
       const azimuth = Math.random() * Math.PI * 2
       const speedH  = SPEED_H_MIN + Math.random() * (SPEED_H_MAX - SPEED_H_MIN)
@@ -183,6 +190,7 @@ function fireBurst(cfg: BurstCfg): void {
       const jZ      = (Math.random() - 0.5) * 2 * SPAWN_JITTER
 
       slot.active     = true
+      activeCount++
       slot.lifeMs     = 0
       slot.age        = 0
       slot.maxLifeMs  = LIFE_MIN_MS + Math.random() * (LIFE_MAX_MS - LIFE_MIN_MS)
@@ -243,6 +251,7 @@ function stopCelebration(): void {
 export function initConfettiSystem(): void {
   for (let i = 0; i < POOL_SIZE; i++) {
     pool.push({
+      idx:        i,
       entity:     makeEntity(i % PALETTE.length),
       colorIdx:   i % PALETTE.length,
       active:     false,
@@ -251,11 +260,13 @@ export function initConfettiSystem(): void {
       age:        0, lifeMs: 0, maxLifeMs: 0,
       spinZ: 0, spinZVel: 0, spinY: 0, spinYVel: 0, flutterOff: 0,
     })
+    freeStack.push(i)
   }
   console.log(`[Confetti] Pool ready — ${POOL_SIZE} slots, ceiling Y = ${CANNON_Y}`)
 
   // ── Physics system ──────────────────────────────────────────────────────────
   engine.addSystem((dt: number) => {
+    if (activeCount === 0) return   // no confetti in flight — skip the pool scan
     for (const s of pool) {
       if (!s.active) continue
 
@@ -264,6 +275,8 @@ export function initConfettiSystem(): void {
 
       if (s.lifeMs >= s.maxLifeMs) {
         s.active = false
+        activeCount--
+        freeStack.push(s.idx)   // return to the free list for reuse
         const tf = Transform.getMutable(s.entity)
         tf.scale    = { x: 0.001, y: 0.001, z: 0.001 }
         tf.position = { x: 0, y: -200, z: 0 }

@@ -43,6 +43,13 @@ export const theme = {
     bg:   Color4.create(0.12, 0.12, 0.12, 0.85), // track background
   },
 
+  // ── Hold-to-clean progress bar (screen UI shown while holding) ──────────────
+  // Mirrors the original in-world bar colours so the look carries over.
+  holdBar: {
+    fill: Color4.create(0.15, 1.00, 0.40, 1),
+    bg:   Color4.create(0.05, 0.05, 0.05, 0.92),
+  },
+
   // ── HUD text + chrome ───────────────────────────────────────────────────────
   text: {
     subtle: Color4.create(0.85, 0.85, 0.85, 1),  // round label

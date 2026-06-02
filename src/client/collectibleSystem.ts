@@ -1,7 +1,7 @@
 // Generic system for scene-item groups that are collected (hidden) on click.
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
@@ -12,6 +12,9 @@ import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
+import { shrinkAndHide, cancelShrink } from './itemFx'
+import { requestSetup } from './spawnDirector'
+import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
 export type CollectibleConfig = {
@@ -90,6 +93,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   }
 
   function enableClick(itemId: string) {
+    if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
     const rec = gltfRecords.get(itemId)
     if (!rec) return
     const { gltfEntity, containerEntity } = rec
@@ -109,22 +113,29 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         if (toastKind !== null) showCollectionToast(toastKind, countCollected(), items.length)
 
         pendingVisualHide.add(itemId)
-        timers.setTimeout(() => {
-          // Always delete the pending-hide guard first so the ClutterSync watcher
-          // can take over if it hasn't already (e.g. after re-entry clear).
+        // Capture the real (full) scale now, before the shrink starts, so respawn
+        // can restore it (setVisible(true) reads rec.originalScale).
+        if (rec.originalScale === null) {
+          const curr = Transform.getOrNull(containerEntity)
+          if (curr && curr.scale.x > 0.01) {
+            rec.originalScale = { x: curr.scale.x, y: curr.scale.y, z: curr.scale.z }
+          }
+        }
+        // Shrink immediately (instant visual response, no frozen wait) and land
+        // "gone" at the emote's hand-touch moment.  Sparkle + the pending-hide
+        // bookkeeping fire on completion, preserving the original guard logic.
+        shrinkAndHide(containerEntity, PICKUP_TOUCH_MS / 1000, () => {
           const wasPending = pendingVisualHide.has(itemId)
           pendingVisualHide.delete(itemId)
-          // Hide + sparkle if:
-          //   (a) normal path — we were still in the pending set, OR
-          //   (b) onEnterSceneObservable wiped pendingVisualHide but the ClutterSync
-          //       watcher already confirmed clean (lastState=true) so this is a
-          //       guaranteed-safe visual update.
-          // In case (b) setVisible is a no-op (watcher already hid the item), but
-          // the sparkle still plays at the correct emote-touch moment.
-          if (!wasPending && lastState.get(itemId) !== true) return
-          setVisible(itemId, false)
+          // cleanRejected wiped the guard and the item isn't confirmed clean →
+          // restore it (it has already shrunk away).  Otherwise it stays hidden
+          // (the tween left it at near-zero scale) and the sparkle plays.
+          if (!wasPending && lastState.get(itemId) !== true) {
+            setVisible(itemId, true)
+            return
+          }
           if (pos) playSparkle(pos)
-        }, PICKUP_TOUCH_MS)
+        })
       }
     )
   }
@@ -137,8 +148,12 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     return n
   }
 
-  // ── Authoritative state watcher ───────────────────────────────────────────────
-  engine.addSystem(() => {
+  // ── Authoritative state watcher (polled at SYNC_POLL_S, not every frame) ──────
+  let syncAcc = 0
+  engine.addSystem((dt: number) => {
+    syncAcc += dt
+    if (syncAcc < SYNC_POLL_S) return
+    syncAcc = 0
     for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
       const state = ClutterSync.get(syncEnt)
       if (!state.itemId.startsWith(idPrefix)) continue
@@ -157,55 +172,61 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     }
   })
 
-  // ── One-shot setup ────────────────────────────────────────────────────────────
-  const needsSetup = new Set(items.map(i => i.itemId))
-  const setupStartMs = Date.now()
-  const setupSystem = () => {
-    for (const { entity, itemId } of items) {
-      if (!needsSetup.has(itemId)) continue
-      const gltfEnt = findGltfEntity(entity)
-      if (!gltfEnt) continue
+  // ── Staggered setup — one item at a time via the global director ──────────────
+  // Each item's heavy bring-up (setupClickProxy + first state apply) is queued and
+  // run only once its GLB has streamed in, throttled globally so the whole scene's
+  // ~80 items don't set up in one frame (the load spike).
+  for (const { entity, itemId } of items) {
+    requestSetup({
+      isReady: () => findGltfEntity(entity) !== undefined,
+      run: () => {
+        const gltfEnt = findGltfEntity(entity)
+        if (!gltfEnt) return
 
-      const tf = Transform.getOrNull(entity)
-      // If the item is already cleaned (scale ≈ 0) when we join, don't record 0.001 as
-      // the original scale — that would keep the item invisible after every respawn.
-      // originalScale stays null and is captured the first time we call setVisible(false).
-      const rawScale = tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : null
-      const originalScale = (rawScale && rawScale.x > 0.01) ? rawScale : null
+        const tf = Transform.getOrNull(entity)
+        // If the item is already cleaned (scale ≈ 0) when we join, don't record 0.001 as
+        // the original scale — that would keep the item invisible after every respawn.
+        // originalScale stays null and is captured the first time we call setVisible(false).
+        const rawScale = tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : null
+        const originalScale = (rawScale && rawScale.x > 0.01) ? rawScale : null
 
-      setupClickProxy(gltfEnt)
+        setupClickProxy(gltfEnt)
+        gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, originalScale })
 
-      gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, originalScale })
-      needsSetup.delete(itemId)
+        const knownCleaned = lastState.get(itemId)
+        if (knownCleaned !== undefined) {
+          // ClutterSync watcher already processed authoritative state — apply it now.
+          setVisible(itemId, !knownCleaned)
+          if (knownCleaned) disableClick(itemId)
+          else              enableClick(itemId)   // no-op unless we're in 'playing'
+        } else if (isStateSyncronized()) {
+          // State synced but watcher hasn't seen this item yet (rare race).
+          enableClick(itemId)
+        }
+        // else: CRDT not complete — the ClutterSync watcher will enable/disable later.
+      },
+    })
+  }
 
-      const knownCleaned = lastState.get(itemId)
-      if (knownCleaned !== undefined) {
-        // ClutterSync watcher already processed authoritative state — apply it now.
-        setVisible(itemId, !knownCleaned)
-        if (knownCleaned) disableClick(itemId)
-        else              enableClick(itemId)
-      } else if (isStateSyncronized()) {
-        // State is fully synced but watcher hasn't seen this item yet (rare race).
-        // Enable as a safe default; watcher will disableClick if the item turns out
-        // to be already cleaned when its ClutterSync component arrives.
+  // ── Phase gate — pointer events only live while players can clean ─────────────
+  onPhaseChange((phase) => {
+    if (phase === 'playing') {
+      for (const { itemId } of items) {
+        if (pendingCleans.has(itemId)) continue
+        if (lastState.get(itemId) === true) continue   // already cleaned
         enableClick(itemId)
       }
-      // else: CRDT not yet complete — do NOT enable clicks.  The ClutterSync watcher
-      // will call enableClick / disableClick once the authoritative state arrives.
+    } else {
+      for (const { itemId } of items) disableClick(itemId)
     }
-
-    if (needsSetup.size === 0) { engine.removeSystem(setupSystem); return }
-    if (Date.now() - setupStartMs > 10_000) {
-      for (const id of needsSetup) console.log(`[COLLECT:${idPrefix}] WARNING "${id}" not found after 10 s`)
-      engine.removeSystem(setupSystem)
-    }
-  }
-  engine.addSystem(setupSystem)
+  })
 
   room.onMessage('cleanRejected', (data) => {
     if (!data.itemId.startsWith(idPrefix)) return
     pendingCleans.delete(data.itemId)
     pendingVisualHide.delete(data.itemId)
+    const rec = gltfRecords.get(data.itemId)
+    if (rec) cancelShrink(rec.containerEntity)  // stop an in-flight shrink before restoring
     setVisible(data.itemId, true)
     lastState.delete(data.itemId)
   })

@@ -22,6 +22,7 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { room } from '../shared/messages'
 import { setupClickProxy } from '../shared/sceneItemHelpers'
+import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
 import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { showCleanedToast, showNarrativeToast } from '../ui'
@@ -130,6 +131,7 @@ function showCleanInstant(s: ItemState, spark = true) {
 
 // ── Click registration ───────────────────────────────────────────────────────
 function enableClick(s: ItemState) {
+  if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
   const entity    = s.dirtyEnt!
   const hoverText = s.def.hoverText ?? 'Clean'
 
@@ -227,11 +229,13 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
         remaining--
         console.log(`[Restore] "${s.def.itemId}" discovered — dirty=${s.dirtyEnt} anim=${s.animEnt} clean=${s.cleanEnt}`)
 
-        // setupClickProxy enables CL_POINTER on the GLB's own meshes (clickable +
-        // hover outline) and self-defers if the GltfContainer hasn't streamed in
-        // yet, retrying until it has — so a slow-loading cushion is never left
-        // permanently un-clickable (the round-1 sofa-cushion bug).
-        setupClickProxy(s.dirtyEnt)
+        // addBox=false: restore items (cushions/stools) have baked GLB origins
+        // (e.g. 16,0,16) that don't match where the mesh actually sits, so a box
+        // collider would land at the wrong spot. Use visible-mesh pointer collision
+        // only (clickable + hover outline). setupClickProxy still self-defers if the
+        // GltfContainer hasn't streamed in yet, retrying until it has — so a
+        // slow-loading cushion is never left un-clickable (the round-1 bug).
+        setupClickProxy(s.dirtyEnt, false)
         Animator.createOrReplace(s.animEnt, {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })
@@ -262,7 +266,12 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   engine.addSystem(discoverSystem)
 
   // ── Authoritative ClutterSync watcher — one system covers all restore props ──
-  engine.addSystem(() => {
+  // Polled at SYNC_POLL_S rather than every frame.
+  let syncAcc = 0
+  engine.addSystem((dt: number) => {
+    syncAcc += dt
+    if (syncAcc < SYNC_POLL_S) return
+    syncAcc = 0
     for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
       const state = ClutterSync.get(syncEnt)
       const s     = states.get(state.itemId)
@@ -277,6 +286,19 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
       } else {
         showDirty(s)
       }
+    }
+  })
+
+  // ── Phase gate — restore-prop pointer events only live during 'playing' ───────
+  onPhaseChange((phase) => {
+    if (phase === 'playing') {
+      for (const [, s] of states) {
+        if (!s.allFound || s.pendingClean) continue
+        if (s.lastSyncCleaned === true) continue   // already restored
+        enableClick(s)
+      }
+    } else {
+      for (const [, s] of states) disableClick(s)
     }
   })
 

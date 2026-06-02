@@ -45,6 +45,15 @@ const BAR_LABEL_W         = 120     // width reserved for "X% Clean" text
 const BAR_LABEL_GAP       = 14      // gap between track right edge and label
 const BAR_HEIGHT          = 16
 
+// Hold-to-clean progress bar — screen-space (never occluded by the avatar, unlike
+// the old in-world billboard).  Shown only while a sticky patch is being held.
+const HOLD_BAR_W_DESKTOP  = 360
+const HOLD_BAR_W_MOBILE   = 300
+const HOLD_BAR_HEIGHT     = 22
+const HOLD_BAR_TOP        = 660     // lower third, below the centre reticle
+const HOLD_BAR_BG_COLOR   = theme.holdBar.bg
+const HOLD_BAR_FILL_COLOR = theme.holdBar.fill
+
 // Info strip (round label + next-round controls only — bar has moved above)
 const STRIP_TOP           = 258     // absolute top offset — just below bar row
 const STRIP_WIDTH         = 440     // base width before MOBILE_SCALE
@@ -270,6 +279,20 @@ let currentBarColor: Color4 = Color4.create(0.90, 0.30, 0.15, 1)  // starts at "
 let lastBarBand           = -1
 let activeBarTween: ((dt: number) => void) | null = null
 
+// ── Hold-to-clean bar state — driven by InteractionManager via cleaningSystem ──
+let holdBarVisible  = false
+let holdBarProgress = 0
+
+/** Show/hide the hold-to-clean progress bar (called when a hold begins/ends). */
+export function setHoldBarVisible(visible: boolean) {
+  holdBarVisible = visible
+  if (!visible) holdBarProgress = 0
+}
+/** Update hold-to-clean progress, 0..1 (called each frame while holding). */
+export function setHoldBarProgress(progress: number) {
+  holdBarProgress = Math.max(0, Math.min(1, progress))
+}
+
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
 
 /** Called each time the local player enters the scene — restarts the full intro (with hold). */
@@ -331,6 +354,8 @@ const ui = () => {
   const barFullW     = mobile ? BAR_FULL_W_MOBILE : BAR_FULL_W_DESKTOP
   const barLabelW    = Math.round(BAR_LABEL_W        * S)
   const barTrackW    = barFullW - barLabelW - BAR_LABEL_GAP
+  const holdBarW     = mobile ? HOLD_BAR_W_MOBILE : HOLD_BAR_W_DESKTOP
+  const holdBarHeight = Math.round(HOLD_BAR_HEIGHT * S)
   const nextFont     = Math.round(NEXT_FONT_SIZE     * S)
   const btnW         = Math.round(BTN_WIDTH          * S)
   const btnH         = Math.round(BTN_HEIGHT         * S)
@@ -441,17 +466,33 @@ const ui = () => {
   // same arithmetic, regardless of how the layout engine resolves '100%'.
   const VIRT_W = 1920
 
-  // ── HUD backdrop geometry ─────────────────────────────────────────────────────
-  // Anchored to normLeft (same as the banner) so it is guaranteed co-centred.
-  // Height stretches to cover the round label during playing, or the next-round
-  // button/countdown during the open phase. roundFont * 1.5 ≈ rendered line height.
-  const hudBgLeft    = normLeft - HUD_BG_PAD_X
-  const hudBgTop     = INSTR_MARGIN_TOP - HUD_BG_PAD_TOP
-  const hudBgWidth   = instrW + HUD_BG_PAD_X * 2
-  const hudBgBottomY = STRIP_TOP + Math.round(roundFont * 1.5)
-    + (isOpen ? LABEL_MARGIN_SMALL + btnH : 0)
-    + HUD_BG_PAD_BOT
+  // ── HUD backdrop geometry — tracks the banner wherever it is ─────────────────
+  // The backdrop follows the banner image's CURRENT rect so the scrim moves WITH
+  // the banner as it flies in on round start (intro) or sits centred during the
+  // intermission/outcome — instead of staying pinned at the settled top position.
+  const bannerTop  = isOpen ? outcomeAnimTop  : (introActive ? animTop  : normTop)
+  const bannerLeft = isOpen ? outcomeAnimLeft : (introActive ? animLeft : normLeft)
+  const bannerW    = isOpen ? outcomeAnimW    : (introActive ? animW    : instrW)
+  const bannerH    = isOpen ? outcomeAnimH    : (introActive ? animH    : instrH)
+
+  const hudBgLeft  = bannerLeft - HUD_BG_PAD_X
+  const hudBgTop   = bannerTop  - HUD_BG_PAD_TOP
+  const hudBgWidth = bannerW + HUD_BG_PAD_X * 2
+  const hudBgBottomY = isOpen
+    // Intermission: cover the centred card + the next-round controls beneath it.
+    ? bannerTop + bannerH + LABEL_MARGIN_SMALL + btnH + HUD_BG_PAD_BOT
+    : introActive
+      // Round-start intro: just wrap the flying banner so the scrim moves with it.
+      ? bannerTop + bannerH + HUD_BG_PAD_BOT
+      // Settled gameplay HUD: stretch down to cover the timer / bar / round label.
+      : STRIP_TOP + Math.round(roundFont * 1.5) + HUD_BG_PAD_BOT
   const hudBgHeight  = hudBgBottomY - hudBgTop
+
+  // ── Finale celebration title — pulses (scale via a sine) for a lively payoff ──
+  const finalePulse     = 1 + 0.06 * Math.sin(Date.now() / 280)
+  const finaleTitleFont = Math.round(nextFont * 1.7 * finalePulse)
+  // Sits just under the centred outcome card.
+  const finaleBlockTop  = centredTop + introImgH + Math.round(16 * S)
 
   return (
     <UiEntity
@@ -519,6 +560,28 @@ const ui = () => {
             color:       WHITE,
           }}
         />
+      )}
+
+      {/* ── Finale celebration — special centred title + countdown, confetti +  */}
+      {/*    crowd handle the rest.  Replaces the normal strip during the finale. */}
+      {isOpen && isFinale && (
+        <UiEntity
+          uiTransform={{
+            positionType:  'absolute',
+            position:      { top: finaleBlockTop, left: 0 },
+            width:         VIRT_W,
+            flexDirection: 'column',
+            alignItems:    'center',
+          }}
+        >
+          <Label value="🏆  Club Complete!" fontSize={finaleTitleFont} color={WHITE} />
+          <Label
+            value={`New game in ${formatTime(seconds)}`}
+            fontSize={nextFont}
+            color={COLOR_DIM}
+            uiTransform={{ margin: { top: LABEL_MARGIN_SMALL } }}
+          />
+        </UiEntity>
       )}
 
       {/* ── Timer row: icon left, big bold countdown right ───────────────────── */}
@@ -602,6 +665,38 @@ const ui = () => {
         </UiEntity>
       )}
 
+      {/* ── Hold-to-clean bar — screen-space, shown only while holding a patch ─── */}
+      {holdBarVisible && (
+        <UiEntity
+          uiTransform={{
+            positionType:   'absolute',
+            position:       { top: HOLD_BAR_TOP, left: 0 },
+            width:          VIRT_W,
+            flexDirection:  'column',
+            justifyContent: 'center',
+            alignItems:     'center',
+          }}
+        >
+          <Label
+            value="Cleaning…"
+            fontSize={meterFont}
+            color={COLOR_DIM}
+            uiTransform={{ margin: { bottom: 6 } }}
+          />
+          {/* Track */}
+          <UiEntity
+            uiTransform={{ width: holdBarW, height: holdBarHeight }}
+            uiBackground={{ color: HOLD_BAR_BG_COLOR }}
+          >
+            {/* Fill */}
+            <UiEntity
+              uiTransform={{ width: `${Math.round(holdBarProgress * 100)}%`, height: '100%' }}
+              uiBackground={{ color: HOLD_BAR_FILL_COLOR }}
+            />
+          </UiEntity>
+        </UiEntity>
+      )}
+
       {/* ── Info strip (round label + next-round controls) ────────────────────── */}
       <UiEntity
         uiTransform={{
@@ -615,33 +710,25 @@ const ui = () => {
         <UiEntity
           uiTransform={{ width: stripWidth, flexDirection: 'column', alignItems: 'center' }}
         >
-          <Label
-            value={DEBUG ? `[DEBUG] ${getRoundLabel(roundNumber)}` : getRoundLabel(roundNumber)}
-            fontSize={roundFont}
-            color={COLOR_SUBTLE}
-            uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
-          />
+          {/* Round label — hidden during the finale (the celebration overlay owns
+              the centre of the screen, so this would only clash with it). */}
+          {!isFinale && (
+            <Label
+              value={DEBUG ? `[DEBUG] ${getRoundLabel(roundNumber)}` : getRoundLabel(roundNumber)}
+              fontSize={roundFont}
+              color={COLOR_SUBTLE}
+              uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
+            />
+          )}
 
-          {isOpen && (
-            <UiEntity
-              uiTransform={{ flexDirection: 'column', alignItems: 'center', width: '100%' }}
-            >
-              {isFinale && (
-                <Label
-                  value="🏆  Club Complete!"
-                  fontSize={Math.round(nextFont * 1.25)}
-                  color={WHITE}
-                  uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
-                />
-              )}
-              {/* Intermission is no longer skippable — always a fixed countdown.        */}
-              {/* Finale loops the game back to round 1, so the label reflects that.     */}
-              <Label
-                value={isFinale ? `New game in ${formatTime(seconds)}` : `Next round in ${formatTime(seconds)}`}
-                fontSize={nextFont}
-                color={COLOR_DIM}
-              />
-            </UiEntity>
+          {/* Normal intermission countdown.  The finale uses its own celebration
+              overlay above instead, so this only renders for regular rounds. */}
+          {isOpen && !isFinale && (
+            <Label
+              value={`Next round in ${formatTime(seconds)}`}
+              fontSize={nextFont}
+              color={COLOR_DIM}
+            />
           )}
         </UiEntity>
       </UiEntity>

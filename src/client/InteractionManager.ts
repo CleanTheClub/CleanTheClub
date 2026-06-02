@@ -1,4 +1,4 @@
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, timers } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, inputSystem, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
@@ -7,8 +7,9 @@ import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound } from './soundManager'
-import { playPickupEmote, playMoppingEmote } from './emoteManager'
+import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
+import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
 
 const pendingCleans     = new Set<string>()
 const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
@@ -61,6 +62,7 @@ function tryClean(
 // ─── Enable / disable pointer interactions per item ───────────────────────────
 
 function enableClick(id: string) {
+  if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
   const ref = itemRefs.get(id)
   if (!ref) return
   const { entity, type } = ref
@@ -86,16 +88,11 @@ function enableClick(id: string) {
         if (pos) playMoppingEmote(pos)
       }
     )
-    pointerEventsSystem.onPointerUp(
-      { entity, opts: { button: InputAction.IA_POINTER } },
-      () => {
-        if (activeHold?.id !== id) return
-        activeHold = null
-        stopStickySound()
-        showHoldBarRef(id, false)
-        updateHoldBarRef(id, 0)
-      }
-    )
+    // NOTE: no onPointerUp here on purpose. It gave the patch an extra pointer-event
+    // entry that the quick items (bottles/rubbish) don't have, diverging the setup
+    // and suppressing the hover outline + adding a stray "Interact" prompt. Release
+    // is detected by the hold-progress system's inputSystem.isPressed poll instead,
+    // so the pointer events now match the other mess items exactly (hover + down).
   } else {
     pointerEventsSystem.onPointerDown(
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
@@ -172,6 +169,9 @@ export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
 let applyCleanStateRef: (id: string, isCleaned: boolean) => void = () => {}
 let showHoldBarRef:     (id: string, visible: boolean) => void   = () => {}
 let updateHoldBarRef:   (id: string, progress: number) => void   = () => {}
+// Optional staggered spawn-in: when set, an uncleaned item is popped in by the
+// spawn director (clicks enabled on pop-complete) instead of snapping visible.
+let spawnInRef:         ((id: string, onPopped: () => void) => void) | null = null
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
@@ -181,10 +181,12 @@ export function initInteractionManager(
   showHoldBar:       (id: string, visible: boolean) => void,
   updateHoldBar:     (id: string, progress: number) => void,
   sceneHoldEntities?: Map<string, Entity>,
+  spawnIn?: (id: string, onPopped: () => void) => void,
 ) {
   applyCleanStateRef = applyCleanState
   showHoldBarRef     = showHoldBar
   updateHoldBarRef   = updateHoldBar
+  spawnInRef         = spawnIn ?? null
 
   // On scene (re-)entry clear all stale client state so the ClutterSync watcher
   // treats every item as freshly unseen and correctly re-enables uncleaned ones.
@@ -214,7 +216,25 @@ export function initInteractionManager(
   // Frame system: drives hold progress + fires on completion
   engine.addSystem(() => {
     if (!activeHold) return
-    const progress = (Date.now() - activeHold.startMs) / HOLD_DURATION_MS
+    const heldMs = Date.now() - activeHold.startMs
+
+    // Robust release detection — poll whether the pointer is ACTUALLY still held.
+    // onPointerUp only fires when the button is released over the entity, which can
+    // be missed when the click's step-to-item move slides the cursor off the patch
+    // (notably the first, distant patch). Without this, a single click would let
+    // the hold auto-complete after HOLD_DURATION_MS. The 60 ms grace avoids a
+    // press-edge race on the very first frame of the hold.
+    if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
+      const { id } = activeHold
+      activeHold = null
+      cancelEmote()
+      stopStickySound()
+      showHoldBar(id, false)
+      updateHoldBar(id, 0)
+      return
+    }
+
+    const progress = heldMs / HOLD_DURATION_MS
     updateHoldBar(activeHold.id, Math.min(1, progress))
 
     if (progress >= 1) {
@@ -228,23 +248,27 @@ export function initInteractionManager(
     }
   })
 
-  // Enable clicks once server state is synced — ClutterSync watcher will
-  // immediately disable any already-cleaned items on the first frame
-  let registered = false
-  engine.addSystem(() => {
-    if (!isStateSyncronized() || registered) return
-    registered = true
+  // Enable clicks once server state is synced, then remove this one-shot system.
+  const enableOnSync = () => {
+    if (!isStateSyncronized()) return
     for (const def of CLUTTER_DEFS) {
       if (def.sceneGlb) continue
       enableClick(def.id)
     }
-    if (sceneHoldEntities) {
-      for (const [itemId] of sceneHoldEntities) enableClick(itemId)
-    }
-  })
+    // Scene-hold items (sticky patches) are NOT eagerly enabled here — the
+    // ClutterSync watcher's appear branch routes them through the spawn director,
+    // which enables clicks only once the patch has popped in (fully loaded).
+    engine.removeSystem(enableOnSync)
+  }
+  engine.addSystem(enableOnSync)
 
   // Watch ClutterSync → apply authoritative state + manage click availability
-  engine.addSystem(() => {
+  // (polled at SYNC_POLL_S, not every frame).
+  let syncAcc = 0
+  engine.addSystem((dt: number) => {
+    syncAcc += dt
+    if (syncAcc < SYNC_POLL_S) return
+    syncAcc = 0
     for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
       const state = ClutterSync.get(syncEnt)
       if (lastState.get(state.itemId) === state.isCleaned) continue
@@ -264,11 +288,39 @@ export function initInteractionManager(
           applyCleanState(state.itemId, true)
         }
       } else {
-        // Round reset — cancel any pending visual hide and restore immediately
+        // Round reset / first appearance — cancel any pending visual hide, then
+        // stagger the pop-in: spawnInRef pops the patch in once its GLB + collider
+        // are ready and enables clicks at that point (fixes round-1 click races and
+        // adds a satisfying pop).  Falls back to instant restore if no director.
         pendingVisualHide.delete(state.itemId)
-        enableClick(state.itemId)
-        applyCleanState(state.itemId, false)
+        if (spawnInRef) {
+          spawnInRef(state.itemId, () => enableClick(state.itemId))
+        } else {
+          enableClick(state.itemId)
+          applyCleanState(state.itemId, false)
+        }
       }
+    }
+  })
+
+  // ── Phase gate — sticky-patch pointer events only live during 'playing' ───────
+  onPhaseChange((phase) => {
+    if (phase === 'playing') {
+      for (const [id] of itemRefs) {
+        if (pendingCleans.has(id)) continue
+        const syncEnt = findClutterEntity(id)
+        if (syncEnt && ClutterSync.get(syncEnt).isCleaned) continue
+        enableClick(id)
+      }
+    } else {
+      // Leaving 'playing' (intermission/finale) — kill any in-progress hold so it
+      // can't complete while cleaning is disabled, then turn off all pointer events.
+      if (activeHold) {
+        showHoldBarRef(activeHold.id, false)
+        stopStickySound()
+        activeHold = null
+      }
+      for (const [id] of itemRefs) disableClick(id)
     }
   })
 

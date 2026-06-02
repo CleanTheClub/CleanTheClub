@@ -18,9 +18,11 @@ import { initStickyHazardSystem } from './stickyHazardSystem'
 import { initMusicManager } from './musicManager'
 import { initLeaderboardSystem } from './leaderboardSystem'
 import { initNpcCrowdSystem } from './npcCrowdSystem'
+import { initDupeScan } from './dupeScan'
 
 export function initClient() {
   console.log('[CLIENT] started')
+  initDupeScan()  // TEMP: logs co-located GLBs ([DUPE] …) — remove once diagnosed
   initSoundManager()
   initMusicManager()
   initEmoteManager()

@@ -103,20 +103,28 @@ export function initServer() {
     itemEntities.set(def.id, entity)
   }
 
-  // Scene-placed groups — ClutterSync added to existing composite entities.
-  // Each group is discovered deterministically (sorted entity ID) so enumIds
-  // are consistent across server restarts and client discovery.
+  // Scene-placed groups — discovered deterministically (sorted entity ID) so the
+  // itemId (= prefix + composite entity id) and enumIds are consistent across server
+  // restarts and client discovery.
+  //
+  // IMPORTANT: we sync a SEPARATE logical entity per item, NOT the visual composite
+  // entity. Calling syncEntity on a static composite entity replicates the whole
+  // entity (Transform + GltfContainer) to clients as a networked copy, which renders
+  // ON TOP of the client's own local composite copy — the "duplicate model" bug.
+  // The client bridges ClutterSync ↔ its local visual entity by itemId, so a logical
+  // sync entity (ClutterSync only, no visuals) is all that needs to cross the wire.
   for (const { entity, itemId } of [
     ...discoverGlasses(),
     ...discoverBottles(),
     ...discoverRubbish(),
     ...discoverStickyPatches(),
   ]) {
-    ClutterSync.create(entity, { itemId, isCleaned: false, cleanedAt: 0, cleanedBy: '' })
-    syncEntity(entity, [ClutterSync.componentId], enumId++)
-    itemEntities.set(itemId, entity)
+    const syncEnt = engine.addEntity()
+    ClutterSync.create(syncEnt, { itemId, isCleaned: false, cleanedAt: 0, cleanedBy: '' })
+    syncEntity(syncEnt, [ClutterSync.componentId], enumId++)
+    itemEntities.set(itemId, syncEnt)
 
-    // Record original scale so we can restore it after round reset
+    // Record original scale (read from the visual composite entity) for round reset
     const tf = Transform.getOrNull(entity)
     sceneItemScales.set(itemId, tf
       ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }

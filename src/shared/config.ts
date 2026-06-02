@@ -11,8 +11,8 @@ export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // normal intermissi
 // held for ~1.5 min so the full crowd + music celebration can breathe.
 export const FINALE_DISPLAY_MS  = DEBUG ? 30_000 : 90_000   // finale celebration window
 export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  :  8_000   // min before early-start unlocks
-export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 90_000
-export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
+export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 120_000  // base respawn (was 90s — eased)
+export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was 45s — eased)
 
 // Respawn speed scales up with player count so the mess volume stays
 // challenging regardless of group size.  Index = (playerCount − 1), clamped
@@ -21,15 +21,20 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 45_000
 // factor > 1 → items respawn faster  (scaledMs = baseMs / factor)
 // factor < 1 → items respawn slower  (easier)
 //
-//  1 player  → 0.75× (120 s / 60 s — solo breathing room)
-//  2 players → 1.35× (67 s / 33 s)
-//  3 players → 1.70× (53 s / 26 s)
-//  4 players → 2.00× (45 s / 22 s)
-//  5+ players → 2.30× (39 s / 20 s)
-export const RESPAWN_SCALE_FACTORS = [0.75, 1.35, 1.70, 2.00, 2.30]
-export const HOLD_DURATION_MS   = DEBUG ? 500    : 1_500   // hold-to-clean duration
+// Eased pass: base bumped to 120 s / 60 s and the per-player scaling flattened so
+// the mess returns more gently at every group size.
+//  1 player  → 0.70× (171 s / 86 s — solo breathing room)
+//  2 players → 1.10× (109 s / 55 s)
+//  3 players → 1.40× ( 86 s / 43 s)
+//  4 players → 1.70× ( 71 s / 35 s)
+//  5+ players → 1.90× ( 63 s / 32 s)
+export const RESPAWN_SCALE_FACTORS = [0.70, 1.10, 1.40, 1.70, 1.90]
+export const HOLD_DURATION_MS   = DEBUG ? 500    : 2_500   // hold-to-clean duration (lined up with mop emote)
 export const PICKUP_EMOTE_MS    = 1_500                    // match PickUp_Anim_emote.glb clip length
-export const MOPPING_EMOTE_MS   = 2_000                    // match Mopping_emote.glb clip length (tune to clip)
+// The mopping emote now fires immediately on hold-start (no step delay — the player
+// is already on the patch), so it runs for the FULL hold duration and stops exactly
+// as the bar completes and the patch poofs. Keep MOPPING_EMOTE_MS == HOLD_DURATION_MS.
+export const MOPPING_EMOTE_MS   = 2_000                    // = HOLD_DURATION_MS (fires at t=0)
 export const PICKUP_TOUCH_MS   = 800                       // ms from click → hand touches item (tune to match anim)
 
 // Restoration meter thresholds
