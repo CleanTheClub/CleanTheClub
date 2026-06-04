@@ -12954,7 +12954,7 @@
         "serializationType": "map"
       },
       "data": {
-        "565": {
+        "1": {
           "json": {
             "gizmo": 0
           }
@@ -17555,9 +17555,12 @@
               "game"
             ],
             "author": "LowPolyModels",
-            "email": "",
             "tags": [],
             "layout": {
+              "base": {
+                "x": 0,
+                "y": 0
+              },
               "parcels": [
                 {
                   "x": 0,
@@ -17575,14 +17578,8 @@
                   "x": 1,
                   "y": 0
                 }
-              ],
-              "base": {
-                "x": 0,
-                "y": 0
-              }
+              ]
             },
-            "silenceVoiceChat": false,
-            "disablePortableExperiences": false,
             "spawnPoints": [
               {
                 "name": "SpawnArea1",
@@ -17591,22 +17588,19 @@
                   "x": {
                     "$case": "range",
                     "value": [
-                      15.029999732971191,
-                      17.030000686645508
+                      15,
+                      17
                     ]
                   },
                   "y": {
-                    "$case": "range",
-                    "value": [
-                      0.800000011920929,
-                      0.800000011920929
-                    ]
+                    "$case": "single",
+                    "value": 0
                   },
                   "z": {
                     "$case": "range",
                     "value": [
-                      18.030000686645508,
-                      20.030000686645508
+                      27.670000076293945,
+                      29.670000076293945
                     ]
                   }
                 },

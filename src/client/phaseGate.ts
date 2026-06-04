@@ -9,6 +9,7 @@
 // change (e.g. a round-reset) can't silently re-register pointer events.
 
 import { engine } from '@dcl/sdk/ecs'
+import { isStateSyncronized } from '@dcl/sdk/network'
 import { GameState } from '../shared/schemas'
 
 // Authoritative ClutterSync watchers reconcile server state at this cadence rather
@@ -28,9 +29,42 @@ export function currentPhase(): string {
   return 'playing'
 }
 
-// True only while players can clean. Pointer events must stay off otherwise.
+// Returns the synced GameState phase, or null if GameState hasn't arrived yet.
+function syncedPhase(): string | null {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase
+  return null
+}
+
+// ── Mid-match lockout (client-side) ────────────────────────────────────────────
+// A player who first syncs into a match already in progress (playing/open) is a
+// "waiter" — they can't clean and see a "match in progress" screen until the match
+// ends and the phase returns to 'lobby', at which point they join the next match.
+let joinedMidMatch = false
+let decided = false
+
+export function isWaitingForMatch(): boolean {
+  return joinedMidMatch
+}
+
+// Start the lockout watcher. Call once from initClient.
+export function initPhaseGate(): void {
+  engine.addSystem(() => {
+    const phase = syncedPhase()
+    if (phase === null) return   // GameState not synced yet
+
+    // Decide once authoritative state has arrived: in a match already → waiter.
+    if (!decided && isStateSyncronized()) {
+      decided = true
+      joinedMidMatch = phase !== 'lobby'
+    }
+    // Any return to the lobby clears the wait — they join the next match normally.
+    if (phase === 'lobby') joinedMidMatch = false
+  })
+}
+
+// True only while players can clean: the playing phase AND not a mid-match waiter.
 export function clicksAllowed(): boolean {
-  return currentPhase() === 'playing'
+  return currentPhase() === 'playing' && !joinedMidMatch
 }
 
 // Subscribe to phase transitions. The handler fires once per change with the new

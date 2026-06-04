@@ -9,6 +9,7 @@ import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
+import { isWaitingForMatch } from './client/phaseGate'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
@@ -326,6 +327,10 @@ const ui = () => {
   const isFinale      = gs?.isFinale ?? false
   const pct           = Math.min(1, cleaned / total)
   const isOpen        = phase === 'open'
+  const isLobby       = phase === 'lobby'
+  const starting      = gs?.starting ?? false
+  const playersIn     = gs?.playersIn ?? 0
+  const waiting       = isWaitingForMatch()
 
   // ── Round-transition detection ────────────────────────────────────────────────
   // Runs every render call but only acts when isOpen changes value.
@@ -493,6 +498,64 @@ const ui = () => {
   const finaleTitleFont = Math.round(nextFont * 1.7 * finalePulse)
   // Sits just under the centred outcome card.
   const finaleBlockTop  = centredTop + introImgH + Math.round(16 * S)
+
+  // ── Lobby overlay — gather + START a match. Replaces the whole HUD. ───────────
+  if (isLobby) {
+    const titleW = Math.round(760 * S)
+    const titleH = Math.round(95 * S)
+    return (
+      <UiEntity
+        uiTransform={{
+          width: '100%', height: '100%', positionType: 'absolute', position: { top: 0, left: 0 },
+          flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+        }}
+        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+      >
+        <UiEntity
+          uiTransform={{ width: titleW, height: titleH, margin: { bottom: Math.round(28 * S) } }}
+          uiBackground={{ texture: { src: 'assets/scene/UI/InstructionsUI.png' }, textureMode: 'stretch', color: WHITE }}
+        />
+        <Label
+          value="Tidy the club against the clock — 5 rounds, then the after-party!"
+          fontSize={Math.round(26 * S)} color={COLOR_SUBTLE}
+          uiTransform={{ margin: { bottom: Math.round(10 * S) } }}
+        />
+        <Label
+          value={`Players in lobby: ${playersIn}`}
+          fontSize={Math.round(30 * S)} color={WHITE}
+          uiTransform={{ margin: { bottom: Math.round(26 * S) } }}
+        />
+        {starting ? (
+          <Label value={`Starting in ${seconds}…`} fontSize={Math.round(60 * S)} color={WHITE} />
+        ) : (
+          <Button
+            value="START MATCH"
+            variant="primary"
+            fontSize={Math.round(34 * S)}
+            uiTransform={{ width: Math.round(340 * S), height: Math.round(88 * S) }}
+            onMouseDown={() => room.send('startMatch', { dummy: true })}
+          />
+        )}
+      </UiEntity>
+    )
+  }
+
+  // ── Waiting overlay — a match is already in progress; join the next one. ──────
+  if (waiting) {
+    return (
+      <UiEntity
+        uiTransform={{
+          width: '100%', height: '100%', positionType: 'absolute', position: { top: 0, left: 0 },
+          flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+        }}
+        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+      >
+        <Label value="Match in progress" fontSize={Math.round(56 * S)} color={WHITE}
+          uiTransform={{ margin: { bottom: Math.round(14 * S) } }} />
+        <Label value="You'll join the next match — hang tight!" fontSize={Math.round(28 * S)} color={COLOR_SUBTLE} />
+      </UiEntity>
+    )
+  }
 
   return (
     <UiEntity

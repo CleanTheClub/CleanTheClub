@@ -5,7 +5,8 @@ export const Messages = {
   // ── Client → Server ─────────────────────────────────────────
   cleanItem:        Schemas.Map({ itemId: Schemas.String }),
   adminReset:       Schemas.Map({ dummy: Schemas.Boolean }),  // admin only
-  startNextRound:   Schemas.Map({ dummy: Schemas.Boolean }),  // any player
+  startNextRound:   Schemas.Map({ dummy: Schemas.Boolean }),  // any player (no-op)
+  startMatch:       Schemas.Map({ dummy: Schemas.Boolean }),  // any player — start a match from the lobby
   /** Sent on join so the server can map address → display name for the leaderboard. */
   registerPlayer:   Schemas.Map({ displayName: Schemas.String }),
   /** Sent immediately on client start (no async wait) to wake a cold server ASAP. */

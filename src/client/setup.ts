@@ -18,11 +18,11 @@ import { initStickyHazardSystem } from './stickyHazardSystem'
 import { initMusicManager } from './musicManager'
 import { initLeaderboardSystem } from './leaderboardSystem'
 import { initNpcCrowdSystem } from './npcCrowdSystem'
-import { initDupeScan } from './dupeScan'
+import { initPhaseGate } from './phaseGate'
 
 export function initClient() {
   console.log('[CLIENT] started')
-  initDupeScan()  // TEMP: logs co-located GLBs ([DUPE] …) — remove once diagnosed
+  initPhaseGate()  // start the mid-match lockout watcher
   initSoundManager()
   initMusicManager()
   initEmoteManager()

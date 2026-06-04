@@ -7,17 +7,25 @@ import {
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
 
-export type Phase   = 'playing' | 'open'
+export type Phase   = 'lobby' | 'playing' | 'open'
 export type Outcome = '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
+
+// Pre-match countdown after a player presses START in the lobby.
+const LOBBY_COUNTDOWN_MS = 5_000
 
 let itemEntities:    Map<string, Entity>
 let gameStateEntity: Entity
-let phase:        Phase   = 'playing'
+let phase:        Phase   = 'lobby'
 let roundNumber:  number  = 0
 let roundStartMs  = 0
 let openStartMs   = 0
 let playerCount   = 0
 let currentOutcome: Outcome = ''
+
+// Lobby pre-match countdown state.
+let starting = false
+let startCountdownStartMs = 0
+let startCountdownTimer: ReturnType<typeof setTimeout> | null = null
 
 // True during the open phase that follows the FINAL round — the "victory hold".
 // Triggers a longer celebration window and signals clients to show the finale
@@ -72,11 +80,15 @@ function syncGameState() {
       : Math.max(0, Math.ceil((getRoundDurationMs() - (now - roundStartMs)) / 1000))
     : phase === 'open'
     ? Math.max(0, Math.ceil((openDisplayMs() - (now - openStartMs)) / 1000))
+    : phase === 'lobby' && starting
+    ? Math.max(0, Math.ceil((LOBBY_COUNTDOWN_MS - (now - startCountdownStartMs)) / 1000))
     : 0
   gs.roundNumber   = roundNumber
   gs.outcome       = currentOutcome
   gs.canStartEarly = false   // early start disabled — intermission is no longer skippable
   gs.isFinale      = isFinale
+  gs.playersIn     = playerCount
+  gs.starting      = starting
 }
 
 function clearAllRespawns() {
@@ -120,13 +132,16 @@ function startNextRound(fullReset: boolean) {
   clearAllRespawns()
   if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
 
+  // Finale victory hold just finished → return to the lobby (don't auto-loop).
+  // The next match only begins when a player presses START again.
+  if (!fullReset && isFinale) {
+    goToLobby()
+    return
+  }
+
   if (fullReset) {
     roundNumber = 0
-    console.log('[ROUND] Full reset — back to round 0')
-  } else if (isFinale) {
-    // Final round's victory hold just finished — loop the game back to round 1.
-    roundNumber = 0
-    console.log('[ROUND] Finale complete — looping back to round 0')
+    console.log('[ROUND] Match starting — round 0')
   } else {
     roundNumber = Math.min(roundNumber + 1, ROUND_DURATIONS_MS.length - 1)
     console.log(`[ROUND] Starting round ${roundNumber}`)
@@ -148,6 +163,39 @@ function startNextRound(fullReset: boolean) {
   }
 
   syncGameState()
+}
+
+// Return to the lobby — the resting state between matches (boot, finale end,
+// empty scene, admin reset).  Players gather here and press START to begin.
+function goToLobby() {
+  clearAllRespawns()
+  if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
+  if (startCountdownTimer) { clearTimeout(startCountdownTimer); startCountdownTimer = null }
+  roundNumber        = 0
+  isFinale           = false
+  currentOutcome     = ''
+  starting           = false
+  nextRoundTriggered = false
+  roundStartMs       = 0
+  resetClutter()
+  phase = 'lobby'
+  syncGameState()
+  console.log('[ROUND] → lobby')
+}
+
+// Any player presses START in the lobby: run a short shared countdown, then begin
+// round 0.  Guarded so it only fires from the lobby, once, with players present.
+export function onStartMatch() {
+  if (phase !== 'lobby' || starting || playerCount <= 0) return
+  starting = true
+  startCountdownStartMs = Date.now()
+  syncGameState()
+  console.log('[ROUND] Match countdown started')
+  startCountdownTimer = setTimeout(() => {
+    startCountdownTimer = null
+    starting = false
+    startNextRound(true)   // full reset to round 0; starts the round timer (players present)
+  }, LOBBY_COUNTDOWN_MS)
 }
 
 // Returns baseMs divided by the scale factor for the current player count.
@@ -215,27 +263,26 @@ export function onPlayerEnter() {
   if (playerCount === 1 && roundTimer === null && phase === 'playing') {
     roundStartMs = Date.now()
     roundTimer   = setTimeout(triggerOpen, getRoundDurationMs())
-    syncGameState()
     console.log('[ROUND] First player entered — round timer started')
   }
+  syncGameState()   // update the live lobby count (playersIn)
 }
 
 export function onPlayerLeave() {
   playerCount = Math.max(0, playerCount - 1)
   console.log(`[ROUND] Player left — count: ${playerCount}`)
-  if (playerCount > 0) logScaling()
   if (playerCount === 0) {
-    nextRoundTriggered = true   // block any in-flight startNextRound messages
-    if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
-    startNextRound(true)
+    // Everyone left — return to the lobby (also cancels any in-flight countdown).
+    goToLobby()
+  } else {
+    logScaling()
+    syncGameState()   // update the live lobby count (playersIn)
   }
 }
 
 export function onAdminReset() {
   console.log('[ROUND] Admin reset triggered')
-  nextRoundTriggered = true
-  if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
-  startNextRound(true)
+  goToLobby()
 }
 
 export function initRoundManager(
@@ -247,15 +294,10 @@ export function initRoundManager(
   gameStateEntity = gsEntity
   onRestoreScales = restoreScales
 
-  roundNumber    = 0
-  currentOutcome = ''
-  isFinale       = false
-  roundStartMs   = 0       // timer hasn't started — waits for first player enter
-  phase          = 'playing'
-  syncGameState()
-  // roundTimer intentionally not started here — onPlayerEnter starts it
+  // Boot into the lobby — players gather and press START to begin a match.
+  goToLobby()
 
   setInterval(() => {
-    if (phase === 'playing' || phase === 'open') syncGameState()
+    if (phase === 'playing' || phase === 'open' || phase === 'lobby') syncGameState()
   }, 1_000)
 }

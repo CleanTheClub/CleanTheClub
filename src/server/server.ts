@@ -6,7 +6,7 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, getPhase } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase } from './RoundManager'
 
 // ── Leaderboard ───────────────────────────────────────────────
 interface LeaderboardEntry { displayName: string; total: number }
@@ -133,12 +133,14 @@ export function initServer() {
 
   const gameStateEntity = engine.addEntity()
   GameState.create(gameStateEntity, {
-    phase: 'playing',
+    phase: 'lobby',   // boot into the lobby; initRoundManager re-affirms this
     cleanedCount: 0,
     totalCount: itemEntities.size,
     secondsLeft: 0,
     roundNumber: 0,
     outcome: '',
+    playersIn: 0,
+    starting: false,
   })
   syncEntity(gameStateEntity, [GameState.componentId], enumId)
 
@@ -189,7 +191,7 @@ export function initServer() {
 
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
-    if (getPhase() === 'open') {
+    if (getPhase() !== 'playing') {   // reject during lobby/countdown and intermission
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
@@ -255,6 +257,11 @@ export function initServer() {
 
   room.onMessage('startNextRound', (_data, _context) => {
     onNextRoundRequest()
+  })
+
+  // Any player can start a match from the lobby (begins the shared countdown).
+  room.onMessage('startMatch', (_data, _context) => {
+    onStartMatch()
   })
 
   room.onMessage('registerPlayer', (data, context) => {

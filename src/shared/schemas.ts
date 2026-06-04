@@ -9,7 +9,7 @@ export const ClutterSync = engine.defineComponent('partypad:ClutterSync', {
 })
 
 export const GameState = engine.defineComponent('partypad:GameState', {
-  phase:        Schemas.String,   // 'playing' | 'open'
+  phase:        Schemas.String,   // 'lobby' | 'playing' | 'open'
   cleanedCount: Schemas.Int,
   totalCount:   Schemas.Int,
   secondsLeft:  Schemas.Int,
@@ -17,6 +17,8 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   outcome:       Schemas.String,   // '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
   canStartEarly: Schemas.Boolean,  // true once NEXT_ROUND_LOCK_MS has elapsed during open phase
   isFinale:      Schemas.Boolean,  // true during the open phase that follows the final round (victory hold)
+  playersIn:     Schemas.Int,      // live player count — shown in the lobby
+  starting:      Schemas.Boolean,  // true during the lobby pre-match countdown (secondsLeft is the countdown)
 })
 
 ClutterSync.validateBeforeChange((v) => v.senderAddress === AUTH_SERVER_PEER_ID)

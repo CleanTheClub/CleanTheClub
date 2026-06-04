@@ -315,6 +315,8 @@ export function initConfettiSystem(): void {
       console.log(`[Confetti] Phase: "${prev}" → "${gs.phase}"`)
       if (gs.phase === 'open'    && prev === 'playing') launchCelebration(gs.outcome as Outcome, gs.isFinale)
       if (gs.phase === 'playing' && prev === 'open')    stopCelebration()
+      // The finale now exits 'open' → 'lobby' (not 'playing'), so stop here too.
+      if (gs.phase === 'lobby'   && prev === 'open')    stopCelebration()
     }
   })
 

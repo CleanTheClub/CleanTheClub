@@ -180,6 +180,20 @@ export function initMusicManager(): void {
           play(townEntity)
           console.log('[Music] → Town track')
         }
+      } else if (gs.phase === 'lobby' && prev === 'open') {
+        // Returned to the lobby after a match (the finale now exits to 'lobby', not
+        // 'playing', so the fade-out must happen here). Ease celebration down, Town up.
+        if (prevFinale) {
+          fadeTo(partyEntity,  0)
+          fadeTo(finaleEntity, 0)
+          fadeTo(townEntity,   VOL_TOWN)
+          console.log('[Music] → Town track (lobby — fading out finale)')
+        } else {
+          stop(partyEntity)
+          stop(finaleEntity)
+          play(townEntity)
+          console.log('[Music] → Town track (lobby)')
+        }
       }
       return
     }
