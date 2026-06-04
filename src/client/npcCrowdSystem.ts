@@ -142,9 +142,6 @@ type Npc = {
 const specs: NpcSpec[] = []
 const roster: Npc[] = []
 let rosterReady = false
-// Count of npcs that aren't fully hidden — lets the per-frame system skip its
-// animation + dancer-loop work entirely while the club is empty (all of 'playing').
-let liveNpcs = 0
 
 function buildSpec(
   kind: NpcKind,
@@ -175,13 +172,17 @@ function easeOutBack(t: number): number {
   return 1 + c3 * p * p * p + c1 * p * p
 }
 
-// Lazily instantiate (or re-show) the avatar entity for a pooled NPC.
+// Instantiate the avatar entity for an NPC that is popping in. Entities are created
+// fresh each appearance and destroyed when hidden (see the pop-out path) — this
+// avoids the floating-nametag problem (a hidden-but-alive AvatarShape keeps its tag)
+// and the out-of-bounds-unload problem (parking far off-scene). Creation is
+// staggered, so there's no instantiation spike.
 function ensureEntity(npc: Npc) {
   if (npc.entity !== null) return
   const spec = npc.spec
   const entity = engine.addEntity()
   Transform.create(entity, {
-    position: spec.position,
+    position: { x: spec.position.x, y: spec.position.y, z: spec.position.z },
     rotation: spec.rotation,
     scale:    { x: 0.001, y: 0.001, z: 0.001 },  // pop-in scales it up
   })
@@ -301,27 +302,33 @@ export function initNpcCrowdSystem(): void {
       applyPresence(phase, finale)
     }
 
-    if (liveNpcs === 0) return   // empty club — nothing to animate or loop
+    // Empty club (everyone hidden) — nothing to animate or loop.
+    if (!roster.some(n => n.phase !== 'hidden')) return
 
-    // ── Pop animation (in / out), recycling rather than destroying ─────────────
+    // ── Pop animation (in / out) ───────────────────────────────────────────────
     for (const npc of roster) {
       if (npc.phase === 'hidden' || npc.phase === 'idle') continue
       npc.popMs += dtMs
-      if (npc.popMs < 0) continue   // still in its stagger delay
-
-      if (npc.entity === null) continue
-      const tf = Transform.getMutable(npc.entity)
+      if (npc.popMs < 0) continue   // still in its stagger delay (no entity yet for 'in')
 
       if (npc.phase === 'in') {
+        // Create the avatar the moment its pop-in begins (deferred from the entering
+        // diff so no entity — and no nametag — exists during the stagger wait).
+        if (npc.entity === null) { ensureEntity(npc); retriggerEmote(npc) }
         const t = Math.min(1, npc.popMs / POP_IN_MS)
         const s = Math.max(0.001, easeOutBack(t))
-        tf.scale = { x: s, y: s, z: s }
+        if (npc.entity !== null) Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
         if (t >= 1) { npc.phase = 'idle'; npc.popMs = 0 }
       } else if (npc.phase === 'out') {
+        if (npc.entity === null) { npc.phase = 'hidden'; continue }
         const t = Math.min(1, npc.popMs / POP_OUT_MS)
         const s = Math.max(0.001, 1 - t)
-        tf.scale = { x: s, y: s, z: s }
-        if (t >= 1) { npc.phase = 'hidden'; liveNpcs--; tf.scale = { x: 0.001, y: 0.001, z: 0.001 } }
+        Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
+        if (t >= 1) {
+          engine.removeEntity(npc.entity)   // destroy — no lingering nametag, no off-scene unload
+          npc.entity = null
+          npc.phase  = 'hidden'
+        }
       }
     }
 
@@ -362,11 +369,8 @@ function applyPresence(phase: string, finale: boolean) {
   }
 
   entering.forEach((npc, i) => {
-    if (npc.phase === 'hidden') liveNpcs++   // was fully hidden — now coming alive
-    ensureEntity(npc)
-    retriggerEmote(npc)
     npc.phase = 'in'
-    npc.popMs = -i * SPAWN_STAGGER_MS   // stagger the pop-ins
+    npc.popMs = -i * SPAWN_STAGGER_MS   // stagger; the entity is created when its pop-in starts
   })
 
   // Big exit → gradual fade window; small exit → quick.

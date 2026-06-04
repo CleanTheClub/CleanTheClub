@@ -111,6 +111,10 @@ const OUTCOME_IMAGES: Record<string, string> = {
   suboptimal: 'assets/scene/UI/BadClean.png',
 }
 
+// Shown in place of the per-round outcome card during the FINALE celebration
+// (after the final round). Same 1024×128 aspect as the outcome images.
+const CLUB_COMPLETE_IMG = 'assets/scene/UI/ClubComplete.png'
+
 // Text colours — sourced from the shared theme.
 const COLOR_SUBTLE        = theme.text.subtle  // round label
 const COLOR_DIM           = theme.text.dim     // meter / next-round
@@ -461,9 +465,10 @@ const ui = () => {
   const outcomeAnimTop  = Math.round(lerp(centredTop,  normTop,  outcomeEased))
   const outcomeAnimLeft = Math.round(lerp(centredLeft, normLeft, outcomeEased))
 
-  // Source for the "settled" image slot (instructions or outcome card)
+  // Source for the "settled" image slot (instructions or outcome card).
+  // The finale shows the dedicated ClubComplete card instead of a round outcome.
   const topImageSrc = isOpen
-    ? (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal'])
+    ? (isFinale ? CLUB_COMPLETE_IMG : (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal']))
     : 'assets/scene/UI/InstructionsUI.png'
 
   // Virtual canvas width — matches the virtualWidth passed to ReactEcsRenderer.
@@ -493,66 +498,76 @@ const ui = () => {
       : STRIP_TOP + Math.round(roundFont * 1.5) + HUD_BG_PAD_BOT
   const hudBgHeight  = hudBgBottomY - hudBgTop
 
-  // ── Finale celebration title — pulses (scale via a sine) for a lively payoff ──
-  const finalePulse     = 1 + 0.06 * Math.sin(Date.now() / 280)
-  const finaleTitleFont = Math.round(nextFont * 1.7 * finalePulse)
-  // Sits just under the centred outcome card.
+  // Countdown sits just under the centred ClubComplete card during the finale.
   const finaleBlockTop  = centredTop + introImgH + Math.round(16 * S)
 
   // ── Lobby overlay — gather + START a match. Replaces the whole HUD. ───────────
+  // Centering uses the same mechanism as the HUD timer/banner: each element sits in
+  // a full-VIRT_W row with justifyContent:'center' (flex alignItems does NOT centre
+  // reliably in this renderer). The column's justifyContent:'center' centres the
+  // stack vertically. Fonts scale by S for mobile legibility.
   if (isLobby) {
-    const titleW = Math.round(760 * S)
-    const titleH = Math.round(95 * S)
+    const titleW = mobile ? 1040 : 820
+    const titleH = Math.round(titleW / 8)            // InstructionsUI.png is 1024×128 (8:1)
+    const centeredRow = { width: VIRT_W, flexDirection: 'row' as const, justifyContent: 'center' as const }
     return (
       <UiEntity
         uiTransform={{
-          width: '100%', height: '100%', positionType: 'absolute', position: { top: 0, left: 0 },
-          flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+          positionType: 'absolute', position: { top: 0, left: 0 },
+          width: VIRT_W, height: '100%',
+          flexDirection: 'column', justifyContent: 'center',
         }}
         uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
       >
-        <UiEntity
-          uiTransform={{ width: titleW, height: titleH, margin: { bottom: Math.round(28 * S) } }}
-          uiBackground={{ texture: { src: 'assets/scene/UI/InstructionsUI.png' }, textureMode: 'stretch', color: WHITE }}
-        />
-        <Label
-          value="Tidy the club against the clock — 5 rounds, then the after-party!"
-          fontSize={Math.round(26 * S)} color={COLOR_SUBTLE}
-          uiTransform={{ margin: { bottom: Math.round(10 * S) } }}
-        />
-        <Label
-          value={`Players in lobby: ${playersIn}`}
-          fontSize={Math.round(30 * S)} color={WHITE}
-          uiTransform={{ margin: { bottom: Math.round(26 * S) } }}
-        />
-        {starting ? (
-          <Label value={`Starting in ${seconds}…`} fontSize={Math.round(60 * S)} color={WHITE} />
-        ) : (
-          <Button
-            value="START MATCH"
-            variant="primary"
-            fontSize={Math.round(34 * S)}
-            uiTransform={{ width: Math.round(340 * S), height: Math.round(88 * S) }}
-            onMouseDown={() => room.send('startMatch', { dummy: true })}
+        <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(30 * S) } }}>
+          <UiEntity
+            uiTransform={{ width: titleW, height: titleH }}
+            uiBackground={{ texture: { src: 'assets/scene/UI/InstructionsUI.png' }, textureMode: 'stretch', color: WHITE }}
           />
-        )}
+        </UiEntity>
+        <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(14 * S) } }}>
+          <Label value="Clean the club before time runs out — 5 rounds!"
+            fontSize={Math.round(26 * S)} color={COLOR_SUBTLE} />
+        </UiEntity>
+        <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(30 * S) } }}>
+          <Label value={`Players in lobby: ${playersIn}`}
+            fontSize={Math.round(32 * S)} color={WHITE} />
+        </UiEntity>
+        <UiEntity uiTransform={centeredRow}>
+          {starting ? (
+            <Label value={`Starting in ${seconds}…`} fontSize={Math.round(64 * S)} color={WHITE} />
+          ) : (
+            <Button
+              value="START MATCH"
+              variant="primary"
+              fontSize={Math.round(34 * S)}
+              uiTransform={{ width: Math.round(360 * S), height: Math.round(92 * S) }}
+              onMouseDown={() => room.send('startMatch', { dummy: true })}
+            />
+          )}
+        </UiEntity>
       </UiEntity>
     )
   }
 
   // ── Waiting overlay — a match is already in progress; join the next one. ──────
   if (waiting) {
+    const centeredRow = { width: VIRT_W, flexDirection: 'row' as const, justifyContent: 'center' as const }
     return (
       <UiEntity
         uiTransform={{
-          width: '100%', height: '100%', positionType: 'absolute', position: { top: 0, left: 0 },
-          flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+          positionType: 'absolute', position: { top: 0, left: 0 },
+          width: VIRT_W, height: '100%',
+          flexDirection: 'column', justifyContent: 'center',
         }}
         uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
       >
-        <Label value="Match in progress" fontSize={Math.round(56 * S)} color={WHITE}
-          uiTransform={{ margin: { bottom: Math.round(14 * S) } }} />
-        <Label value="You'll join the next match — hang tight!" fontSize={Math.round(28 * S)} color={COLOR_SUBTLE} />
+        <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(16 * S) } }}>
+          <Label value="Match in progress" fontSize={Math.round(56 * S)} color={WHITE} />
+        </UiEntity>
+        <UiEntity uiTransform={centeredRow}>
+          <Label value="You'll join the next match — hang tight!" fontSize={Math.round(28 * S)} color={COLOR_SUBTLE} />
+        </UiEntity>
       </UiEntity>
     )
   }
@@ -630,19 +645,17 @@ const ui = () => {
       {isOpen && isFinale && (
         <UiEntity
           uiTransform={{
-            positionType:  'absolute',
-            position:      { top: finaleBlockTop, left: 0 },
-            width:         VIRT_W,
-            flexDirection: 'column',
-            alignItems:    'center',
+            positionType:   'absolute',
+            position:       { top: finaleBlockTop, left: 0 },
+            width:          VIRT_W,
+            flexDirection:  'row',
+            justifyContent: 'center',
           }}
         >
-          <Label value="🏆  Club Complete!" fontSize={finaleTitleFont} color={WHITE} />
           <Label
             value={`New game in ${formatTime(seconds)}`}
             fontSize={nextFont}
             color={COLOR_DIM}
-            uiTransform={{ margin: { top: LABEL_MARGIN_SMALL } }}
           />
         </UiEntity>
       )}

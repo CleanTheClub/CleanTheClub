@@ -19,10 +19,12 @@ import { initMusicManager } from './musicManager'
 import { initLeaderboardSystem } from './leaderboardSystem'
 import { initNpcCrowdSystem } from './npcCrowdSystem'
 import { initPhaseGate } from './phaseGate'
+import { initLobbyTeleport } from './lobbyTeleport'
 
 export function initClient() {
   console.log('[CLIENT] started')
   initPhaseGate()  // start the mid-match lockout watcher
+  initLobbyTeleport()  // return players to the entrance when a match ends
   initSoundManager()
   initMusicManager()
   initEmoteManager()
