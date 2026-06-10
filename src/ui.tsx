@@ -64,6 +64,7 @@ const LABEL_MARGIN_SMALL  = 4       // bottom margin under round label
 
 // Next-round controls (shown when phase === 'open')
 const NEXT_FONT_SIZE      = 15
+const PCT_FONT_SIZE       = 44      // achieved-cleanliness % shown under the outcome / finale card
 const BTN_WIDTH           = 240
 const BTN_HEIGHT          = 48
 const BTN_FONT_SIZE       = 16
@@ -498,8 +499,15 @@ const ui = () => {
       : STRIP_TOP + Math.round(roundFont * 1.5) + HUD_BG_PAD_BOT
   const hudBgHeight  = hudBgBottomY - hudBgTop
 
-  // Countdown sits just under the centred ClubComplete card during the finale.
-  const finaleBlockTop  = centredTop + introImgH + Math.round(16 * S)
+  // Achieved-cleanliness % — sits just below the centred outcome / ClubComplete card.
+  // Still valid during the whole open phase: triggerOpen() does NOT reset the clutter
+  // (resetClutter only runs when the next round starts), so cleaned/total continue to
+  // hold the round-end value. Revealed once the card has settled at centre.
+  const pctFont        = Math.round(PCT_FONT_SIZE * S)
+  const pctRowTop      = centredTop + introImgH + Math.round(10 * S)
+  const outcomeSettled = outcomeProgress >= 1
+  // Finale countdown sits just below the % number.
+  const finaleBlockTop  = pctRowTop + pctFont + Math.round(12 * S)
 
   // ── Lobby overlay — gather + START a match. Replaces the whole HUD. ───────────
   // Centering uses the same mechanism as the HUD timer/banner: each element sits in
@@ -638,6 +646,26 @@ const ui = () => {
             color:       WHITE,
           }}
         />
+      )}
+
+      {/* ── Achieved cleanliness % — prominent number just below the centred card; */}
+      {/*    shown during both the per-round intermission and the finale celebration. */}
+      {isOpen && outcomeSettled && (
+        <UiEntity
+          uiTransform={{
+            positionType:   'absolute',
+            position:       { top: pctRowTop, left: 0 },
+            width:          VIRT_W,
+            flexDirection:  'row',
+            justifyContent: 'center',
+          }}
+        >
+          <Label
+            value={`${Math.round(pct * 100)}% Clean`}
+            fontSize={pctFont}
+            color={WHITE}
+          />
+        </UiEntity>
       )}
 
       {/* ── Finale celebration — special centred title + countdown, confetti +  */}

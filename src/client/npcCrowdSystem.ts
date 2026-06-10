@@ -17,7 +17,7 @@
 //
 // Avatars are clothed via base-wearable URNs and given varied skin / hair colours.
 
-import { engine, Entity, Transform, AvatarShape, Name } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, AvatarShape, Name, timers } from '@dcl/sdk/ecs'
 import { Quaternion, Color3 } from '@dcl/sdk/math'
 import { GameState } from '../shared/schemas'
 
@@ -51,17 +51,21 @@ const RESIDENT_FRACTION = 0.25
 // springy scale-up, and scale back down to leave.  When the FULL finale crowd
 // leaves, the pop-outs are spread across FADE_OUT_TOTAL_MS so the club empties
 // gradually rather than vanishing at once.
-const SPAWN_STAGGER_MS         = 140    // gap between each avatar popping IN
-const POP_IN_MS                = 380    // scale-up pop duration
-const POP_OUT_MS               = 700    // scale-down duration when leaving (gentler)
+const SPAWN_STAGGER_MS         = 140    // gap between each avatar dropping IN
+const POP_IN_MS                = 450    // drop-in duration
+const POP_OUT_MS               = 500    // lift-out duration when leaving
 const RESIDENT_POP_OUT_STAGGER_MS = 80  // quick exit for the small resident set
-const FADE_OUT_TOTAL_MS        = 12_000 // window the FULL finale crowd fades out over
+const FADE_OUT_TOTAL_MS        = 12_000 // window the FULL finale crowd leaves over
+// Avatars stay at scale 1 ALWAYS (DCL's avatar renderer doesn't compose entity scale
+// cleanly across the body/hair/nametag, which deforms hair). Reveal via POSITION
+// instead: drop in from this height, lift back up to it on exit.
+const DROP_HEIGHT = 1.0
 
 // ── Names (consistent themed clubgoer names for ALL npcs) ──────────────────────
 const NAMES: string[] = [
-  'Nova', 'Rex', 'Lux', 'Dex', 'Mira', 'Zara', 'Kai', 'Echo', 'Jet', 'Vega',
-  'Cleo', 'Ash', 'Onyx', 'Ria', 'Milo', 'Suki', 'Bex', 'Cass', 'Niko', 'Indie',
-  'Roux', 'Tam', 'Wren', 'Zane', 'Lia', 'Fox', 'Sol', 'Juno', 'Pax', 'Remy',
+  'Rave', 'VIP', 'Lux', 'Hype', 'Feisty', 'Party', 'DJ', 'Echo', 'Jet', 'Riot',
+  'Neon', 'Ace', 'Onyx', 'Legend', 'Flash', 'Glitz', 'Bex', 'CatLover', 'Moonwalker', 'Dancebot',
+  'Glowbug', 'Shuffler', 'Cleaner', 'Blaze', 'Flirt', 'Fox', 'Menace', 'Trouble', 'Bandit', 'Mayhem',
 ]
 const nameFor = (i: number) => NAMES[i % NAMES.length]
 
@@ -164,30 +168,25 @@ function buildSpec(
   }
 }
 
-// easeOutBack — overshoots slightly past 1.0 then settles, giving a springy "pop".
-function easeOutBack(t: number): number {
-  const c1 = 1.70158
-  const c3 = c1 + 1
-  const p  = t - 1
-  return 1 + c3 * p * p * p + c1 * p * p
-}
+const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)  // soft landing for the drop-in
+const easeInCubic  = (t: number) => t * t * t               // accelerating lift for the exit
 
-// Instantiate the avatar entity for an NPC that is popping in. Entities are created
-// fresh each appearance and destroyed when hidden (see the pop-out path) — this
-// avoids the floating-nametag problem (a hidden-but-alive AvatarShape keeps its tag)
-// and the out-of-bounds-unload problem (parking far off-scene). Creation is
-// staggered, so there's no instantiation spike.
-function ensureEntity(npc: Npc) {
-  if (npc.entity !== null) return
-  const spec = npc.spec
+// Create a fresh avatar entity for `spec` at world height `y`. Each gets a unique id.
+// Per-session nonce so avatar ids never collide with a previously-cached identity in
+// the explorer. Without this, ids like `npc-dancer-Rave-1` repeat every deploy, and the
+// explorer shows the CACHED (old) nametag for any id it has seen before — which is why
+// renamed NPCs appear as a mix of old and new names until a full client restart.
+const NPC_SESSION_NONCE = Math.floor(Math.random() * 1e9).toString(36)
+let npcIdCounter = 0
+function createAvatarEntity(spec: NpcSpec, y: number): Entity {
   const entity = engine.addEntity()
   Transform.create(entity, {
-    position: { x: spec.position.x, y: spec.position.y, z: spec.position.z },
+    position: { x: spec.position.x, y, z: spec.position.z },
     rotation: spec.rotation,
-    scale:    { x: 0.001, y: 0.001, z: 0.001 },  // pop-in scales it up
+    scale:    { x: 1, y: 1, z: 1 },   // avatars stay at scale 1 always
   })
   AvatarShape.create(entity, {
-    id:                         `npc-${spec.kind}-${spec.name}`,
+    id:                         `npc-${NPC_SESSION_NONCE}-${spec.kind}-${spec.name}-${++npcIdCounter}`,
     name:                       spec.name,
     bodyShape:                  spec.bodyShape,
     wearables:                  spec.wearables,
@@ -198,8 +197,38 @@ function ensureEntity(npc: Npc) {
     expressionTriggerId:        spec.emote,
     expressionTriggerTimestamp: 1,
   })
-  npc.entity = entity
+  return entity
+}
+
+// Instantiate the avatar entity for an NPC that is dropping in. Entities are created
+// fresh each appearance and destroyed when hidden (see the pop-out path) — this
+// avoids the floating-nametag problem (a hidden-but-alive AvatarShape keeps its tag)
+// and the out-of-bounds-unload problem (parking far off-scene). Creation is
+// staggered, so there's no instantiation spike.
+function ensureEntity(npc: Npc) {
+  if (npc.entity !== null) return
+  npc.entity = createAvatarEntity(npc.spec, npc.spec.position.y + DROP_HEIGHT)  // start above the spot
   npc.stamp  = 1
+}
+
+// ── Hairstyle warm-up ───────────────────────────────────────────────────────────
+// DCL's avatar hair uses "wiggle bones" (secondary motion) that initialise the first
+// time each hairstyle is instantiated — which makes the very first crowd (round 1)
+// show funky hair, while every later round is fine. We pre-instantiate one avatar per
+// unique hairstyle at scene load (hidden behind the boot lobby scrim) so that cold
+// start happens before anyone's watching, then destroy them.
+const HAIR_WARMUP_MS = 3_000
+function warmUpHairstyles() {
+  const seenHair = new Set<string>()
+  const warm: Entity[] = []
+  for (const spec of specs) {
+    const hair = spec.wearables[0]
+    if (seenHair.has(hair)) continue
+    seenHair.add(hair)
+    warm.push(createAvatarEntity(spec, spec.position.y))   // at the spot so it renders + warms
+  }
+  console.log(`[NPC] Warming ${warm.length} hairstyles`)
+  timers.setTimeout(() => { for (const e of warm) engine.removeEntity(e) }, HAIR_WARMUP_MS)
 }
 
 // Re-fire the held emote (used when a pooled avatar pops back in so it resumes its
@@ -281,6 +310,7 @@ export function initNpcCrowdSystem(): void {
     if (usedSpots.size >= MAX_SITTERS || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
       buildRoster()
       console.log(`[NPC] Crowd ready — ${DANCER_DEFS.length} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
+      warmUpHairstyles()   // pre-init hair wiggle-bones so round 1 isn't funky
       engine.removeSystem(discoverSitSpots)
     }
   }
@@ -311,19 +341,22 @@ export function initNpcCrowdSystem(): void {
       npc.popMs += dtMs
       if (npc.popMs < 0) continue   // still in its stagger delay (no entity yet for 'in')
 
+      const spec = npc.spec
       if (npc.phase === 'in') {
-        // Create the avatar the moment its pop-in begins (deferred from the entering
+        // Create the avatar the moment its drop-in begins (deferred from the entering
         // diff so no entity — and no nametag — exists during the stagger wait).
         if (npc.entity === null) { ensureEntity(npc); retriggerEmote(npc) }
         const t = Math.min(1, npc.popMs / POP_IN_MS)
-        const s = Math.max(0.001, easeOutBack(t))
-        if (npc.entity !== null) Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
+        const y = spec.position.y + DROP_HEIGHT * (1 - easeOutCubic(t))  // +1m → spot
+        if (npc.entity !== null) {
+          Transform.getMutable(npc.entity).position = { x: spec.position.x, y, z: spec.position.z }
+        }
         if (t >= 1) { npc.phase = 'idle'; npc.popMs = 0 }
       } else if (npc.phase === 'out') {
         if (npc.entity === null) { npc.phase = 'hidden'; continue }
         const t = Math.min(1, npc.popMs / POP_OUT_MS)
-        const s = Math.max(0.001, 1 - t)
-        Transform.getMutable(npc.entity).scale = { x: s, y: s, z: s }
+        const y = spec.position.y + DROP_HEIGHT * easeInCubic(t)         // spot → +1m, then gone
+        Transform.getMutable(npc.entity).position = { x: spec.position.x, y, z: spec.position.z }
         if (t >= 1) {
           engine.removeEntity(npc.entity)   // destroy — no lingering nametag, no off-scene unload
           npc.entity = null

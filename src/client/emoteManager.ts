@@ -1,4 +1,4 @@
-import { engine, Transform, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
+import { engine, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
 import { movePlayerTo, triggerSceneEmote } from '~system/RestrictedActions'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 
@@ -43,9 +43,33 @@ function emoteWatchSystem(): void {
   }
 }
 
+// Pre-warm the emote GLBs so the FIRST time each one is triggered it plays instantly
+// instead of stalling while the asset loads. The pickup emote stays warm naturally
+// (it fires on every quick item), but the mopping emote only plays on sticky patches,
+// so a player's first mop used to pay the full load cost — that "loading" stutter.
+//
+// We instantiate each GLB on a hidden entity (tiny scale, far underground), which
+// loads the asset. Crucially these entities are kept ALIVE for the whole session:
+// the engine evicts a GLB once nothing references it, so an earlier "load then remove"
+// warm-up got unloaded again long before the first real mop (which only happens after
+// the lobby + countdown, 15s+ in) — leaving it cold exactly when it mattered. Holding
+// a permanent reference keeps the asset resident so every mop is instant.
+const EMOTE_WARMUP_DELAY_MS = 3_000   // wait out the initial scene-item load spike first
+function warmUpEmotes() {
+  timers.setTimeout(() => {
+    for (const src of [MOPPING_EMOTE_SRC, PICKUP_EMOTE_SRC, PARTY_EMOTE_SRC]) {
+      const e = engine.addEntity()
+      Transform.create(e, { position: { x: 0, y: -100, z: 0 }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
+      GltfContainer.create(e, { src })
+      // Never removed — the reference keeps the GLB loaded for the session.
+    }
+  }, EMOTE_WARMUP_DELAY_MS)
+}
+
 // Call once from initClient so the watch system runs every frame
 export function initEmoteManager() {
   engine.addSystem(emoteWatchSystem)
+  warmUpEmotes()
 }
 
 // Fires the party emote on the local player at round end.

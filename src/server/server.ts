@@ -1,6 +1,6 @@
 import { engine, Entity, Transform, executeTask } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
-import { Storage } from '@dcl/sdk/server'
+import { Storage, EnvVar } from '@dcl/sdk/server'
 import { onEnterSceneObservable, onLeaveSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
@@ -21,28 +21,135 @@ function ensureLeaderboardLoaded(): Promise<void> {
   return leaderboardLoadPromise
 }
 
-async function loadLeaderboard(): Promise<void> {
-  try {
-    const raw = await Storage.get<string>('leaderboard')
-    if (!raw) {
-      console.log('[SERVER] No leaderboard data — starting fresh')
-    } else {
-      const records: Array<{ address: string; displayName: string; total: number }> = JSON.parse(raw)
-      for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
-      console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+// True once we've confirmed (via a settled read) what's actually in storage. Until
+// then we must NOT save — a write before a confirmed read can overwrite good data.
+let leaderboardLoadConfirmed = false
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+type LbRecord = { address: string; displayName: string; total: number }
+
+// ── Persistence backend ───────────────────────────────────────────────────────
+// Decentraland Worlds have a server-storage bug: `Storage` is scoped per DEPLOY
+// (content hash), not per location, so after a republish the server reads a fresh,
+// EMPTY bucket and can never see the previous deploy's data (the owner CLI can,
+// because it reads the latest deploy's bucket). Confirmed in production: 90s of
+// retried reads all 404'd while the CLI read the data instantly. Retrying can't fix
+// a scope problem — the data simply isn't in the bucket the server is allowed to read.
+//
+// Fix: persist to an EXTERNAL store the server can read consistently across deploys.
+// When LEADERBOARD_BIN_ID + LEADERBOARD_BIN_KEY are set (server EnvVars), we use
+// jsonbin.io; otherwise we fall back to DCL `Storage` (which works fine on LAND).
+let binCfg: { id: string; key: string } | null = null
+let binCfgLoaded = false
+async function getBinCfg(): Promise<{ id: string; key: string } | null> {
+  if (!binCfgLoaded) {
+    binCfgLoaded = true
+    try {
+      const id  = await EnvVar.get('LEADERBOARD_BIN_ID')
+      const key = await EnvVar.get('LEADERBOARD_BIN_KEY')
+      binCfg = id && key ? { id, key } : null
+    } catch (e) {
+      console.log('[SERVER] EnvVar read failed — using DCL Storage for leaderboard:', e)
+      binCfg = null
     }
-  } catch (e) {
-    // Reject the promise so all callers that await ensureLeaderboardLoaded() also
-    // fail — preventing any save that would overwrite good data with an empty map.
-    console.log('[SERVER] ERROR: leaderboard load failed — saves blocked to prevent data loss:', e)
-    throw e
+    console.log(binCfg
+      ? '[SERVER] Leaderboard persistence: external store (jsonbin)'
+      : '[SERVER] Leaderboard persistence: DCL Storage (no LEADERBOARD_BIN_* env vars)')
+  }
+  return binCfg
+}
+
+// Read stored records. Returns [] for a confirmed-empty store, or null when the read
+// couldn't be completed (treated as "unknown" → keep retrying, never overwrite).
+async function loadRecords(): Promise<LbRecord[] | null> {
+  const cfg = await getBinCfg()
+  if (cfg) {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}/latest`, {
+      headers: { 'X-Master-Key': cfg.key },
+    })
+    if (res.status === 404) return []                       // empty/new bin
+    if (!res.ok) throw new Error(`jsonbin read ${res.status}`)
+    const json: any = await res.json()
+    const rec = json?.record
+    return Array.isArray(rec) ? (rec as LbRecord[]) : []
+  }
+  // DCL Storage fallback — Storage.get returns null on not-found (404).
+  const raw = await Storage.get<string>('leaderboard')
+  return raw ? (JSON.parse(raw) as LbRecord[]) : null
+}
+
+async function saveRecords(records: LbRecord[]): Promise<void> {
+  const cfg = await getBinCfg()
+  if (cfg) {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}`, {
+      method: 'PUT',
+      headers: {
+        'X-Master-Key':     cfg.key,
+        'Content-Type':     'application/json',
+        'X-Bin-Versioning': 'false',   // overwrite in place, don't pile up versions
+      },
+      body: JSON.stringify(records),
+    })
+    if (!res.ok) throw new Error(`jsonbin write ${res.status}`)
+    return
+  }
+  await Storage.set('leaderboard', JSON.stringify(records))
+}
+
+// ── Load / save ───────────────────────────────────────────────────────────────
+// We still retry the read (network resilience + the DCL-Storage fallback's cold
+// start), but with the external store a 404 means "empty bin" and confirms instantly,
+// so this no longer stalls a fresh deploy. We only keep retrying a genuinely failed
+// (thrown) or null read, never overwriting before a settled read.
+const READ_RETRY_MS  = 4_000    // gap between read attempts
+const READ_WINDOW_MS = 30_000   // total time we'll keep trying before giving up
+async function loadLeaderboard(): Promise<void> {
+  const deadline = Date.now() + READ_WINDOW_MS
+  let attempt = 0
+  while (true) {
+    attempt++
+    try {
+      const records = await loadRecords()
+      if (records !== null) {
+        for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
+        console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players (attempt ${attempt})`)
+        leaderboardLoadConfirmed = true
+        return
+      }
+      // null = read couldn't be completed (DCL-Storage 404). Keep trying to the deadline.
+      if (Date.now() >= deadline) {
+        console.log(`[SERVER] No leaderboard data after ${attempt} attempts — starting fresh`)
+        leaderboardLoadConfirmed = true
+        return
+      }
+    } catch (e) {
+      console.log(`[SERVER] leaderboard load attempt ${attempt} failed:`, e)
+      if (Date.now() >= deadline) throw e   // give up → saves stay blocked (no wipe)
+    }
+    await sleep(READ_RETRY_MS)
   }
 }
 
 async function saveLeaderboard(): Promise<void> {
+  // Never persist before a confirmed read, and never overwrite stored data with an
+  // empty map — both are wipe signatures, not legitimate saves.
+  if (!leaderboardLoadConfirmed) {
+    console.log('[SERVER] Skipping save — leaderboard load not yet confirmed')
+    return
+  }
+  if (leaderboard.size === 0) {
+    console.log('[SERVER] Skipping save — leaderboard is empty (guarding against wipe)')
+    return
+  }
   const records = [...leaderboard.entries()].map(([address, e]) => ({ address, ...e }))
   console.log(`[SERVER] Saving leaderboard: ${records.length} players`)
-  await Storage.set('leaderboard', JSON.stringify(records))
+  try {
+    await saveRecords(records)
+    console.log(`[SERVER] Saved leaderboard OK (${records.length} players)`)
+  } catch (e) {
+    console.log('[SERVER] ERROR: leaderboard SAVE failed:', e)
+  }
 }
 
 function leaderboardJson(): string {
@@ -282,8 +389,9 @@ export function initServer() {
       } else {
         leaderboard.set(address, { displayName: data.displayName, total: 0 })
       }
-      // Persist the updated display name; broadcast top-10 only to this player.
-      await saveLeaderboard()
+      // NOTE: no save here on purpose. Writing the whole leaderboard on every join is
+      // unnecessary churn and an extra wipe surface; the display name persists on the
+      // player's next score change (scheduleLbUpdate). Just broadcast the current top-10.
       broadcastLeaderboard([address])
       console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
     })

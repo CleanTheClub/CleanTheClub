@@ -56,7 +56,7 @@ const ROUND_END: Record<string, string> = {
 // Finale messages — shown after the FINAL round during the victory hold.
 // The game loops back to round 1 once the hold ends, so this is the big payoff.
 const FINALE_MESSAGES: string[] = [
-  "🏆 CLUB COMPLETE! You cleaned every round!",
+  "CLUB COMPLETE! You cleaned every round!",
   "The crowd is going wild — what a night!",
   "Take a bow… then it's back to the top!",
 ]
