@@ -110,6 +110,7 @@ export enum EntityNames {
   Sit_Spot_7 = "Sit Spot_7",
   Sit_Spot_8 = "Sit Spot_8",
   Sit_Spot_9 = "Sit Spot_9",
+  SitSpots = "SitSpots",
   SofaCushion = "SofaCushion",
   SofaCushion2 = "SofaCushion2",
   SofaCushion3 = "SofaCushion3",
