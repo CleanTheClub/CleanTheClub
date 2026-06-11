@@ -326,7 +326,7 @@ const ui = () => {
   const cleaned       = gs?.cleanedCount ?? 0
   const total         = Math.max(1, gs?.totalCount ?? 1)
   const seconds       = gs?.secondsLeft ?? 0
-  const phase         = gs?.phase ?? 'playing'
+  const phase         = gs?.phase ?? 'lobby'
   const roundNumber   = gs?.roundNumber ?? 0
   const outcome       = gs?.outcome ?? ''
   const isFinale      = gs?.isFinale ?? false

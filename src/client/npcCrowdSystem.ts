@@ -145,7 +145,8 @@ type Npc = {
 
 const specs: NpcSpec[] = []
 const roster: Npc[] = []
-let rosterReady = false
+let rosterReady     = false
+let rosterJustBuilt = false   // true for one tick after buildRoster; seeds lastKey without spawning
 
 function buildSpec(
   kind: NpcKind,
@@ -310,7 +311,7 @@ export function initNpcCrowdSystem(): void {
     if (usedSpots.size >= MAX_SITTERS || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
       buildRoster()
       console.log(`[NPC] Crowd ready — ${DANCER_DEFS.length} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
-      warmUpHairstyles()   // pre-init hair wiggle-bones so round 1 isn't funky
+      // warmUpHairstyles()   // re-enable if wiggle-bone hair glitch returns on first crowd
       engine.removeSystem(discoverSitSpots)
     }
   }
@@ -329,7 +330,11 @@ export function initNpcCrowdSystem(): void {
     const key = `${phase}|${finale}`
     if (key !== lastKey) {
       lastKey = key
-      applyPresence(phase, finale)
+      // First tick after roster builds: seed lastKey so we only respond to
+      // transitions from here on, not to whatever transient state the server
+      // happened to be in at roster-build time.
+      if (!rosterJustBuilt) applyPresence(phase, finale)
+      rosterJustBuilt = false
     }
 
     // Empty club (everyone hidden) — nothing to animate or loop.
@@ -385,7 +390,8 @@ function buildRoster() {
   for (let i = 0; i < specs.length; i++) {
     roster.push({ spec: specs[i], resident: i % stride === 0, entity: null, phase: 'hidden', popMs: 0, stamp: 1 })
   }
-  rosterReady = true
+  rosterReady     = true
+  rosterJustBuilt = true
 }
 
 // Diff the desired presence against current state and start staggered pop-ins /

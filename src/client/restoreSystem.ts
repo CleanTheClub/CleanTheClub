@@ -36,6 +36,14 @@ export type RestoreDef = {
   animClip:       string   // Animation clip name inside the anim GLB
   animDurationMs: number   // Clip duration in ms — swap to clean GLB after this
   hoverText?:     string   // Prompt shown on hover (default: 'Clean')
+  addBox?:        boolean  // Add a MeshCollider box for pointer raycasts (default false).
+                           // false = visible-mesh collision only (CL_POINTER); correct hover
+                           // outline but mesh must be loaded before raycasts hit it.
+                           // true  = box collider at entity origin; always hittable from
+                           // frame 1 but requires the GLB mesh origin to be at/near (0,0,0).
+                           // Use true for items whose GLB origins ARE centred (sofa cushions);
+                           // keep false for items with baked offsets (stools) where the box
+                           // would land at the wrong world position.
 }
 
 // ── Per-item runtime state ───────────────────────────────────────────────────
@@ -229,13 +237,13 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
         remaining--
         console.log(`[Restore] "${s.def.itemId}" discovered — dirty=${s.dirtyEnt} anim=${s.animEnt} clean=${s.cleanEnt}`)
 
-        // addBox=false: restore items (cushions/stools) have baked GLB origins
-        // (e.g. 16,0,16) that don't match where the mesh actually sits, so a box
-        // collider would land at the wrong spot. Use visible-mesh pointer collision
-        // only (clickable + hover outline). setupClickProxy still self-defers if the
-        // GltfContainer hasn't streamed in yet, retrying until it has — so a
-        // slow-loading cushion is never left un-clickable (the round-1 bug).
-        setupClickProxy(s.dirtyEnt, false)
+        // addBox controls whether a MeshCollider box is added alongside CL_POINTER.
+        // Items with centred GLB origins (sofa cushions) use addBox=true so the box
+        // collider is hittable from frame 1, before the mesh geometry has loaded —
+        // that's the round-1 un-clickable bug for slow-loading assets.
+        // Items with baked GLB offsets (stools) keep addBox=false; a box at their
+        // entity origin would land at the wrong world position.
+        setupClickProxy(s.dirtyEnt, s.def.addBox ?? false)
         Animator.createOrReplace(s.animEnt, {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })

@@ -74,6 +74,7 @@ export function initClient() {
       animClip:       'restore2',
       animDurationMs: 1000,  // 30 frames @ 30 fps
       hoverText:      'Clean',
+      addBox:         true,  // GLB origin is centred — box collider hittable from frame 1
     },
     {
       itemId:         'sofa_cushion_2',
@@ -83,6 +84,7 @@ export function initClient() {
       animClip:       'restore3',
       animDurationMs: 1000,  // 30 frames @ 30 fps
       hoverText:      'Clean',
+      addBox:         true,  // GLB origin is centred — box collider hittable from frame 1
     },
     {
       itemId:         'sofa_cushion_3',
@@ -92,6 +94,7 @@ export function initClient() {
       animClip:       'restore4',
       animDurationMs: 1000,  // 30 frames @ 30 fps
       hoverText:      'Clean',
+      addBox:         true,  // GLB origin is centred — box collider hittable from frame 1
     },
   ])
   initSparkleSystem()

@@ -17,6 +17,7 @@ export enum EntityNames {
   Bottle_9 = "Bottle_9",
   Bottles = "Bottles",
   Chaise_Cushion = "Chaise_Cushion",
+  Elevator = "Elevator",
   Fixed_View_Camera = "Fixed View Camera",
   Glasses = "Glasses",
   ResetItems = "ResetItems",

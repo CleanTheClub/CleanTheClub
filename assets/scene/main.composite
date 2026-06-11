@@ -1014,27 +1014,6 @@
             "parent": 0
           }
         },
-        "557": {
-          "json": {
-            "position": {
-              "x": 16,
-              "y": 0,
-              "z": 16
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
-          }
-        },
         "558": {
           "json": {
             "position": {
@@ -3408,6 +3387,27 @@
             "parent": 648
           }
         },
+        "671": {
+          "json": {
+            "position": {
+              "x": 16,
+              "y": 0,
+              "z": 16
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 0
+          }
+        },
         "672": {
           "json": {
             "position": {
@@ -4126,19 +4126,19 @@
           "json": {
             "position": {
               "x": 16,
-              "y": 0,
+              "y": 0.01794223114848137,
               "z": 16
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
             },
             "parent": 705
           }
@@ -4636,12 +4636,6 @@
             "entityId": 8025
           }
         },
-        "557": {
-          "json": {
-            "networkId": 0,
-            "entityId": 8002
-          }
-        },
         "558": {
           "json": {
             "networkId": 0,
@@ -4784,6 +4778,12 @@
           "json": {
             "networkId": 0,
             "entityId": 8043
+          }
+        },
+        "671": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8044
           }
         }
       }
@@ -5170,13 +5170,6 @@
             "src": "assets/asset-packs/sit_spot/sitting_pose_collider.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "557": {
-          "json": {
-            "src": "assets/scene/Models/elevator/elevator.glb",
-            "visibleMeshesCollisionMask": 1,
-            "invisibleMeshesCollisionMask": 2
           }
         },
         "562": {
@@ -5583,6 +5576,13 @@
             "src": "assets/scene/Models/tie/tie.glb",
             "visibleMeshesCollisionMask": 1,
             "invisibleMeshesCollisionMask": 0
+          }
+        },
+        "671": {
+          "json": {
+            "src": "assets/scene/Models/elevator/elevator.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
           }
         },
         "672": {
@@ -9452,6 +9452,11 @@
             "value": "tie"
           }
         },
+        "671": {
+          "json": {
+            "value": "Elevator"
+          }
+        },
         "672": {
           "json": {
             "value": "tie_3"
@@ -9720,6 +9725,83 @@
       }
     },
     {
+      "name": "core-schema::Sync-Components",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "componentIds": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "serializationType": "int64"
+            },
+            "serializationType": "array"
+          }
+        },
+        "serializationType": "map"
+      },
+      "data": {
+        "671": {
+          "json": {
+            "componentIds": [
+              1102,
+              2709697014
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core::Tween",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "serializationType": "protocol-buffer",
+        "protocolBuffer": "PBTween"
+      },
+      "data": {
+        "671": {
+          "json": {
+            "duration": 5000,
+            "easingFunction": 0,
+            "mode": {
+              "$case": "move",
+              "move": {
+                "start": {
+                  "x": 16,
+                  "y": 0,
+                  "z": 16
+                },
+                "end": {
+                  "x": 16,
+                  "y": 9,
+                  "z": 16
+                }
+              }
+            },
+            "playing": true
+          }
+        }
+      }
+    },
+    {
+      "name": "core::TweenSequence",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "serializationType": "protocol-buffer",
+        "protocolBuffer": "PBTweenSequence"
+      },
+      "data": {
+        "671": {
+          "json": {
+            "sequence": [],
+            "loop": 1
+          }
+        }
+      }
+    },
+    {
       "name": "core::VirtualCamera",
       "jsonSchema": {
         "type": "object",
@@ -9791,9 +9873,9 @@
         "serializationType": "map"
       },
       "data": {
-        "0": {
+        "707": {
           "json": {
-            "gizmo": 0
+            "gizmo": 1
           }
         }
       }
@@ -9850,7 +9932,8 @@
                   648,
                   656,
                   565,
-                  570
+                  570,
+                  671
                 ]
               },
               {
@@ -10487,6 +10570,10 @@
               {
                 "entity": 725,
                 "children": []
+              },
+              {
+                "entity": 671,
+                "children": []
               }
             ]
           }
@@ -10721,6 +10808,9 @@
           "json": {}
         },
         "670": {
+          "json": {}
+        },
+        "671": {
           "json": {}
         },
         "672": {
@@ -11312,6 +11402,33 @@
               "text": "Momentarily switch to this camera by triggering the item's actions. Set the transition time for camera changes and optionally select an entity for the camera to always look at."
             },
             "version": 2
+          }
+        },
+        "671": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Vertical Platform",
+            "fields": [
+              {
+                "name": "Tween",
+                "type": "core::Tween"
+              },
+              {
+                "name": "When End Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "name": "When Start Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ],
+            "assetId": "c72c3d45-0309-4834-84df-7b5f517694fa",
+            "helpTooltip": {
+              "text": "A vertical platform that moves up and down. Players can jump on it to reach higher places."
+            },
+            "version": 1
           }
         }
       }
@@ -12079,6 +12196,45 @@
               }
             ]
           }
+        },
+        "671": {
+          "json": {
+            "id": 85,
+            "value": [
+              {
+                "name": "Go to Start",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to Start\", \"Tween to Start\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Go to End",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to End\", \"Tween to End\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Going to Start",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToStart\" }"
+              },
+              {
+                "name": "Going to End",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToEnd\" }"
+              },
+              {
+                "name": "Tween to Start",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":-9,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              },
+              {
+                "name": "Tween to End",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":9,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              }
+            ]
+          }
         }
       }
     },
@@ -12102,7 +12258,276 @@
         "0": {
           "json": {
             "id": 0,
-            "value": 84
+            "value": 86
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::Triggers",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "on_click",
+                    "on_input_action",
+                    "on_state_change",
+                    "on_spawn",
+                    "on_tween_end",
+                    "on_counter_change",
+                    "on_player_enters_area",
+                    "on_player_leaves_area",
+                    "on_delay",
+                    "on_loop",
+                    "on_clone",
+                    "on_click_image",
+                    "on_damage",
+                    "on_global_click",
+                    "on_global_primary",
+                    "on_global_secondary",
+                    "on_tick",
+                    "on_heal_player",
+                    "on_player_spawn"
+                  ],
+                  "default": "on_input_action",
+                  "serializationType": "enum-string",
+                  "enumObject": {
+                    "ON_CLICK": "on_click",
+                    "ON_INPUT_ACTION": "on_input_action",
+                    "ON_STATE_CHANGE": "on_state_change",
+                    "ON_SPAWN": "on_spawn",
+                    "ON_TWEEN_END": "on_tween_end",
+                    "ON_COUNTER_CHANGE": "on_counter_change",
+                    "ON_PLAYER_ENTERS_AREA": "on_player_enters_area",
+                    "ON_PLAYER_LEAVES_AREA": "on_player_leaves_area",
+                    "ON_DELAY": "on_delay",
+                    "ON_LOOP": "on_loop",
+                    "ON_CLONE": "on_clone",
+                    "ON_CLICK_IMAGE": "on_click_image",
+                    "ON_DAMAGE": "on_damage",
+                    "ON_GLOBAL_CLICK": "on_global_click",
+                    "ON_GLOBAL_PRIMARY": "on_global_primary",
+                    "ON_GLOBAL_SECONDARY": "on_global_secondary",
+                    "ON_TICK": "on_tick",
+                    "ON_HEAL_PLAYER": "on_heal_player",
+                    "ON_PLAYER_SPAWN": "on_player_spawn"
+                  }
+                },
+                "conditions": {
+                  "type": "array",
+                  "serializationType": "optional",
+                  "optionalJsonSchema": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "integer",
+                          "serializationType": "optional",
+                          "optionalJsonSchema": {
+                            "type": "integer",
+                            "serializationType": "int32"
+                          }
+                        },
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "when_state_is",
+                            "when_state_is_not",
+                            "when_counter_equals",
+                            "when_counter_is_greater_than",
+                            "when_counter_is_less_than",
+                            "when_distance_to_player_less_than",
+                            "when_distance_to_player_greater_than",
+                            "when_previous_state_is",
+                            "when_previous_state_is_not"
+                          ],
+                          "default": "when_state_is",
+                          "serializationType": "enum-string",
+                          "enumObject": {
+                            "WHEN_STATE_IS": "when_state_is",
+                            "WHEN_STATE_IS_NOT": "when_state_is_not",
+                            "WHEN_COUNTER_EQUALS": "when_counter_equals",
+                            "WHEN_COUNTER_IS_GREATER_THAN": "when_counter_is_greater_than",
+                            "WHEN_COUNTER_IS_LESS_THAN": "when_counter_is_less_than",
+                            "WHEN_DISTANCE_TO_PLAYER_LESS_THAN": "when_distance_to_player_less_than",
+                            "WHEN_DISTANCE_TO_PLAYER_GREATER_THAN": "when_distance_to_player_greater_than",
+                            "WHEN_PREVIOUS_STATE_IS": "when_previous_state_is",
+                            "WHEN_PREVIOUS_STATE_IS_NOT": "when_previous_state_is_not"
+                          }
+                        },
+                        "value": {
+                          "type": "string",
+                          "serializationType": "utf8-string"
+                        }
+                      },
+                      "serializationType": "map"
+                    },
+                    "serializationType": "array"
+                  }
+                },
+                "operation": {
+                  "type": "string",
+                  "serializationType": "optional",
+                  "optionalJsonSchema": {
+                    "type": "string",
+                    "enum": [
+                      "and",
+                      "or"
+                    ],
+                    "default": "and",
+                    "serializationType": "enum-string",
+                    "enumObject": {
+                      "AND": "and",
+                      "OR": "or"
+                    }
+                  }
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "serializationType": "optional",
+                        "optionalJsonSchema": {
+                          "type": "integer",
+                          "serializationType": "int32"
+                        }
+                      },
+                      "name": {
+                        "type": "string",
+                        "serializationType": "optional",
+                        "optionalJsonSchema": {
+                          "type": "string",
+                          "serializationType": "utf8-string"
+                        }
+                      }
+                    },
+                    "serializationType": "map"
+                  },
+                  "serializationType": "array"
+                },
+                "basicViewId": {
+                  "type": "string",
+                  "serializationType": "optional",
+                  "optionalJsonSchema": {
+                    "type": "string",
+                    "serializationType": "utf8-string"
+                  }
+                }
+              },
+              "serializationType": "map"
+            },
+            "serializationType": "array"
+          }
+        },
+        "serializationType": "map"
+      },
+      "data": {
+        "671": {
+          "json": {
+            "value": [
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 86,
+                    "type": "when_state_is",
+                    "value": "GoingToEnd"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 85,
+                    "name": "Going to Start"
+                  }
+                ],
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 86,
+                    "type": "when_state_is",
+                    "value": "GoingToStart"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 85,
+                    "name": "Going to End"
+                  }
+                ],
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "asset-packs::States",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "number",
+            "serializationType": "float32"
+          },
+          "value": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "serializationType": "utf8-string"
+            },
+            "serializationType": "array"
+          },
+          "defaultValue": {
+            "type": "string",
+            "serializationType": "optional",
+            "optionalJsonSchema": {
+              "type": "string",
+              "serializationType": "utf8-string"
+            }
+          },
+          "currentValue": {
+            "type": "string",
+            "serializationType": "optional",
+            "optionalJsonSchema": {
+              "type": "string",
+              "serializationType": "utf8-string"
+            }
+          },
+          "previousValue": {
+            "type": "string",
+            "serializationType": "optional",
+            "optionalJsonSchema": {
+              "type": "string",
+              "serializationType": "utf8-string"
+            }
+          }
+        },
+        "serializationType": "map"
+      },
+      "data": {
+        "671": {
+          "json": {
+            "id": 86,
+            "value": [
+              "GoingToEnd",
+              "GoingToStart"
+            ],
+            "defaultValue": "GoingToEnd"
           }
         }
       }
