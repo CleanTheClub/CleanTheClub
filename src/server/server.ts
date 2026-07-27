@@ -1,17 +1,17 @@
-import { engine, Entity, Transform, executeTask, PlayerIdentityData } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, executeTask } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
 import { Storage, EnvVar } from '@dcl/sdk/server'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
-import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
+import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
-import { shiftRewards, titleProgress, titleForXp, UpgradeId } from '../shared/progression'
+import { shiftRewards, titleProgress, titleForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
-  purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords,
+  purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -311,6 +311,74 @@ function sendProgress(
 const activePlayers = new Set<string>()   // cleaning in the current round
 const signedUp      = new Set<string>()   // queued for the next round
 
+// ── Rubbish carrying (GDD: bin depositing + Carry Capacity upgrade) ───────────
+// Rubbish must be CARRIED to a big rubbish bag: each accepted rubbish clean fills
+// the player's hands, and at capacity further rubbish is refused until they empty
+// at a bag. Only the rubbish group — glasses/bottles keep their instant collect
+// loop and sticky patches are mopped, not carried.
+//
+// Cleanliness and wages still count at PICKUP, so the carry loop changes routing
+// (when do I break for a bag trip?) without touching any round or reward math.
+//
+// Sorted streams: general waste and recyclables are carried in separate pouches;
+// CAPACITY limits the total across both, and a bin only empties its own stream.
+type CarriedLoad = { general: number; recycle: number }
+const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in hand
+
+// itemId → stream, classified from the scene Name at discovery (see initServer).
+const rubbishTypes = new Map<string, RubbishType>()
+
+function getLoad(address: string): CarriedLoad {
+  let l = carriedRubbish.get(address)
+  if (!l) { l = { general: 0, recycle: 0 }; carriedRubbish.set(address, l) }
+  return l
+}
+
+function carriedTotal(address: string): number {
+  const l = carriedRubbish.get(address)
+  return l ? l.general + l.recycle : 0
+}
+
+// Portable Bin upgrade: level = on-the-spot empties per shift. Usage is counted
+// here (per shift, cleared at round start) so a crafted message can't empty for
+// free more times than the level that was paid for.
+const portableUsed = new Map<string, number>()     // address → empties used this shift
+
+// Vacuum upgrade: extra rubbish pieces swept per click, nearest-first inside this
+// radius of the clicked item. Distances use the discovery-time local positions of
+// the rubbish group's items, which share one parent — consistent for comparison.
+const VACUUM_RADIUS_M = 3
+
+function carryCapacityFor(address: string): number {
+  const rec = getProgress(address)
+  return upgradeValue('carryCapacity', rec.upgrades?.carryCapacity ?? 0)
+}
+
+function portableLeftFor(address: string): number {
+  const rec  = getProgress(address)
+  const uses = upgradeValue('portableBin', rec.upgrades?.portableBin ?? 0)
+  return Math.max(0, uses - (portableUsed.get(address) ?? 0))
+}
+
+function vacuumExtraFor(address: string): number {
+  const rec = getProgress(address)
+  return upgradeValue('vacuum', rec.upgrades?.vacuum ?? 0)
+}
+
+function sendCarried(address: string): void {
+  const load = carriedRubbish.get(address)
+  room.send(
+    'carriedUpdate',
+    {
+      carriedGeneral: load?.general ?? 0,
+      carriedRecycle: load?.recycle ?? 0,
+      capacity:       carryCapacityFor(address),
+      portableLeft:   portableLeftFor(address),
+    },
+    { to: [address] },
+  )
+}
+
 function sendParticipation(address: string): void {
   room.send(
     'participationUpdate',
@@ -324,6 +392,8 @@ export function initServer() {
 
   const itemEntities    = new Map<string, Entity>()
   const sceneItemScales = new Map<string, { x: number; y: number; z: number }>()
+  // Discovery-time positions of scene items, for the vacuum's proximity sweep.
+  const sceneItemPositions = new Map<string, { x: number; y: number; z: number }>()
   let enumId = 1
 
   // CLUTTER_DEFS items — new entities created by the server
@@ -360,6 +430,13 @@ export function initServer() {
     sceneItemScales.set(itemId, tf
       ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }
       : { x: 1, y: 1, z: 1 })
+    if (tf) {
+      sceneItemPositions.set(itemId, { x: tf.position.x, y: tf.position.y, z: tf.position.z })
+    }
+    // Classify rubbish into its recycling stream from the authored scene Name.
+    if (itemId.startsWith(RUBBISH_ID_PREFIX)) {
+      rubbishTypes.set(itemId, classifyRubbish(Name.getOrNull(entity)?.value ?? ''))
+    }
   }
 
   const gameStateEntity = engine.addEntity()
@@ -400,6 +477,12 @@ export function initServer() {
     }
     for (const address of signedUp) activePlayers.add(address)
     signedUp.clear()
+
+    // Fresh shift, empty hands, portable-bin uses restocked — and tell everyone,
+    // so the carry chip resets the moment the round starts.
+    carriedRubbish.clear()
+    portableUsed.clear()
+    for (const address of activeSessions) sendCarried(address)
 
     // Tell every known player where they stand — those promoted in, and those still
     // spectating, so a spectator's UI shows the sign-up prompt for the new round.
@@ -447,6 +530,14 @@ export function initServer() {
   // once registerPlayer arrives.
   const activeSessions = new Set<string>()
 
+  // Players who vanished mid-shift while actively cleaning (reload, backgrounded
+  // phone). If they come back inside the grace window they're re-enrolled instead
+  // of being demoted to spectator — reported as "reloading the scene kicks you out
+  // of the game". Coming back during an intermission queues them for the next
+  // round via the normal signedUp path.
+  const RECONNECT_GRACE_MS = 120_000
+  const recentlyActive = new Map<string, number>()   // address → when they vanished
+
   function playerEntered(sessionId: string) {
     if (activeSessions.has(sessionId)) return
     activeSessions.add(sessionId)
@@ -456,71 +547,147 @@ export function initServer() {
   function playerLeft(sessionId: string) {
     if (!activeSessions.has(sessionId)) return
     activeSessions.delete(sessionId)
-    // Drop participation too, so a rejoining player is asked to sign up again
-    // rather than being silently counted as cleaning while they're gone.
+    // Drop participation, so the player isn't silently counted as cleaning while
+    // gone — but remember active cleaners for the reconnect grace window.
+    // carriedRubbish is deliberately KEPT: zeroing it here would make a reload a
+    // free hands-empty (round start clears it anyway).
+    if (activePlayers.has(sessionId)) recentlyActive.set(sessionId, Date.now())
     activePlayers.delete(sessionId)
     signedUp.delete(sessionId)
     onPlayerLeave()
   }
 
   onEnterSceneObservable.add((player) => {
-    playerEntered(player.userId)
+    heartbeat(player.userId)
   })
 
-  // Leaves are deliberately NOT taken from onLeaveSceneObservable. On a scene
-  // reload the new connection's registerPlayer can arrive BEFORE the stale leave
-  // event for the dead connection: the re-register dedupes to a no-op ("already
-  // present"), the stale leave then decrements, and playerCount sits at 0 with the
-  // player still standing in the club — which blocks START MATCH in the lobby
-  // (onStartMatch guards on playerCount <= 0) and, in multiplayer, can drop the
-  // count to 0 mid-round and yank everyone back to the lobby via goToLobby().
+  // Leaves are deliberately NOT taken from onLeaveSceneObservable: on a scene
+  // reload the stale leave for the dead connection can arrive AFTER the new
+  // connection has re-registered, zeroing the count with the player still in the
+  // club (blocks START MATCH; can yank a live round back to the lobby). And
+  // presence can NOT be read from the engine's PlayerIdentityData either — the
+  // server runtime does not reliably replicate player entities (detectGuest's
+  // fallback exists for the same reason), so an engine-side scan reads empty and
+  // would count everyone OUT.
   //
-  // Instead, presence is reconciled against the engine's own PlayerIdentityData —
-  // the ground truth for who is actually connected. Anyone the engine sees is
-  // counted in immediately; anyone it stops seeing is only counted out after a
-  // grace window long enough to ride out a reload/reconnect flicker.
-  const PRESENCE_POLL_MS  = 2_000
-  const PRESENCE_GRACE_MS = 6_000
-  const missingSince = new Map<string, number>()   // session addr → first poll it wasn't seen
+  // The one ground truth that provably reaches the server is the message channel
+  // itself — the same transport every clean and purchase already rides on. So
+  // presence is heartbeat-based: clients ping every ~5s (see leaderboardSystem),
+  // any message refreshes its sender's lastSeen, and a player is only counted out
+  // after PRESENCE_TIMEOUT_MS of silence. A reload never drops the count, because
+  // the new connection pings under the same address well inside the window.
+  const PRESENCE_POLL_MS    = 2_000
+  const PRESENCE_TIMEOUT_MS = 15_000   // ~3 missed 5s heartbeats
+
+  const lastSeen = new Map<string, number>()   // address → last message of any kind
+
+  function heartbeat(address: string) {
+    lastSeen.set(address, Date.now())
+    playerEntered(address)   // no-op when already counted
+  }
 
   setInterval(() => {
-    // Case-insensitive on both sides — registerPlayer addresses come from message
-    // context while these come from the engine, and the two aren't guaranteed to
-    // agree on checksum casing.
-    const present = new Set<string>()
-    for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
-      present.add(data.address.toLowerCase())
-    }
-
-    // Connected players the count missed (reload race, lost register message).
-    for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
-      let known = false
-      for (const addr of activeSessions) {
-        if (addr.toLowerCase() === data.address.toLowerCase()) { known = true; break }
-      }
-      if (!known) {
-        console.log(`[SERVER] presence reconcile: counting in ${data.address}`)
-        playerEntered(data.address)
-      }
-    }
-
-    // Counted players the engine no longer sees — leave only after the grace window.
     const now = Date.now()
     for (const addr of [...activeSessions]) {
-      if (present.has(addr.toLowerCase())) { missingSince.delete(addr); continue }
-      const since = missingSince.get(addr)
-      if (since === undefined) {
-        missingSince.set(addr, now)
-      } else if (now - since >= PRESENCE_GRACE_MS) {
-        missingSince.delete(addr)
-        console.log(`[SERVER] presence reconcile: counting out ${addr}`)
-        playerLeft(addr)
-      }
+      const seen = lastSeen.get(addr)
+      if (seen !== undefined && now - seen <= PRESENCE_TIMEOUT_MS) continue
+      lastSeen.delete(addr)
+      console.log(`[SERVER] presence: no heartbeat from ${addr} — counting out`)
+      playerLeft(addr)
     }
   }, PRESENCE_POLL_MS)
 
+  // Applies one ACCEPTED clean: flips the synced state, attributes the wage and
+  // leaderboard credit, fills the cleaner's hands (rubbish), and schedules the
+  // respawn. Shared by the direct click path and the vacuum sweep so the two can
+  // never disagree about what "cleaned" means. Callers own sendCarried — one
+  // update after the whole click (sweep included), not one per item.
+  function applyAcceptedClean(address: string, itemId: string, entity: Entity): void {
+    const cs = ClutterSync.getMutable(entity)
+    cs.isCleaned = true
+    cs.cleanedAt = Date.now()
+    cs.cleanedBy = address
+
+    // Attribute this clean to the player for end-of-shift wages. Counted here, at
+    // the point the server ACCEPTS the clean, so respawns during the round can't
+    // erase the credit.
+    recordContribution(address)
+
+    // Accepted rubbish goes into the player's hands, in its stream's pouch.
+    if (itemId.startsWith(RUBBISH_ID_PREFIX)) {
+      getLoad(address)[rubbishTypes.get(itemId) ?? 'general']++
+    }
+
+    // Update all-time leaderboard score for this player.
+    // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
+    // scheduleLbUpdate() debounces rapid back-to-back saves — one disk write per burst.
+    if (leaderboardLoadPromise !== null) {
+      const entry = leaderboard.get(address)
+      if (entry) {
+        entry.total += 1
+      } else {
+        leaderboard.set(address, { displayName: address.slice(0, 8) + '…', total: 1 })
+      }
+      scheduleLbUpdate()
+    }
+
+    const isSceneItem = SCENE_ITEM_PREFIXES.some(p => itemId.startsWith(p))
+    if (isSceneItem) {
+      // Hide the item by collapsing its scale — server is HOST so CRDT propagates to all clients
+      const tf = Transform.getMutableOrNull(entity)
+      if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
+      // Decay: restore the item after CLUTTER_RESPAWN_MS, same as regular clutter.
+      // The callback flips isCleaned and restores the original scale so clients
+      // pick it up via ClutterSync and re-enable clicks automatically.
+      onSceneItemCleaned(itemId, () => {
+        const e = itemEntities.get(itemId)
+        if (!e) return
+        const cs2 = ClutterSync.getMutable(e)
+        cs2.isCleaned = false
+        cs2.cleanedAt = 0
+        cs2.cleanedBy = ''
+        const orig = sceneItemScales.get(itemId)
+        if (orig) {
+          const t2 = Transform.getMutableOrNull(e)
+          if (t2) t2.scale = { x: orig.x, y: orig.y, z: orig.z }
+        }
+      })
+    } else {
+      const def = CLUTTER_DEFS.find(d => d.id === itemId)
+      if (!def) {
+        console.log(`[SERVER] cleanItem: unknown itemId '${itemId}' — skipped`)
+        return
+      }
+      onItemCleaned(def)
+    }
+  }
+
+  // Vacuum sweep: also clean up to `maxExtra` uncleaned rubbish pieces nearest to
+  // the clicked item, never taking more than the player's remaining hand space.
+  function sweepNearbyRubbish(address: string, aroundItemId: string, maxExtra: number): void {
+    const centre = sceneItemPositions.get(aroundItemId)
+    if (!centre) return
+    const space  = carryCapacityFor(address) - carriedTotal(address)
+    const budget = Math.min(maxExtra, Math.max(0, space))
+    if (budget <= 0) return
+
+    const candidates: Array<{ itemId: string; entity: Entity; d2: number }> = []
+    for (const [itemId, entity] of itemEntities) {
+      if (!itemId.startsWith(RUBBISH_ID_PREFIX) || itemId === aroundItemId) continue
+      if (ClutterSync.getOrNull(entity)?.isCleaned !== false) continue
+      const p = sceneItemPositions.get(itemId)
+      if (!p) continue
+      const dx = p.x - centre.x, dy = p.y - centre.y, dz = p.z - centre.z
+      const d2 = dx * dx + dy * dy + dz * dz
+      if (d2 <= VACUUM_RADIUS_M * VACUUM_RADIUS_M) candidates.push({ itemId, entity, d2 })
+    }
+    candidates.sort((a, b) => a.d2 - b.d2)
+    for (const c of candidates.slice(0, budget)) applyAcceptedClean(address, c.itemId, c.entity)
+  }
+
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
+    heartbeat(context.from)   // any message proves presence, not just pings
     if (getPhase() !== 'playing') {   // reject during lobby/countdown and intermission
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
@@ -537,65 +704,31 @@ export function initServer() {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
-    const now = Date.now()
-    const cs = ClutterSync.getMutable(entity)
-    cs.isCleaned = true
-    cs.cleanedAt = now
-    cs.cleanedBy = context.from
-
-    // Attribute this clean to the player for end-of-shift wages. Counted here, at
-    // the point the server ACCEPTS the clean, so respawns during the round can't
-    // erase the credit.
-    recordContribution(context.from)
-
-    // Update all-time leaderboard score for this player.
-    // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
-    // scheduleLbUpdate() debounces rapid back-to-back saves — one disk write per burst.
-    if (leaderboardLoadPromise !== null) {
-      const address = context.from
-      const entry = leaderboard.get(address)
-      if (entry) {
-        entry.total += 1
-      } else {
-        leaderboard.set(address, { displayName: address.slice(0, 8) + '…', total: 1 })
-      }
-      scheduleLbUpdate()
+    // Carry gate — full hands can't pick up more rubbish. The client pre-empts this
+    // with a toast, but it's enforced here so a crafted message can't ignore the
+    // capacity the upgrade is selling. The resync corrects any stale client chip.
+    const isRubbish = data.itemId.startsWith(RUBBISH_ID_PREFIX)
+    if (isRubbish && carriedTotal(context.from) >= carryCapacityFor(context.from)) {
+      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      sendCarried(context.from)
+      return
     }
 
-    const isSceneItem = SCENE_ITEM_PREFIXES.some(p => data.itemId.startsWith(p))
-    if (isSceneItem) {
-      // Hide the item by collapsing its scale — server is HOST so CRDT propagates to all clients
-      const tf = Transform.getMutableOrNull(entity)
-      if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
-      // Decay: restore the item after CLUTTER_RESPAWN_MS, same as regular clutter.
-      // The callback flips isCleaned and restores the original scale so clients
-      // pick it up via ClutterSync and re-enable clicks automatically.
-      const itemId = data.itemId
-      onSceneItemCleaned(itemId, () => {
-        const e = itemEntities.get(itemId)
-        if (!e) return
-        const cs = ClutterSync.getMutable(e)
-        cs.isCleaned = false
-        cs.cleanedAt = 0
-        cs.cleanedBy = ''
-        const orig = sceneItemScales.get(itemId)
-        if (orig) {
-          const t2 = Transform.getMutableOrNull(e)
-          if (t2) t2.scale = { x: orig.x, y: orig.y, z: orig.z }
-        }
-      })
-    } else {
-      const def = CLUTTER_DEFS.find(d => d.id === data.itemId)
-      if (!def) {
-        console.log(`[SERVER] cleanItem: unknown itemId '${data.itemId}' — skipped`)
-        return
-      }
-      onItemCleaned(def)
+    applyAcceptedClean(context.from, data.itemId, entity)
+
+    if (isRubbish) {
+      const extra = vacuumExtraFor(context.from)
+      if (extra > 0) sweepNearbyRubbish(context.from, data.itemId, extra)
+      sendCarried(context.from)
     }
   })
 
-  // No-op: client sends this immediately on join (before getUserData) to wake a cold server.
-  room.onMessage('ping', (_data, _context) => {})
+  // Sent immediately on join (before getUserData) to wake a cold server, then
+  // every ~5s as the presence heartbeat that keeps the sender counted in-scene.
+  room.onMessage('ping', (_data, context) => {
+    if (!context) return
+    heartbeat(context.from)
+  })
 
   room.onMessage('signUpNext', (_data, context) => {
     if (!context) return
@@ -609,6 +742,33 @@ export function initServer() {
     if (!context) return
     signedUp.delete(context.from)
     sendParticipation(context.from)
+  })
+
+  // Empty carried rubbish at a big rubbish bag. No phase or participation guard:
+  // emptying is always safe (it only ever zeroes a count this server itself put
+  // there), and a spectator's deposit is simply a no-op.
+  // A bin only accepts its own stream — the general count survives a recycling
+  // deposit and vice versa, which is what makes sorting a real decision.
+  room.onMessage('depositRubbish', (data, context) => {
+    if (!context) return
+    const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
+    getLoad(context.from)[stream] = 0
+    sendCarried(context.from)
+  })
+
+  // Portable Bin: empty on the spot, limited uses per shift. Both the level and
+  // the remaining uses are validated here — the button is presentation only.
+  // Empties BOTH streams: it's your own bin, sorting is somebody else's problem.
+  room.onMessage('portableEmpty', (_data, context) => {
+    if (!context) return
+    const address = context.from
+    if (carriedTotal(address) <= 0 || portableLeftFor(address) <= 0) {
+      sendCarried(address)   // resync so a stale client button corrects itself
+      return
+    }
+    portableUsed.set(address, (portableUsed.get(address) ?? 0) + 1)
+    carriedRubbish.set(address, { general: 0, recycle: 0 })
+    sendCarried(address)
   })
 
   room.onMessage('startNextRound', (_data, _context) => {
@@ -626,7 +786,19 @@ export function initServer() {
 
     // Fallback enter-trigger for players who teleport directly into the scene
     // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
-    playerEntered(address)
+    heartbeat(address)
+
+    // Reconnect grace: a cleaner who reloaded rejoins their shift rather than
+    // being benched until the next round.
+    const vanishedAt = recentlyActive.get(address)
+    if (vanishedAt !== undefined) {
+      recentlyActive.delete(address)
+      if (Date.now() - vanishedAt <= RECONNECT_GRACE_MS) {
+        if (getPhase() === 'playing') activePlayers.add(address)
+        else signedUp.add(address)
+        console.log(`[PARTICIPATION] ${address} reconnected within grace — re-enrolled`)
+      }
+    }
 
     executeTask(async () => {
       // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,
@@ -651,6 +823,8 @@ export function initServer() {
       // Tells a joining player whether they're cleaning or spectating, which drives
       // the sign-up prompt on their first frame rather than after a round boundary.
       sendParticipation(address)
+      // Carry state, so the HUD chip shows the right capacity from the first frame.
+      sendCarried(address)
 
       console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
     })
@@ -672,6 +846,9 @@ export function initServer() {
       }
       console.log(`[PROGRESS] ${address} bought ${data.upgradeId} → level ${result.level}`)
       sendProgress(address)
+      // Capacity changes the chip's denominator and a portable bin adds its button
+      // immediately — resync the carry payload for both.
+      if (data.upgradeId === 'carryCapacity' || data.upgradeId === 'portableBin') sendCarried(address)
       // Purchases are a checkpoint too: money left the wallet, and losing that to a
       // server shutdown would be worse than losing an unsaved shift.
       await saveProgress()
@@ -685,5 +862,22 @@ export function initServer() {
       return
     }
     onAdminReset()
+  })
+
+  // Admin testing tool: grant yourself money / XP (drives the +$ / +rank buttons).
+  room.onMessage('adminGrant', (data, context) => {
+    if (!context) return
+    if (!ADMIN_ADDRESSES.includes(context.from.toLowerCase())) {
+      console.log(`[SERVER] adminGrant rejected — not an admin: ${context.from}`)
+      return
+    }
+    const address = context.from
+    executeTask(async () => {
+      await ensureProgressLoaded()
+      const { promotedTo } = adminAdjust(address, data.money, data.xp)
+      console.log(`[SERVER] adminGrant: +$${data.money} +${data.xp}xp → ${address}${promotedTo ? ` (${promotedTo})` : ''}`)
+      sendProgress(address, undefined, promotedTo)
+      await saveProgress()
+    })
   })
 }

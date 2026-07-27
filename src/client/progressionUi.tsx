@@ -11,6 +11,7 @@
 
 import ReactEcs, { UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
 import { Color4 } from '@dcl/sdk/math'
+import { isMobile } from '@dcl/sdk/platform'
 import { theme } from './theme'
 import {
   UPGRADES, UpgradeDef, maxLevel, nextUpgradeCost, rankForXp, JOB_TITLES,
@@ -32,6 +33,17 @@ const money = (n: number): string => `$${n.toLocaleString('en-US')}`
 // restructure, and this only needs the two forms the payout panel actually uses.
 type TopUnit = number | `${number}%`
 
+// ── Shop zoom ─────────────────────────────────────────────────────────────────
+// Extra scale applied to EVERYTHING inside the shop (fonts, icons, rows, buttons)
+// on top of the caller's platform scale S. The shop is a focused full-attention
+// surface, so it reads best noticeably larger than the ambient HUD — and on
+// high-DPI desktops the virtual-px mapping renders smaller than designed (see the
+// UI_ZOOM note in ui.tsx), which left the shop hard to read.
+//
+// TUNE HERE: raise toward 2.5 if the shop still reads small; lower toward 1.5 if
+// it crowds the screen (check mobile before going higher).
+const SHOP_ZOOM = 2.0
+
 // ── Shop open/closed ──────────────────────────────────────────────────────────
 // Module state rather than React state: the renderer re-runs ui() continuously, so
 // a plain flag is enough and avoids threading state through ui.tsx.
@@ -47,10 +59,15 @@ export function CareerBar({ S }: { S: number }) {
   const c = getCareer()
   if (!c) return null   // no progressUpdate yet — render nothing rather than zeros
 
-  const barW = Math.round(240 * S)
-  const barH = Math.round(10 * S)
-  const font = Math.round(18 * S)
-  const pad  = Math.round(10 * S)
+  // Mobile: bigger (reported too small to read) — the safe-area math below then
+  // positions it lower, clear of the explorer's profile-icon cluster.
+  const mobile = isMobile()
+  const Z = mobile ? S * 1.5 : S
+
+  const barW = Math.round(240 * Z)
+  const barH = Math.round(10 * Z)
+  const font = Math.round(18 * Z)
+  const pad  = Math.round(10 * Z)
 
   // Anchor to the live safe area (the region the explorer's own UI does NOT cover)
   // rather than a guessed corner. The explorer renders its UI on top of ours and
@@ -59,8 +76,10 @@ export function CareerBar({ S }: { S: number }) {
   // clear of desktop chat/minimap (left + reserved edges) and the mobile profile/
   // joystick/interaction clusters, and it follows chat live since the UI re-renders
   // every frame. A small extra margin keeps it off the exact safe-area edge.
+  // On mobile the explorer's profile-icon cluster sits inside the reported safe
+  // area's top-right, so a bigger inset drops the bar below it.
   const sa = getSafeArea()
-  const topPos   = pct(sa.top + 0.03)
+  const topPos   = pct(sa.top + (mobile ? 0.14 : 0.03))
   const rightPos = pct(sa.right + 0.015)
 
   return (
@@ -81,7 +100,7 @@ export function CareerBar({ S }: { S: number }) {
 
       {/* Promotion progress. At max rank the bar is full and labelled, rather than
           showing a bar that can never fill. */}
-      <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: Math.round(6 * S) } }}
+      <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: Math.round(6 * Z) } }}
         uiBackground={{ color: TRACK }}>
         <UiEntity
           uiTransform={{ width: Math.round(barW * Math.max(0, Math.min(1, c.fraction))), height: barH }}
@@ -90,16 +109,16 @@ export function CareerBar({ S }: { S: number }) {
       </UiEntity>
       <Label
         value={c.nextTitle ? `${Math.round(c.fraction * 100)}% to ${c.nextTitle}` : 'Top of the ladder'}
-        fontSize={Math.round(14 * S)}
+        fontSize={Math.round(14 * Z)}
         color={SUBTLE}
-        uiTransform={{ margin: { top: Math.round(3 * S) } }}
+        uiTransform={{ margin: { top: Math.round(3 * Z) } }}
       />
       {c.isGuest && (
         <Label
           value="Guest — sign in to save progress"
-          fontSize={Math.round(13 * S)}
+          fontSize={Math.round(13 * Z)}
           color={theme.colors.warning}
-          uiTransform={{ margin: { top: Math.round(3 * S) } }}
+          uiTransform={{ margin: { top: Math.round(3 * Z) } }}
         />
       )}
     </UiEntity>
@@ -296,6 +315,7 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
  */
 export function UpgradeShopOverlay({ S }: { S: number }) {
   if (!shopOpen) return null
+  const Z = S * SHOP_ZOOM
   return (
     <UiEntity
       uiTransform={{
@@ -305,7 +325,7 @@ export function UpgradeShopOverlay({ S }: { S: number }) {
       }}
       uiBackground={{ color: PANEL }}
     >
-      <ShopBody S={S} rowWidth={Math.round(700 * S)} titleSize={Math.round(44 * S)} />
+      <ShopBody S={Z} rowWidth={Math.round(700 * Z)} titleSize={Math.round(44 * Z)} />
     </UiEntity>
   )
 }
@@ -321,12 +341,13 @@ export function UpgradeShopOverlay({ S }: { S: number }) {
  */
 export function UpgradeShopPanel({ S }: { S: number }) {
   if (!shopOpen) return null
-  const pad = Math.round(16 * S)
+  const Z = S * SHOP_ZOOM
+  const pad = Math.round(16 * Z)
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute', position: { top: 0, right: 0 },
-        width: Math.round(580 * S), height: '100%',
+        width: Math.round(580 * Z), height: '100%',
         flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
         padding: { top: pad, bottom: pad, left: pad, right: pad },
       }}
@@ -334,7 +355,7 @@ export function UpgradeShopPanel({ S }: { S: number }) {
       // confetti-filled scene without hiding it.
       uiBackground={{ color: Color4.create(0, 0, 0, 0.72) }}
     >
-      <ShopBody S={S} rowWidth={Math.round(520 * S)} titleSize={Math.round(32 * S)} />
+      <ShopBody S={Z} rowWidth={Math.round(520 * Z)} titleSize={Math.round(32 * Z)} />
     </UiEntity>
   )
 }

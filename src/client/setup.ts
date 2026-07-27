@@ -23,6 +23,7 @@ import { initLobbyTeleport } from './lobbyTeleport'
 import { initProgressionStore } from './progressionStore'
 import { initUpgradeEffects } from './upgradeEffects'
 import { initParticipation } from './participation'
+import { initCarrySystem } from './carrySystem'
 
 export function initClient() {
   console.log('[CLIENT] started')
@@ -31,6 +32,7 @@ export function initClient() {
   initProgressionStore()
   initParticipation()   // server-owned: are we cleaning this shift or spectating?
   initUpgradeEffects()   // applies purchased upgrades once levels arrive
+  initCarrySystem()   // server-owned rubbish carry count + big-bag deposit clicks
   initPhaseGate()  // start the mid-match lockout watcher
   initLobbyTeleport()  // return players to the entrance when a match ends
   initSoundManager()

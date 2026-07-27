@@ -87,9 +87,15 @@ const doc = createPersistedDoc<ProgressDoc>(
 )
 
 let loadStarted = false
+// The doc load is promise-guarded, but every caller of ensureProgressLoaded chains
+// its own .then — without this guard each caller re-ran the merge (harmless thanks
+// to the records.has check, but it double-logged and double-walked the document).
+let mergeDone = false
 export function ensureProgressLoaded(): Promise<unknown> {
   loadStarted = true
   return doc.ensureLoaded().then((stored) => {
+    if (mergeDone) return
+    mergeDone = true
     if (!stored || !stored.players) return
     let n = 0
     for (const [address, raw] of Object.entries(stored.players)) {
@@ -185,6 +191,24 @@ export function awardShift(
     // which is the GDD's core "closer to my next promotion" payoff moment.
     promotedTo: rankAfter > rankBefore ? titleForXp(rec.xp) : null,
   }
+}
+
+/**
+ * Admin testing tool: adjust money / XP directly. Same promotion detection as
+ * awardShift so a granted rank still gets its celebration.
+ */
+export function adminAdjust(
+  address: string,
+  money: number,
+  xp: number,
+): { record: ProgressRecord; promotedTo: string | null } {
+  const rec = getProgress(address)
+  const rankBefore = rankForXp(rec.xp)
+  rec.money = Math.max(0, rec.money + Math.round(money))
+  rec.xp    = Math.max(0, rec.xp + Math.round(xp))
+  dirty = true
+  const rankAfter = rankForXp(rec.xp)
+  return { record: rec, promotedTo: rankAfter > rankBefore ? titleForXp(rec.xp) : null }
 }
 
 /**

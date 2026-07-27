@@ -9,6 +9,22 @@ export const STICKY_ID_PREFIX  = 'sticky_'
 // All scene-item prefixes — used server-side to route cleanItem messages
 export const SCENE_ITEM_PREFIXES = [GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, RUBBISH_ID_PREFIX, STICKY_ID_PREFIX]
 
+// ── Rubbish sorting (recycling) ──────────────────────────────────────────────
+// Every rubbish item is either general waste or recyclable, classified from its
+// scene Name. SHARED so the server (which enforces deposits and carry counts)
+// and the client (bins, hover text, chip) can never disagree about a type.
+export type RubbishType = 'general' | 'recycle'
+
+// Name fragments that mark an item recyclable: paper (napkins, polaroids) and
+// glass (broken bottles/glasses, drink cups). Only ever applied to items in the
+// Rubbish group, so the glass_/bottle_ collectible groups are unaffected.
+const RECYCLE_NAME_PARTS = ['napkin', 'polaroid', 'bottle', 'glass', 'drink']
+
+export function classifyRubbish(name: string): RubbishType {
+  const n = name.toLowerCase()
+  return RECYCLE_NAME_PARTS.some((p) => n.includes(p)) ? 'recycle' : 'general'
+}
+
 export type SceneItemDef = { entity: Entity; itemId: string }
 
 // Generic: finds all children of the named parent entity, sorted by entity ID

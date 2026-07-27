@@ -1,4 +1,5 @@
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, inputSystem, timers } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, PointerEventType, inputSystem, timers } from '@dcl/sdk/ecs'
+import { isMobile } from '@dcl/sdk/platform'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
@@ -6,8 +7,9 @@ import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound } from './soundManager'
+import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss } from '../ui'
+import { promotionBurst } from './confettiSystem'
+import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
@@ -20,8 +22,32 @@ const lastState         = new Map<string, boolean>()
 type ItemRef = { entity: Entity; type: InteractionType }
 const itemRefs = new Map<string, ItemRef>()
 
-type ActiveHold = { id: string; startMs: number }
+// zoneStart/zoneEnd: the Fisch-style skill-check window (fractions of the hold).
+// Releasing while progress is inside it completes the clean instantly; releasing
+// outside cancels as before; holding to 100% still cleans with no skill required.
+type ActiveHold = { id: string; startMs: number; zoneStart: number; zoneEnd: number }
 let activeHold: ActiveHold | null = null
+
+// Random per hold so the timing can't be muscle-memorised, and never earlier than
+// 35% so the mop emote gets a beat to read before the window opens.
+// Both the width AND the position roll per hold: narrow zones are riskier, early
+// zones (from 15%) demand a snap reaction, late ones a patient nerve — so no two
+// patches feel alike.
+const SKILL_ZONE_MIN_W = 0.12
+const SKILL_ZONE_MAX_W = 0.25
+function rollSkillZone(): { zoneStart: number; zoneEnd: number } {
+  const w = SKILL_ZONE_MIN_W + Math.random() * (SKILL_ZONE_MAX_W - SKILL_ZONE_MIN_W)
+  const zoneStart = 0.15 + Math.random() * (0.95 - w - 0.15)
+  return { zoneStart, zoneEnd: zoneStart + w }
+}
+
+// Every Nth consecutive PERFECT gets a confetti pop on top of the flash + chime.
+const STREAK_CONFETTI_EVERY = 5
+
+// Consecutive green-zone hits. Only an attempted-and-missed release breaks it —
+// patiently holding to 100% is neutral, so cautious players aren't punished for
+// not engaging with the minigame.
+let perfectStreak = 0
 
 // ─── Open-phase gate ──────────────────────────────────────────────────────────
 const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
@@ -79,9 +105,11 @@ function enableClick(id: string) {
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         playStickySound()
-        activeHold = { id, startMs: Date.now() }
+        const { zoneStart, zoneEnd } = rollSkillZone()
+        activeHold = { id, startMs: Date.now(), zoneStart, zoneEnd }
         showHoldBarRef(id, true)
         updateHoldBarRef(id, 0)
+        setHoldBarZone(zoneStart, zoneEnd)
 
         // Mopping emote — same step-to-item + emote logic as the pickup animation,
         // fired while the player holds to clean the sticky patch.
@@ -216,24 +244,56 @@ export function initInteractionManager(
     }
   }
 
+  // Ends the active hold and applies the skill-check outcome for an attempt made
+  // at progress `at` (0..1): inside the green zone → instant PERFECT clean;
+  // outside → cancel + streak break. Shared by the desktop release and the mobile
+  // second tap, so the two platforms can never drift on the rules.
+  function resolveSkillCheck(at: number): void {
+    if (!activeHold) return
+    const { id, zoneStart, zoneEnd } = activeHold
+    activeHold = null
+    cancelEmote()
+    stopStickySound()
+    showHoldBar(id, false)
+    updateHoldBar(id, 0)
+
+    if (at >= zoneStart && at <= zoneEnd) {
+      perfectStreak++
+      flashPerfect(perfectStreak)
+      playPerfectSound(perfectStreak)   // chime rises with the streak
+      playCleanSound()
+      const holdPos = Transform.getOrNull(itemRefs.get(id)!.entity)?.position
+      if (holdPos) playSparkle(holdPos)
+      // Streak milestones get a confetti pop — the club celebrates with you.
+      if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
+      tryClean(id, applyCleanState)
+    } else {
+      perfectStreak = 0   // attempted the timing and missed — streak broken
+      flashMiss()
+      playMissSound()
+    }
+  }
+
   // Frame system: drives hold progress + fires on completion
   engine.addSystem(() => {
     if (!activeHold) return
     const heldMs = Date.now() - activeHold.startMs
 
-    // Robust release detection — poll whether the pointer is ACTUALLY still held.
-    // onPointerUp only fires when the button is released over the entity, which can
-    // be missed when the click's step-to-item move slides the cursor off the patch
-    // (notably the first, distant patch). Without this, a single click would let
-    // the hold auto-complete after the full hold duration. The 60 ms grace avoids a
-    // press-edge race on the very first frame of the hold.
-    if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
-      const { id } = activeHold
-      activeHold = null
-      cancelEmote()
-      stopStickySound()
-      showHoldBar(id, false)
-      updateHoldBar(id, 0)
+    // The skill input differs by platform. DESKTOP: release the held button —
+    // polled via isPressed rather than onPointerUp, which can be missed when the
+    // step-to-item move slides the cursor off the patch (60 ms grace avoids the
+    // press-edge race on the first frame). MOBILE: a touch screen has no held
+    // pointer state (a tap starts the hold and the bar fills on its own), so the
+    // skill input is a SECOND tap to lock the marker — the 250 ms grace keeps the
+    // starting tap itself from resolving the check. Letting the bar run to 100%
+    // stays the no-skill fallback on both platforms.
+    if (isMobile()) {
+      if (heldMs > 250 && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+        resolveSkillCheck(heldMs / holdDurationMs())
+        return
+      }
+    } else if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
+      resolveSkillCheck(heldMs / holdDurationMs())
       return
     }
 

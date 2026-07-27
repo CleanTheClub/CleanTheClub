@@ -220,6 +220,16 @@ function scheduleNextBurst(cfg: BurstCfg): void {
   }, LOOP_INTERVAL_MS)
 }
 
+/**
+ * One-shot celebratory burst for a career promotion. Unlike launchCelebration
+ * this does NOT start the looping celebration — a promotion lands during the
+ * intermission (or from an admin grant mid-round), where a loop would either
+ * double up with the round celebration or never be stopped.
+ */
+export function promotionBurst(): void {
+  fireBurst(getBurstCfg('perfect', false))
+}
+
 export function launchCelebration(outcome: Outcome, finale = false): void {
   const resolved = (outcome === '' ? 'suboptimal' : outcome) as Outcome
   const cfg = getBurstCfg(resolved, finale)

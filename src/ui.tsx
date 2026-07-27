@@ -12,6 +12,10 @@ import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen } from './client/progressionUi'
+import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty } from './client/carrySystem'
+import { getSafeArea, pct as saPct } from './client/safeArea'
+import { getCareerOrEmpty } from './client/progressionStore'
+import { TITLE_XP, rankForXp } from './shared/progression'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
@@ -82,9 +86,10 @@ const BAR_HEIGHT          = 16
 
 // Hold-to-clean progress bar — screen-space (never occluded by the avatar, unlike
 // the old in-world billboard).  Shown only while a sticky patch is being held.
-const HOLD_BAR_W_DESKTOP  = 360
-const HOLD_BAR_W_MOBILE   = 300
-const HOLD_BAR_HEIGHT     = 22
+const HOLD_BAR_W_DESKTOP  = 720
+const HOLD_BAR_W_MOBILE   = 520
+const HOLD_BAR_HEIGHT     = 36
+const HOLD_BAR_FONT       = 26    // "Release in the green!" prompt
 // Pinned to a fraction of the canvas height so it stays in the lower third at any
 // UI_ZOOM (a raw virtual-px value would drift to the very bottom as the canvas shrinks).
 const HOLD_BAR_TOP        = Math.round(VIRTUAL_H * 0.61)  // lower third, below the centre reticle
@@ -333,15 +338,39 @@ let activeBarTween: ((dt: number) => void) | null = null
 // ── Hold-to-clean bar state — driven by InteractionManager via cleaningSystem ──
 let holdBarVisible  = false
 let holdBarProgress = 0
+// Fisch-style skill-check zone (0..1 fractions of the track). null = no zone.
+let holdZoneStart: number | null = null
+let holdZoneEnd   = 0
 
 /** Show/hide the hold-to-clean progress bar (called when a hold begins/ends). */
 export function setHoldBarVisible(visible: boolean) {
   holdBarVisible = visible
-  if (!visible) holdBarProgress = 0
+  if (!visible) { holdBarProgress = 0; holdZoneStart = null }
 }
 /** Update hold-to-clean progress, 0..1 (called each frame while holding). */
 export function setHoldBarProgress(progress: number) {
   holdBarProgress = Math.max(0, Math.min(1, progress))
+}
+/** Set (or clear, with null) the green release zone for the current hold. */
+export function setHoldBarZone(start: number | null, end = 0) {
+  holdZoneStart = start
+  holdZoneEnd   = end
+}
+
+// ── Skill-check result flash — fired by InteractionManager on release ─────────
+const PERFECT_FLASH_MS  = 700
+let perfectFlashStartMs = -1
+let perfectFlashStreak  = 0
+let perfectFlashKind: 'perfect' | 'miss' = 'perfect'
+export function flashPerfect(streak: number) {
+  perfectFlashStartMs = Date.now()
+  perfectFlashStreak  = streak
+  perfectFlashKind    = 'perfect'
+}
+export function flashMiss() {
+  perfectFlashStartMs = Date.now()
+  perfectFlashStreak  = 0
+  perfectFlashKind    = 'miss'
 }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
@@ -365,6 +394,82 @@ export function setupUi() {
 }
 
 const WHITE = theme.colors.white
+
+// ── Rubbish carry chip — bottom-centre, only while actually cleaning ──────────
+// Mirrors the server's carriedUpdate (see carrySystem). Bottom-centre keeps it
+// clear of the career HUD (top-right), the toast stack (top), the hold bar
+// (61% height) and the mobile joystick / interaction clusters (bottom corners);
+// the safe-area inset keeps it above any explorer chrome along the bottom edge.
+function CarryChip({ S }: { S: number }) {
+  if (!isCarryKnown()) return null   // no server answer yet — render nothing
+  const full = isCarryFull()
+  const icon = Math.round(52 * S)
+  const font = Math.round(28 * S)
+  const pad  = Math.round(8 * S)
+  const sa   = getSafeArea()
+  return (
+    <UiEntity
+      uiTransform={{
+        positionType: 'absolute',
+        position: { bottom: saPct(sa.bottom + 0.02), left: 0 },
+        width: '100%',
+        flexDirection: 'row',
+        justifyContent: 'center',
+      }}
+    >
+      <UiEntity
+        uiTransform={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          padding: { top: pad, bottom: pad, left: pad, right: Math.round(pad * 1.8) },
+        }}
+        uiBackground={{ color: theme.hud.bg }}
+      >
+        <UiEntity
+          uiTransform={{ width: icon, height: icon, margin: { right: Math.round(8 * S) } }}
+          uiBackground={{ texture: { src: 'assets/scene/UI/upgrade_carryCapacity.png' }, textureMode: 'stretch', color: WHITE }}
+        />
+        {/* Sorted streams: gold = general waste, green = recycling, then the
+            shared capacity. Colours match the bins so the mapping is learnable
+            without a legend. */}
+        <Label
+          value={`${getCarriedGeneral()}`}
+          fontSize={font}
+          color={{ r: 1, g: 0.82, b: 0.25, a: 1 }}
+        />
+        <Label value=" + " fontSize={Math.round(font * 0.8)} color={COLOR_SUBTLE} />
+        <Label
+          value={`${getCarriedRecycle()}`}
+          fontSize={font}
+          color={{ r: 0.35, g: 1, b: 0.55, a: 1 }}
+        />
+        <Label
+          value={`  /  ${getCarryCapacity()}`}
+          fontSize={font}
+          color={full ? theme.colors.warning : WHITE}
+        />
+        {full && (
+          <Label
+            value="  FULL — empty at a big bag!"
+            fontSize={Math.round(20 * S)}
+            color={theme.colors.warning}
+          />
+        )}
+        {/* Portable Bin: empty on the spot, uses remaining in the label. Greyed
+            (secondary) with empty hands — the server re-validates regardless. */}
+        {getPortableLeft() > 0 && (
+          <Button
+            value={`EMPTY (${getPortableLeft()})`}
+            variant={getCarried() > 0 ? 'primary' : 'secondary'}
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(150 * S), height: Math.round(44 * S), margin: { left: Math.round(12 * S) } }}
+            onMouseDown={() => requestPortableEmpty()}
+          />
+        )}
+      </UiEntity>
+    </UiEntity>
+  )
+}
 
 const ui = () => {
   // Keep the virtual canvas matched to the real screen aspect so there's no
@@ -438,6 +543,21 @@ const ui = () => {
   const barTrackW    = barFullW - barLabelW - BAR_LABEL_GAP
   const holdBarW     = mobile ? HOLD_BAR_W_MOBILE : HOLD_BAR_W_DESKTOP
   const holdBarHeight = Math.round(HOLD_BAR_HEIGHT * S)
+
+  // Skill-check flash animation — quick cubic pop of the font, then a fade-out.
+  // PERFECT pops big and gold; MISSED pops smaller and red.
+  const perfectElapsed = perfectFlashStartMs >= 0 ? Date.now() - perfectFlashStartMs : Infinity
+  const perfectPop     = Math.min(1, perfectElapsed / 250)
+  const perfectEase    = 1 - Math.pow(1 - perfectPop, 3)
+  const flashIsPerfect = perfectFlashKind === 'perfect'
+  const perfectFont    = Math.round(lerp(flashIsPerfect ? 34 : 24, flashIsPerfect ? 64 : 40, perfectEase) * S)
+  const perfectAlpha   = perfectElapsed < 400 ? 1 : Math.max(0, 1 - (perfectElapsed - 400) / (PERFECT_FLASH_MS - 400))
+  const flashText      = flashIsPerfect
+    ? (perfectFlashStreak > 1 ? `PERFECT ×${perfectFlashStreak}!` : 'PERFECT!')
+    : 'MISSED!'
+  const flashColor     = flashIsPerfect
+    ? { r: 1, g: 0.82, b: 0.25, a: perfectAlpha }
+    : { r: 1, g: 0.35, b: 0.3,  a: perfectAlpha }
   const nextFont     = Math.round(NEXT_FONT_SIZE     * S)
   const btnW         = Math.round(BTN_WIDTH          * S)
   const btnH         = Math.round(BTN_HEIGHT         * S)
@@ -503,9 +623,7 @@ const ui = () => {
   // eased = 0 → image at centre/big;  eased = 1 → image at normal top position
   const introImgW   = Math.round(instrW * INTRO_SIZE_MULT)
   const introImgH   = Math.round(instrH * INTRO_SIZE_MULT)
-  const centredLeft = Math.round((currentVirtualW - introImgW) / 2)
   const centredTop  = Math.round(INTRO_CENTER_Y - introImgH / 2)
-  const normLeft    = Math.round((currentVirtualW - instrW) / 2)
   const normTop     = INSTR_MARGIN_TOP
 
   // ── Intro animation (centre → normal): player entry or round start ────────────
@@ -525,7 +643,6 @@ const ui = () => {
   const animW           = Math.round(lerp(introImgW, instrW,    easedSize))
   const animH           = Math.round(lerp(introImgH, instrH,    easedSize))
   const animTop         = Math.round(lerp(centredTop,  normTop,  easedPos))
-  const animLeft        = Math.round(lerp(centredLeft, normLeft, easedPos))
   // Timer tracks the image: position with the smooth curve, scale with the pop.
   const timerAnimTop    = Math.round(lerp(INTRO_CENTER_Y + INTRO_TIMER_BELOW, TIMER_ROW_TOP, easedPos))
   const animTimerIconSz = Math.round(lerp(timerIconSz * INTRO_SIZE_MULT, timerIconSz, easedSize))
@@ -542,7 +659,6 @@ const ui = () => {
   const outcomeAnimW    = Math.round(lerp(introImgW, instrW,    outcomeEased))
   const outcomeAnimH    = Math.round(lerp(introImgH, instrH,    outcomeEased))
   const outcomeAnimTop  = Math.round(lerp(centredTop,  normTop,  outcomeEased))
-  const outcomeAnimLeft = Math.round(lerp(centredLeft, normLeft, outcomeEased))
 
   // Source for the "settled" image slot (instructions or outcome card).
   // The finale shows the dedicated ClubComplete card instead of a round outcome.
@@ -550,12 +666,7 @@ const ui = () => {
     ? (isFinale ? CLUB_COMPLETE_IMG : (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal']))
     : 'assets/scene/UI/InstructionsUI.png'
 
-  // Virtual canvas width — matches the virtualWidth passed to ReactEcsRenderer.
-  // Used explicitly on all top-centre elements so every element centres using the
-  // same arithmetic, regardless of how the layout engine resolves '100%'.
-  const VIRT_W = currentVirtualW
-
-  // Full-bleed overlays must NOT use VIRT_W. The renderer fits the 1920x1080
+  // Full-bleed overlays must NOT use virtual-px widths. The renderer fits the 1920x1080
   // virtual canvas INSIDE the screen (scale = min(w/vw, h/vh) / dpr), so on any
   // aspect wider than 16:9 a VIRT_W-wide box stops short of the screen edges —
   // leaving the scene visible in bands beside a dark panel, reported as "there's
@@ -576,11 +687,9 @@ const ui = () => {
   // the banner as it flies in on round start (intro) or sits centred during the
   // intermission/outcome — instead of staying pinned at the settled top position.
   const bannerTop  = isOpen ? outcomeAnimTop  : (introActive ? animTop  : normTop)
-  const bannerLeft = isOpen ? outcomeAnimLeft : (introActive ? animLeft : normLeft)
   const bannerW    = isOpen ? outcomeAnimW    : (introActive ? animW    : instrW)
   const bannerH    = isOpen ? outcomeAnimH    : (introActive ? animH    : instrH)
 
-  const hudBgLeft  = bannerLeft - HUD_BG_PAD_X
   const hudBgTop   = bannerTop  - HUD_BG_PAD_TOP
   const hudBgWidth = bannerW + HUD_BG_PAD_X * 2
   const hudBgBottomY = isOpen
@@ -747,6 +856,10 @@ const ui = () => {
       <CareerBar S={S} />
       {isOpen && <ShiftPayoutPanel S={S} top="56%" />}
 
+      {/* Rubbish carry count — live while cleaning; hidden during the intermission,
+          when there is nothing in hand to track (round start resets it anyway). */}
+      {!isOpen && <CarryChip S={S} />}
+
       {/* Shop access during the intermission — the natural moment to spend a wage
           that was just paid. Bottom-RIGHT so it clears the career HUD (bottom-left)
           and the payout panel (centre), and only while cleaning is paused, so it
@@ -766,50 +879,69 @@ const ui = () => {
       {/* Side-panel shop — leaves the celebration playing behind it. */}
       {shopAsPanel && <UpgradeShopPanel S={S} />}
 
-      {/* ── HUD backdrop — renders first so it sits behind all other elements ─── */}
+      {/* ── HUD backdrop — renders first so it sits behind all other elements ───
+           Every top-centre element (this backdrop, the image slots, the animated
+           overlays) is horizontally centred by a full-width flex row rather than
+           computed left offsets: virtual-px arithmetic drifts off true centre on
+           displays where the canvas mapping misreports (the mobile "shifted left"
+           bug), while '100%' always resolves to the real screen. The animations
+           only ever vary TOP and SIZE — horizontal was always "centred" — so the
+           flex wrapper preserves them exactly. */}
       <UiEntity
         uiTransform={{
           positionType: 'absolute',
-          position:     { top: hudBgTop, left: hudBgLeft },
-          width:        hudBgWidth,
-          height:       hudBgHeight,
+          position:     { top: hudBgTop, left: 0 },
+          width:        '100%',
+          flexDirection: 'row',
+          justifyContent: 'center',
         }}
-        uiBackground={{ color: HUD_BG_COLOR }}
-      />
+      >
+        <UiEntity
+          uiTransform={{ width: hudBgWidth, height: hudBgHeight }}
+          uiBackground={{ color: HUD_BG_COLOR }}
+        />
+      </UiEntity>
 
-      {/* ── Top image slot ───────────────────────────────────────────────────────
-           Absolutely positioned using the same (VIRT_W - instrW) / 2 arithmetic
-           as the animated overlays so all three share one centering method.
-           Hidden whenever an animated overlay covers it (intro or open phase).  */}
+      {/* ── Top image slot — hidden whenever an animated overlay covers it. ───── */}
       <UiEntity
         uiTransform={{
           positionType: 'absolute',
-          position:     { top: INSTR_MARGIN_TOP, left: normLeft },
-          width:        instrW,
-          height:       instrH,
+          position:     { top: INSTR_MARGIN_TOP, left: 0 },
+          width:        '100%',
+          flexDirection: 'row',
+          justifyContent: 'center',
         }}
-        uiBackground={{
-          texture:     { src: topImageSrc },
-          textureMode: 'stretch',
-          color:       (introActive || isOpen) ? { r: 1, g: 1, b: 1, a: 0 } : WHITE,
-        }}
-      />
+      >
+        <UiEntity
+          uiTransform={{ width: instrW, height: instrH }}
+          uiBackground={{
+            texture:     { src: topImageSrc },
+            textureMode: 'stretch',
+            color:       (introActive || isOpen) ? { r: 1, g: 1, b: 1, a: 0 } : WHITE,
+          }}
+        />
+      </UiEntity>
 
       {/* ── Intro overlay — centre → normal (player entry or round start) ─────── */}
       {introActive && !isOpen && (
         <UiEntity
           uiTransform={{
             positionType: 'absolute',
-            position:     { top: animTop, left: animLeft },
-            width:        animW,
-            height:       animH,
+            position:     { top: animTop, left: 0 },
+            width:        '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
           }}
-          uiBackground={{
-            texture:     { src: 'assets/scene/UI/InstructionsUI.png' },
-            textureMode: 'stretch',
-            color:       WHITE,
-          }}
-        />
+        >
+          <UiEntity
+            uiTransform={{ width: animW, height: animH }}
+            uiBackground={{
+              texture:     { src: 'assets/scene/UI/InstructionsUI.png' },
+              textureMode: 'stretch',
+              color:       WHITE,
+            }}
+          />
+        </UiEntity>
       )}
 
       {/* ── Outcome overlay — normal → centre when round ends, holds at centre ── */}
@@ -817,16 +949,21 @@ const ui = () => {
         <UiEntity
           uiTransform={{
             positionType: 'absolute',
-            position:     { top: outcomeAnimTop, left: outcomeAnimLeft },
-            width:        outcomeAnimW,
-            height:       outcomeAnimH,
+            position:     { top: outcomeAnimTop, left: 0 },
+            width:        '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
           }}
-          uiBackground={{
-            texture:     { src: topImageSrc },
-            textureMode: 'stretch',
-            color:       WHITE,
-          }}
-        />
+        >
+          <UiEntity
+            uiTransform={{ width: outcomeAnimW, height: outcomeAnimH }}
+            uiBackground={{
+              texture:     { src: topImageSrc },
+              textureMode: 'stretch',
+              color:       WHITE,
+            }}
+          />
+        </UiEntity>
       )}
 
       {/* ── Achieved cleanliness % — prominent number just below the centred card; */}
@@ -836,7 +973,7 @@ const ui = () => {
           uiTransform={{
             positionType:   'absolute',
             position:       { top: pctRowTop, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'row',
             justifyContent: 'center',
           }}
@@ -856,7 +993,7 @@ const ui = () => {
           uiTransform={{
             positionType:   'absolute',
             position:       { top: finaleBlockTop, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'row',
             justifyContent: 'center',
           }}
@@ -876,7 +1013,7 @@ const ui = () => {
           uiTransform={{
             positionType:   'absolute',
             position:       { top: TIMER_ROW_TOP, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'row',
             alignItems:     'center',
             justifyContent: 'center',
@@ -900,7 +1037,7 @@ const ui = () => {
           uiTransform={{
             positionType:   'absolute',
             position:       { top: timerAnimTop, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'row',
             alignItems:     'center',
             justifyContent: 'center',
@@ -924,7 +1061,7 @@ const ui = () => {
           uiTransform={{
             positionType:   'absolute',
             position:       { top: BAR_ROW_TOP, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'row',
             justifyContent: 'center',
             alignItems:     'center',
@@ -950,23 +1087,28 @@ const ui = () => {
         </UiEntity>
       )}
 
-      {/* ── Hold-to-clean bar — screen-space, shown only while holding a patch ─── */}
+      {/* ── Hold-to-clean bar — screen-space, shown only while holding a patch ───
+           Width '100%' rather than VIRT_W: percentage width is the only sizing that
+           always spans the real canvas, so justifyContent centres on the true
+           screen centre on every display (reported off-centre with VIRT_W). */}
       {holdBarVisible && (
         <UiEntity
           uiTransform={{
             positionType:   'absolute',
             position:       { top: HOLD_BAR_TOP, left: 0 },
-            width:          VIRT_W,
+            width:          '100%',
             flexDirection:  'column',
             justifyContent: 'center',
             alignItems:     'center',
           }}
         >
           <Label
-            value="Cleaning…"
-            fontSize={meterFont}
-            color={COLOR_DIM}
-            uiTransform={{ margin: { bottom: 6 } }}
+            value={holdZoneStart !== null
+              ? (mobile ? 'Tap in the green!' : 'Release in the green!')
+              : 'Cleaning…'}
+            fontSize={Math.round(HOLD_BAR_FONT * S)}
+            color={holdZoneStart !== null ? WHITE : COLOR_DIM}
+            uiTransform={{ margin: { bottom: 8 } }}
           />
           {/* Track */}
           <UiEntity
@@ -978,7 +1120,77 @@ const ui = () => {
               uiTransform={{ width: `${Math.round(holdBarProgress * 100)}%`, height: '100%' }}
               uiBackground={{ color: HOLD_BAR_FILL_COLOR }}
             />
+            {/* Skill-check zone — release while the fill edge is inside for an
+                instant clean. Pulses to draw the eye; drawn after the fill so it
+                stays visible on top, with crisp white edge posts. */}
+            {holdZoneStart !== null && (
+              <UiEntity
+                uiTransform={{
+                  positionType: 'absolute',
+                  position: { top: 0, left: Math.round(holdZoneStart * holdBarW) },
+                  width: Math.round((holdZoneEnd - holdZoneStart) * holdBarW),
+                  height: '100%',
+                }}
+                uiBackground={{ color: { r: 0.2, g: 1, b: 0.45, a: 0.45 + 0.2 * Math.sin(Date.now() / 140) } }}
+              />
+            )}
+            {holdZoneStart !== null && (
+              <UiEntity
+                uiTransform={{
+                  positionType: 'absolute',
+                  position: { top: -2, left: Math.round(holdZoneStart * holdBarW) - 1 },
+                  width: 3, height: holdBarHeight + 4,
+                }}
+                uiBackground={{ color: { r: 1, g: 1, b: 1, a: 0.9 } }}
+              />
+            )}
+            {holdZoneStart !== null && (
+              <UiEntity
+                uiTransform={{
+                  positionType: 'absolute',
+                  position: { top: -2, left: Math.round(holdZoneEnd * holdBarW) - 1 },
+                  width: 3, height: holdBarHeight + 4,
+                }}
+                uiBackground={{ color: { r: 1, g: 1, b: 1, a: 0.9 } }}
+              />
+            )}
+            {/* Fill-edge tick — the "cursor" the player is actually timing. Turns
+                gold the moment it enters the green zone: the "NOW!" signal. */}
+            <UiEntity
+              uiTransform={{
+                positionType: 'absolute',
+                position: { top: -5, left: Math.max(0, Math.round(holdBarProgress * holdBarW) - 3) },
+                width: 6,
+                height: holdBarHeight + 10,
+              }}
+              uiBackground={{
+                color: holdZoneStart !== null && holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd
+                  ? { r: 1, g: 0.82, b: 0.25, a: 1 }
+                  : WHITE,
+              }}
+            />
           </UiEntity>
+        </UiEntity>
+      )}
+
+      {/* ── PERFECT! flash — pops when a skill-check release lands in the green.
+           Rendered outside the hold-bar block because the bar hides on release,
+           exactly when this needs to be visible. */}
+      {perfectElapsed < PERFECT_FLASH_MS && (
+        <UiEntity
+          uiTransform={{
+            positionType:   'absolute',
+            position:       { top: HOLD_BAR_TOP - Math.round(70 * S), left: 0 },
+            width:          '100%',
+            flexDirection:  'row',
+            justifyContent: 'center',
+          }}
+        >
+          <Label
+            value={flashText}
+            fontSize={perfectFont}
+            color={flashColor}
+          />
         </UiEntity>
       )}
 
@@ -987,7 +1199,7 @@ const ui = () => {
         uiTransform={{
           positionType:   'absolute',
           position:       { top: STRIP_TOP, left: 0 },
-          width:          VIRT_W,
+          width:          '100%',
           flexDirection:  'row',
           justifyContent: 'center',
         }}
@@ -1033,6 +1245,46 @@ const ui = () => {
             fontSize={ADMIN_FONT_SIZE}
             color={ADMIN_COLOR}
             uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
+          />
+          {/* Testing grants/sinks — money both ways, and rank up/down (XP jumps to
+              the next title, or back to the floor of the previous one). */}
+          <Button
+            value="+$1,000"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => room.send('adminGrant', { money: 1000, xp: 0 })}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <Button
+            value="−$1,000"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => room.send('adminGrant', { money: -1000, xp: 0 })}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <Button
+            value="+1 Rank"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              const c = getCareerOrEmpty()
+              const rank = rankForXp(c.xp)
+              if (rank >= TITLE_XP.length - 1) return   // already Club Owner
+              room.send('adminGrant', { money: 0, xp: TITLE_XP[rank + 1] - c.xp })
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <Button
+            value="−1 Rank"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              const c = getCareerOrEmpty()
+              const rank = rankForXp(c.xp)
+              if (rank <= 0) return   // already at the bottom rung
+              room.send('adminGrant', { money: 0, xp: TITLE_XP[rank - 1] - c.xp })
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
           <Button
             value="Reset to Round 1"

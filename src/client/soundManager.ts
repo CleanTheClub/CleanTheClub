@@ -6,6 +6,14 @@ const SND_STICKY        = 'assets/scene/Sounds/stickySound.mp3'
 const SND_CLEAN         = 'assets/scene/Sounds/cleanSound.mp3'
 const SND_NOTIFICATION  = 'assets/scene/Sounds/notificationSound.mp3'
 const SND_SQUELCH       = 'assets/scene/Sounds/squelch.mp3'
+// Progression feedback — files pending (drop them in and they just work; a
+// missing clip is silent, never an error). moneySound: coin/cash register jingle
+// (~1s). promotionSound: short fanfare (~2s).
+const SND_MONEY         = 'assets/scene/Sounds/moneySound.mp3'
+const SND_PROMOTION     = 'assets/scene/Sounds/promotionSound.mp3'
+// Bin deposit thunk — file pending (drop it in and it just works; a missing clip
+// is silent, never an error). Something like a bag-drop / lid-clunk, ~0.5s.
+const SND_DEPOSIT       = 'assets/scene/Sounds/depositSound.mp3'
 
 const VOL_HOVER   = 0.7
 const VOL_CLICK   = 0.9
@@ -37,6 +45,9 @@ let clickEntity:        Entity
 let stickyEntity:       Entity
 let squelchEntity:      Entity
 let notificationEntity: Entity
+let moneyEntity:        Entity
+let promotionEntity:    Entity
+let depositEntity:      Entity
 
 // Pool of 3 clean-sound entities, round-robined on each play call.
 // A single entity can't retrigger while playing=true — the false→true toggle
@@ -81,6 +92,18 @@ export function initSoundManager() {
   notificationEntity = engine.addEntity()
   Transform.create(notificationEntity, { position: INIT_POS })
   AudioSource.create(notificationEntity, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.7, pitch: 1.0 })
+
+  moneyEntity = engine.addEntity()
+  Transform.create(moneyEntity, { position: INIT_POS })
+  AudioSource.create(moneyEntity, { audioClipUrl: SND_MONEY, playing: false, loop: false, volume: 1.0 })
+
+  promotionEntity = engine.addEntity()
+  Transform.create(promotionEntity, { position: INIT_POS })
+  AudioSource.create(promotionEntity, { audioClipUrl: SND_PROMOTION, playing: false, loop: false, volume: 1.0 })
+
+  depositEntity = engine.addEntity()
+  Transform.create(depositEntity, { position: INIT_POS })
+  AudioSource.create(depositEntity, { audioClipUrl: SND_DEPOSIT, playing: false, loop: false, volume: 1.0 })
 }
 
 export function playSquelchSound() { playAt(squelchEntity) }
@@ -94,6 +117,34 @@ export function playCleanSound()  {
   playAt(cleanPool[cleanIdx % CLEAN_POOL_SIZE])
   cleanIdx++
 }
+
+/**
+ * Skill-check hit chime — the notification ding pitched up, rising further with
+ * each consecutive PERFECT so a streak climbs audibly. Caps at +8 so a monster
+ * streak stays musical rather than becoming a squeak.
+ */
+export function playPerfectSound(streak: number) {
+  const src = AudioSource.getMutable(notificationEntity)
+  src.pitch  = 1.15 + 0.08 * Math.min(Math.max(1, streak), 8)
+  src.volume = 0.9
+  playAt(notificationEntity)
+}
+
+/** Skill-check miss — the same ding pitched low and quiet: a soft "nope". */
+export function playMissSound() {
+  const src = AudioSource.getMutable(notificationEntity)
+  src.pitch  = 0.65
+  src.volume = 0.6
+  playAt(notificationEntity)
+}
+
+/** Rubbish deposited in a bin. Silent until Sounds/depositSound.mp3 is added. */
+export function playDepositSound()   { playAt(depositEntity) }
+
+/** Wage paid at shift end. Silent until Sounds/moneySound.mp3 is added. */
+export function playMoneySound()     { playAt(moneyEntity) }
+/** Career promotion fanfare. Silent until Sounds/promotionSound.mp3 is added. */
+export function playPromotionSound() { playAt(promotionEntity) }
 
 export function playToastSound(kind: ToastKind) {
   const now = Date.now()

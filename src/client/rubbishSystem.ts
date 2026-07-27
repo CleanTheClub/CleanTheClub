@@ -1,10 +1,10 @@
 // Quick-click-to-clean system for the Rubbish group.
 
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { discoverRubbish, RUBBISH_ID_PREFIX } from '../shared/glassDiscovery'
+import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
@@ -14,6 +14,7 @@ import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
+import { isCarryFull } from './carrySystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
 const pendingCleans     = new Set<string>()
@@ -38,6 +39,17 @@ function maybeShowOpenPhaseToast() {
   showNarrativeToast('Wait for the next round!')
 }
 
+// Full-hands pickups are pre-empted here (no message sent, no shrink-then-restore
+// flicker); the server enforces the same capacity for crafted messages.
+const FULL_TOAST_COOLDOWN_MS = 3_000
+let lastFullToastMs = 0
+function maybeShowFullToast() {
+  const now = Date.now()
+  if (now - lastFullToastMs < FULL_TOAST_COOLDOWN_MS) return
+  lastFullToastMs = now
+  showNarrativeToast('Hands full! Empty your rubbish into a big bag')
+}
+
 type GltfRecord = {
   containerEntity: Entity
   gltfEntity:      Entity
@@ -48,6 +60,9 @@ type GltfRecord = {
 const gltfRecords = new Map<string, GltfRecord>()
 
 let items: ReturnType<typeof discoverRubbish> = []
+
+// itemId → recycling stream, so the hover prompt teaches the sort before pickup.
+const rubbishTypes = new Map<string, RubbishType>()
 
 function setVisible(itemId: string, visible: boolean) {
   const rec = gltfRecords.get(itemId)
@@ -84,9 +99,16 @@ function enableClick(itemId: string) {
   const { clickEntity, containerEntity } = rec
   pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
-    { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
+    {
+      entity: clickEntity,
+      opts: {
+        button: InputAction.IA_POINTER,
+        hoverText: rubbishTypes.get(itemId) === 'recycle' ? 'Clean (Recycling)' : 'Clean (General)',
+      },
+    },
     () => {
       if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+      if (isCarryFull()) { maybeShowFullToast(); return }
       if (pendingCleans.has(itemId)) return
       pendingCleans.add(itemId)
       const pos = Transform.getOrNull(containerEntity)?.position
@@ -128,6 +150,12 @@ function enableClick(itemId: string) {
 export function initRubbishSystem() {
   items = discoverRubbish()
   if (items.length === 0) return
+
+  // Classify each item's recycling stream from its scene Name — the same shared
+  // classifier the server uses, so the hover text can never lie about the sort.
+  for (const { entity, itemId } of items) {
+    rubbishTypes.set(itemId, classifyRubbish(Name.getOrNull(entity)?.value ?? ''))
+  }
 
   // On scene (re-)entry clear stale state so the ClutterSync watcher re-applies
   // authoritative state and re-enables clicks on any newly-uncleaned items.

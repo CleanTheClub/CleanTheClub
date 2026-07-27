@@ -11,6 +11,8 @@
 
 import { room } from '../shared/messages'
 import { UpgradeId } from '../shared/progression'
+import { playMoneySound, playPromotionSound } from './soundManager'
+import { promotionBurst } from './confettiSystem'
 
 export type ShiftPayout = {
   money:  number
@@ -66,7 +68,17 @@ export function initProgressionStore(): void {
       const next = JSON.parse(data.progressJson) as CareerState
       // A payout only accompanies a completed shift; purchases and joins send the
       // same message with lastShift null, which must NOT re-open the payout screen.
-      if (next.lastShift) lastPayoutMs = Date.now()
+      if (next.lastShift) {
+        lastPayoutMs = Date.now()
+        // Wage hitting the wallet gets its own sound, not just a panel.
+        if (next.lastShift.passed && next.lastShift.money > 0) playMoneySound()
+      }
+      // Promotion celebration — fanfare + a one-shot confetti burst. Fires for
+      // shift-end promotions and admin rank grants alike.
+      if (next.promotedTo) {
+        playPromotionSound()
+        promotionBurst()
+      }
       state = next
     } catch (e) {
       console.log('[PROGRESS] failed to parse progressUpdate:', e)

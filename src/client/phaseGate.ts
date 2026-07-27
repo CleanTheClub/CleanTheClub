@@ -21,7 +21,13 @@ export const SYNC_POLL_S = 0.1
 type Handler = (phase: string) => void
 
 const handlers: Handler[] = []
-let lastPhase = ''
+// Composite gate key: phase PLUS participation. At match start the phase flips to
+// 'playing' via CRDT before the participationUpdate message lands, so handlers
+// that ran on the phase edge saw isActive()===false and enabled nothing — and
+// nothing re-fired them when the answer arrived, leaving every item unclickable
+// for the whole round. Keying the watcher on both re-fires the handlers the
+// moment participation catches up.
+let lastGateKey = ''
 let systemAdded = false
 
 export function currentPhase(): string {
@@ -66,8 +72,9 @@ export function onPhaseChange(handler: Handler): void {
     systemAdded = true
     engine.addSystem(() => {
       const p = currentPhase()
-      if (p === lastPhase) return
-      lastPhase = p
+      const key = `${p}|${isActive()}`
+      if (key === lastGateKey) return
+      lastGateKey = key
       for (const h of handlers) h(p)
     })
   }

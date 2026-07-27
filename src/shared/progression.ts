@@ -191,28 +191,32 @@ export const UPGRADES: UpgradeDef[] = [
     id: 'carryCapacity',
     name: 'Carry Capacity',
     description: 'Hold more rubbish before emptying.',
+    // How many pieces of rubbish can be held before a trip to a big rubbish bag.
     levelValues: [5, 8, 12, 17, 25],
     costs:       [300, 650, 1_300, 2_400],
     minRank:     2,   // Cleaner
-    implemented: false,   // needs the carry/bin-deposit mechanic (GDD week 3)
+    implemented: true,
   },
   {
     id: 'portableBin',
     name: 'Portable Bin',
-    description: 'Carry your own bin — no more trips to empty up.',
+    description: 'Empty your hands on the spot — limited uses each shift.',
+    // Level = on-the-spot empties per shift (no trip to a big bag needed).
     levelValues: [0, 1, 2, 3],
     costs:       [1_200, 2_500, 4_500],
     minRank:     5,   // Shift Supervisor
-    implemented: false,   // needs the carry/bin-deposit mechanic (GDD week 3)
+    implemented: true,
   },
   {
     id: 'vacuum',
     name: 'Vacuum',
     description: 'Sweep up several pieces of mess at once.',
+    // Level = EXTRA rubbish pieces swept per click (nearest first, within the
+    // server's sweep radius, never past remaining carry space).
     levelValues: [0, 1, 2, 3],
     costs:       [2_000, 4_000, 7_500],
     minRank:     7,   // Assistant Manager
-    implemented: false,   // needs the carry/bin-deposit mechanic (GDD week 3)
+    implemented: true,
   },
 ]
 

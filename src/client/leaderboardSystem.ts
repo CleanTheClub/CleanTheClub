@@ -239,6 +239,20 @@ export function initLeaderboardSystem(): void {
   // ASAP so the first round of player interactions isn't delayed by cold-start latency.
   room.send('ping', { dummy: true })
 
+  // ...and keep pinging as a presence heartbeat. The server counts a player as
+  // in-scene while it keeps hearing from them (see the presence block in
+  // server.ts) — the message channel is the only player-presence signal that
+  // reliably reaches the server runtime. A dt-accumulator system rather than
+  // setInterval, so the heartbeat can never outlive the scene context.
+  const PING_INTERVAL_S = 5
+  let pingAcc = 0
+  engine.addSystem((dt: number) => {
+    pingAcc += dt
+    if (pingAcc < PING_INTERVAL_S) return
+    pingAcc = 0
+    room.send('ping', { dummy: true })
+  })
+
   // Handle real-time leaderboard updates pushed from the server
   room.onMessage('leaderboardUpdate', (data) => {
     try {
