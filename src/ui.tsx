@@ -1,5 +1,5 @@
 import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
-import { engine, EasingFunction } from '@dcl/sdk/ecs'
+import { engine, EasingFunction, UiCanvasInformation } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
@@ -10,11 +10,45 @@ import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
+import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
+import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen } from './client/progressionUi'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
+// ── Global HUD zoom ────────────────────────────────────────────────────────────
+// The whole HUD is laid out in a virtual canvas; the renderer scales that canvas
+// to fit the screen. Shrinking the virtual canvas zooms every element — sizes,
+// positions and gaps — up together, so nothing overlaps.
+//
+// This is the desktop scale fix. SDK 7.24.3 added a device-pixel-ratio divide to
+// the UI scale (the change that fixed mobile), which made virtual px map to
+// LOGICAL px. On the high-DPI display this HUD was originally tuned against that
+// halved the on-screen size, leaving the desktop HUD tiny and crammed at the top.
+// A smaller virtual canvas restores it, on every display density at once (the dpr
+// divide already removed the per-display variation, so a single constant is right
+// for all desktops).
+//
+// TUNE HERE: raise UI_ZOOM toward 2.0 if the HUD still reads too small on your
+// monitor; lower it toward 1.2 if it's now too big.
+const UI_ZOOM             = 1.5
+const VIRTUAL_W           = Math.round(1920 / UI_ZOOM)   // virtual canvas width  (1280 @ 1.5) — default/fallback
+const VIRTUAL_H           = Math.round(1080 / UI_ZOOM)   // virtual canvas height ( 720 @ 1.5)
+
+// Live virtual-canvas width. The renderer fits a FIXED-aspect virtual canvas
+// inside the screen; on any aspect wider than the canvas it fits to height and
+// LEFT-anchors, so '100%' and centred content skew left — reported as "UI skewed
+// left, not centred" on ultrawide mobile. We flex virtualWidth each frame to match
+// the real screen aspect (virtualHeight stays VIRTUAL_H, so uiScaleFactor =
+// canvasH/VIRTUAL_H/dpr and the UI_ZOOM vertical scale are unchanged). Matching the
+// aspect removes the letterbox: the canvas fills the screen and centring is true on
+// every device. Updated via setUiRenderer, which only reassigns the virtual size —
+// no re-mount. Starts at the 16:9 default until the real canvas size is known.
+let currentVirtualW = VIRTUAL_W
+
 // Platform
-const MOBILE_SCALE        = 1.5     // uniform multiplier applied to text / chrome on mobile
+// Extra bump for mobile ON TOP of the global zoom above (touch targets + smaller
+// screens want larger chrome). Net mobile scale = MOBILE_SCALE × UI_ZOOM.
+const MOBILE_SCALE        = 1.1     // multiplier applied to text / chrome on mobile
 
 // Instructions image (top-centre; also acts as title card)
 // Image file is 1024×128 — display at the same aspect ratio (8:1)
@@ -51,7 +85,9 @@ const BAR_HEIGHT          = 16
 const HOLD_BAR_W_DESKTOP  = 360
 const HOLD_BAR_W_MOBILE   = 300
 const HOLD_BAR_HEIGHT     = 22
-const HOLD_BAR_TOP        = 660     // lower third, below the centre reticle
+// Pinned to a fraction of the canvas height so it stays in the lower third at any
+// UI_ZOOM (a raw virtual-px value would drift to the very bottom as the canvas shrinks).
+const HOLD_BAR_TOP        = Math.round(VIRTUAL_H * 0.61)  // lower third, below the centre reticle
 const HOLD_BAR_BG_COLOR   = theme.holdBar.bg
 const HOLD_BAR_FILL_COLOR = theme.holdBar.fill
 
@@ -124,8 +160,12 @@ const COLOR_DIM           = theme.text.dim     // meter / next-round
 // Toast images are 1024×256 (4:1 ratio)
 const TOAST_W_DESKTOP     = 450
 const TOAST_H_DESKTOP     = 113    // 450 × (256/1024)
-const TOAST_W_MOBILE      = 320
-const TOAST_H_MOBILE      = 80     // 320 × (256/1024)
+// Mobile toasts are now sized UP, not down. Previously mobile shrank the bubble
+// (320×80) while MOBILE_SCALE grew the text inside it 1.5×, so the narrative copy
+// overflowed the speech-bubble art — "the Narrative notifications text is
+// overlapping the speaking bubble" on iOS. Keeps the 1024×256 (4:1) art ratio.
+const TOAST_W_MOBILE      = 480
+const TOAST_H_MOBILE      = 120    // 480 × (256/1024)
 const TOAST_OVERLAP       = 0   // fraction of toast HEIGHT to pull each card up (creates stack)
 const TOAST_FONT_SIZE     = 18     // count text (e.g. "3 / 38")
 const NARR_FONT_SIZE      = 17     // narrative body text
@@ -254,9 +294,14 @@ function formatTime(s: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+// Rounds continue indefinitely in V2, so this can no longer clamp to a fixed list —
+// the old version labelled every round past the 5th "Final Round", which would be
+// wrong on every shift from then on. Milestone rounds (every 5th) keep a special
+// label since they still trigger the celebration hold.
+const MILESTONE_EVERY = 5
 function getRoundLabel(n: number): string {
-  const labels = ['Round 1', 'Round 2', 'Round 3', 'Round 4', 'Final Round']
-  return labels[Math.min(n, labels.length - 1)]
+  const isMilestone = (n + 1) % MILESTONE_EVERY === 0
+  return isMilestone ? `Round ${n + 1} — Milestone` : `Round ${n + 1}`
 }
 
 
@@ -316,12 +361,25 @@ export function triggerRoundStartIntro() {
 
 export function setupUi() {
   checkAdmin()
-  ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: 1920, virtualHeight: 1080 })
+  ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: VIRTUAL_W, virtualHeight: VIRTUAL_H })
 }
 
 const WHITE = theme.colors.white
 
 const ui = () => {
+  // Keep the virtual canvas matched to the real screen aspect so there's no
+  // letterbox to skew centred content (see currentVirtualW above). Clamped so a
+  // portrait or extreme aspect can't drive fixed-width elements off-canvas; the
+  // >=8px guard avoids re-setting on sub-pixel jitter.
+  const canvasInfo = UiCanvasInformation.getOrNull(engine.RootEntity)
+  if (canvasInfo && canvasInfo.width > 0 && canvasInfo.height > 0) {
+    const desired = Math.max(720, Math.min(2400, Math.round(VIRTUAL_H * (canvasInfo.width / canvasInfo.height))))
+    if (Math.abs(desired - currentVirtualW) >= 8) {
+      currentVirtualW = desired
+      ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: VIRTUAL_H })
+    }
+  }
+
   const gs            = getGameState()
   const cleaned       = gs?.cleanedCount ?? 0
   const total         = Math.max(1, gs?.totalCount ?? 1)
@@ -353,6 +411,20 @@ const ui = () => {
   const mobile = isMobile()
   const S      = mobile ? MOBILE_SCALE : 1
 
+  // The shop has two presentations, chosen by what is behind it.
+  //
+  // During the intermission it is a side PANEL: that phase is the game's payoff —
+  // crowd arrives, confetti, party music, the player's own emote — and a
+  // full-screen modal would black out the exact reward the shift was earned for.
+  //
+  // Everywhere else (lobby, spectating) it is a full-screen MODAL. Both of those
+  // are already scrims with nothing worth preserving behind them, and a modal
+  // gives the shop more room.
+  const shopAsPanel = isShopOpen() && isOpen && !waiting
+  if (isShopOpen() && !shopAsPanel) {
+    return <UpgradeShopOverlay S={S} />
+  }
+
   const instrW       = mobile ? INSTR_W_MOBILE : INSTR_W_DESKTOP
   const instrH       = mobile ? INSTR_H_MOBILE : INSTR_H_DESKTOP
   const timerIconSz  = Math.round(TIMER_ICON_SIZE   * S)
@@ -373,8 +445,14 @@ const ui = () => {
   const toastW       = mobile ? TOAST_W_MOBILE : TOAST_W_DESKTOP
   const toastH       = mobile ? TOAST_H_MOBILE : TOAST_H_DESKTOP
   const toastOverlap = -Math.round(toastH * TOAST_OVERLAP)
-  const toastFont    = Math.round(TOAST_FONT_SIZE    * S)
-  const narrFont     = Math.round(NARR_FONT_SIZE     * S)
+  // Toast text scales with the BUBBLE, not with MOBILE_SCALE. Both labels are
+  // positioned as fractions of the toast rect and sit inside fixed speech-bubble
+  // art, so any font that scales independently of the rect will eventually spill
+  // out of the artwork. Deriving it from the rect makes overflow impossible by
+  // construction, whatever the bubble is resized to later.
+  const toastScale   = toastW / TOAST_W_DESKTOP
+  const toastFont    = Math.round(TOAST_FONT_SIZE    * toastScale)
+  const narrFont     = Math.round(NARR_FONT_SIZE     * toastScale)
   const toastPos     = mobile ? TOAST_POS_MOBILE : TOAST_POS_DESKTOP
   const toastAlign   = mobile ? 'flex-start' as const : 'flex-end' as const
   // When the round-end banner fills the centre of the screen (desktop only),
@@ -425,9 +503,9 @@ const ui = () => {
   // eased = 0 → image at centre/big;  eased = 1 → image at normal top position
   const introImgW   = Math.round(instrW * INTRO_SIZE_MULT)
   const introImgH   = Math.round(instrH * INTRO_SIZE_MULT)
-  const centredLeft = Math.round((1920 - introImgW) / 2)
+  const centredLeft = Math.round((currentVirtualW - introImgW) / 2)
   const centredTop  = Math.round(INTRO_CENTER_Y - introImgH / 2)
-  const normLeft    = Math.round((1920 - instrW) / 2)
+  const normLeft    = Math.round((currentVirtualW - instrW) / 2)
   const normTop     = INSTR_MARGIN_TOP
 
   // ── Intro animation (centre → normal): player entry or round start ────────────
@@ -475,7 +553,23 @@ const ui = () => {
   // Virtual canvas width — matches the virtualWidth passed to ReactEcsRenderer.
   // Used explicitly on all top-centre elements so every element centres using the
   // same arithmetic, regardless of how the layout engine resolves '100%'.
-  const VIRT_W = 1920
+  const VIRT_W = currentVirtualW
+
+  // Full-bleed overlays must NOT use VIRT_W. The renderer fits the 1920x1080
+  // virtual canvas INSIDE the screen (scale = min(w/vw, h/vh) / dpr), so on any
+  // aspect wider than 16:9 a VIRT_W-wide box stops short of the screen edges —
+  // leaving the scene visible in bands beside a dark panel, reported as "there's
+  // a gray layout when waiting for a match". Percentages resolve against the real
+  // screen and always cover it.
+  const FULL_SCREEN_SCRIM = { width: '100%' as const, height: '100%' as const }
+  // Rows that centre their content across the full screen. justifyContent:'center'
+  // needs a definite width to centre within; '100%' gives it one that matches the
+  // scrim, so text stays centred on the actual screen rather than on the 1920 box.
+  const FULL_WIDTH_ROW = {
+    width: '100%' as const,
+    flexDirection: 'row' as const,
+    justifyContent: 'center' as const,
+  }
 
   // ── HUD backdrop geometry — tracks the banner wherever it is ─────────────────
   // The backdrop follows the banner image's CURRENT rect so the scrim moves WITH
@@ -517,12 +611,12 @@ const ui = () => {
   if (isLobby) {
     const titleW = mobile ? 1040 : 820
     const titleH = Math.round(titleW / 8)            // InstructionsUI.png is 1024×128 (8:1)
-    const centeredRow = { width: VIRT_W, flexDirection: 'row' as const, justifyContent: 'center' as const }
+    const centeredRow = FULL_WIDTH_ROW
     return (
       <UiEntity
         uiTransform={{
           positionType: 'absolute', position: { top: 0, left: 0 },
-          width: VIRT_W, height: '100%',
+          ...FULL_SCREEN_SCRIM,
           flexDirection: 'column', justifyContent: 'center',
         }}
         uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
@@ -534,7 +628,7 @@ const ui = () => {
           />
         </UiEntity>
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(14 * S) } }}>
-          <Label value="Clean the club before time runs out — 5 rounds!"
+          <Label value="Clean the club before time runs out!"
             fontSize={Math.round(26 * S)} color={COLOR_SUBTLE} />
         </UiEntity>
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(30 * S) } }}>
@@ -554,28 +648,88 @@ const ui = () => {
             />
           )}
         </UiEntity>
+
+        {/* GDD: "players can browse upgrades while waiting for the next match". */}
+        <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(18 * S) } }}>
+          <ShopButton S={S} />
+        </UiEntity>
+
+        {/* Absolutely positioned, so it sits in the same bottom-left spot here as
+            it does in the in-shift HUD rather than jumping between screens. */}
+        <CareerBar S={S} />
       </UiEntity>
     )
   }
 
   // ── Waiting overlay — a match is already in progress; join the next one. ──────
   if (waiting) {
-    const centeredRow = { width: VIRT_W, flexDirection: 'row' as const, justifyContent: 'center' as const }
+    const centeredRow = FULL_WIDTH_ROW
     return (
       <UiEntity
         uiTransform={{
           positionType: 'absolute', position: { top: 0, left: 0 },
-          width: VIRT_W, height: '100%',
+          ...FULL_SCREEN_SCRIM,
           flexDirection: 'column', justifyContent: 'center',
         }}
         uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
       >
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(16 * S) } }}>
-          <Label value="Match in progress" fontSize={Math.round(56 * S)} color={WHITE} />
+          <Label value="Spectating" fontSize={Math.round(56 * S)} color={WHITE} />
         </UiEntity>
+
+        {/* Next-shift countdown. During the intermission secondsLeft counts down to
+            the next round, which is exactly the "next match countdown" the GDD asks
+            for; mid-round there is no meaningful number yet, so say so plainly
+            rather than showing a stale or misleading one. */}
         <UiEntity uiTransform={centeredRow}>
-          <Label value="You'll join the next match — hang tight!" fontSize={Math.round(28 * S)} color={COLOR_SUBTLE} />
+          <Label
+            value={isOpen
+              ? `Next shift starts in ${seconds}s`
+              : 'Next shift starts when this round ends'}
+            fontSize={Math.round(30 * S)}
+            color={WHITE}
+          />
         </UiEntity>
+
+        {/* Pre sign-up — the GDD specifies opting in rather than auto-enrolling, so
+            arriving never drops a player into a shift they didn't choose. */}
+        <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(24 * S) } }}>
+          {isSignedUp() ? (
+            <Button
+              value="SIGNED UP — CANCEL"
+              variant="secondary"
+              fontSize={Math.round(26 * S)}
+              uiTransform={{ width: Math.round(360 * S), height: Math.round(76 * S) }}
+              onMouseDown={() => cancelSignUp()}
+            />
+          ) : (
+            <Button
+              value="JOIN NEXT SHIFT"
+              variant="primary"
+              fontSize={Math.round(28 * S)}
+              uiTransform={{ width: Math.round(360 * S), height: Math.round(76 * S) }}
+              onMouseDown={() => signUpForNextShift()}
+            />
+          )}
+        </UiEntity>
+
+        <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(10 * S) } }}>
+          <Label
+            value={isSignedUp()
+              ? "You're in — you'll start cleaning next round."
+              : 'Watch until you\'re ready, then join.'}
+            fontSize={Math.round(22 * S)}
+            color={COLOR_SUBTLE}
+          />
+        </UiEntity>
+
+        {/* Waiting is the natural moment to spend earnings, and gives the wait a
+            purpose rather than leaving players staring at a scrim. */}
+        <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(22 * S) } }}>
+          <ShopButton S={S} />
+        </UiEntity>
+
+        <CareerBar S={S} />
       </UiEntity>
     )
   }
@@ -584,6 +738,33 @@ const ui = () => {
     <UiEntity
       uiTransform={{ width: '100%', height: '100%' }}
     >
+
+      {/* ── Career HUD + end-of-shift payout ─────────────────────────────────────
+           The payout sits at 56% height, well clear of the top-centre banner stack
+           (outcome image, % figure, countdown) so it can never collide with them —
+           the failure mode that produced the narrative/speech-bubble overlap. It
+           renders only during the intermission, and only once a payout has arrived. */}
+      <CareerBar S={S} />
+      {isOpen && <ShiftPayoutPanel S={S} top="56%" />}
+
+      {/* Shop access during the intermission — the natural moment to spend a wage
+          that was just paid. Bottom-RIGHT so it clears the career HUD (bottom-left)
+          and the payout panel (centre), and only while cleaning is paused, so it
+          can never pull focus mid-shift. Hidden while the panel itself is open,
+          which occupies that side of the screen. */}
+      {isOpen && !shopAsPanel && (
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: { bottom: Math.round(18 * S), right: Math.round(18 * S) },
+          }}
+        >
+          <ShopButton S={S} />
+        </UiEntity>
+      )}
+
+      {/* Side-panel shop — leaves the celebration playing behind it. */}
+      {shopAsPanel && <UpgradeShopPanel S={S} />}
 
       {/* ── HUD backdrop — renders first so it sits behind all other elements ─── */}
       <UiEntity

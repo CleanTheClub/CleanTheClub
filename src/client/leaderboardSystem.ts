@@ -123,6 +123,10 @@ export function setupLeaderboardBoard(): void {
     textColor: LB_COLOR_HEADER,
   })
 
+  // Kept so the cycling display can retitle the board per category.
+  headerNameEntity  = hName
+  headerScoreEntity = hScore
+
   // Entry rows
   for (let i = 0; i < LB_ENTRIES; i++) {
     const y = LB_START_Y - i * LB_STEP_Y
@@ -152,14 +156,74 @@ export function setupLeaderboardBoard(): void {
   updateLeaderboardDisplay(LB_MOCK_DATA)
 }
 
-export function updateLeaderboardDisplay(entries: Array<{ displayName: string; count: number }>): void {
+// ── Category cycling (V2) ─────────────────────────────────────
+// The GDD asks for expanded leaderboard categories. Rather than building extra
+// in-world boards — more geometry, more wall space, more to read at a glance — the
+// single board cycles through the categories the server sends, retitling itself
+// each time. One board stays readable and needs no new art.
+const LB_CYCLE_SECONDS = 10
+
+type LbCategory = {
+  key:         string
+  title:       string
+  scoreHeader: string
+  entries:     Array<{ displayName: string; score: string }>
+}
+
+let categories: LbCategory[] = []
+let categoryIndex = 0
+let cycleAcc = 0
+let headerNameEntity:  Entity | undefined
+let headerScoreEntity: Entity | undefined
+
+function renderCategory(cat: LbCategory | undefined): void {
+  if (headerNameEntity !== undefined) {
+    TextShape.getMutable(headerNameEntity).text = cat ? cat.title : LB_HEADER_NAME
+  }
+  if (headerScoreEntity !== undefined) {
+    TextShape.getMutable(headerScoreEntity).text = cat ? cat.scoreHeader : LB_HEADER_SCORE
+  }
   for (let i = 0; i < LB_ENTRIES; i++) {
-    const entry = entries[i]
+    const entry = cat?.entries[i]
     const { name, score } = getLabels(i)
     if (!name || !score) continue
     TextShape.getMutable(name).text  = entry ? `${i + 1}.  ${entry.displayName}` : ''
-    TextShape.getMutable(score).text = entry ? `${entry.count}` : ''
+    TextShape.getMutable(score).text = entry ? entry.score : ''
   }
+}
+
+/**
+ * Accepts either the V2 category payload or the legacy flat array, so a client and
+ * server on different versions still render something sensible rather than a blank
+ * board — they can be deployed independently.
+ */
+export function updateLeaderboardDisplay(payload: unknown): void {
+  if (Array.isArray(payload)) {
+    categories = [{
+      key: 'cleaned', title: LB_HEADER_NAME, scoreHeader: LB_HEADER_SCORE,
+      entries: (payload as Array<{ displayName: string; count: number }>)
+        .map((e) => ({ displayName: e.displayName, score: String(e.count) })),
+    }]
+  } else {
+    const cats = (payload as { categories?: LbCategory[] })?.categories
+    // Drop empty categories so the board never cycles to a blank panel — an empty
+    // board reads as broken rather than as "nobody has earned this yet".
+    categories = Array.isArray(cats) ? cats.filter((c) => c.entries.length > 0) : []
+  }
+  if (categoryIndex >= categories.length) categoryIndex = 0
+  renderCategory(categories[categoryIndex])
+}
+
+/** Advances the board on a timer. Started once from initLeaderboardSystem. */
+function startCategoryCycle(): void {
+  engine.addSystem((dt: number) => {
+    if (categories.length <= 1) return   // nothing to cycle between
+    cycleAcc += dt
+    if (cycleAcc < LB_CYCLE_SECONDS) return
+    cycleAcc = 0
+    categoryIndex = (categoryIndex + 1) % categories.length
+    renderCategory(categories[categoryIndex])
+  })
 }
 
 // ── Leaderboard system init ───────────────────────────────────
@@ -168,6 +232,7 @@ export function updateLeaderboardDisplay(entries: Array<{ displayName: string; c
 // can map address → name for the leaderboard.
 export function initLeaderboardSystem(): void {
   setupLeaderboardBoard()
+  startCategoryCycle()
 
   // Wake the server immediately — sent synchronously before any async getUserData call.
   // The server shuts down when the scene is empty; this message ensures it starts up
@@ -177,8 +242,7 @@ export function initLeaderboardSystem(): void {
   // Handle real-time leaderboard updates pushed from the server
   room.onMessage('leaderboardUpdate', (data) => {
     try {
-      const entries = JSON.parse(data.entriesJson)
-      updateLeaderboardDisplay(entries)
+      updateLeaderboardDisplay(JSON.parse(data.entriesJson))
     } catch {
       console.log('[Leaderboard] Failed to parse leaderboardUpdate')
     }

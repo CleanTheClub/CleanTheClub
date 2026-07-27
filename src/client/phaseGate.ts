@@ -9,8 +9,8 @@
 // change (e.g. a round-reset) can't silently re-register pointer events.
 
 import { engine } from '@dcl/sdk/ecs'
-import { isStateSyncronized } from '@dcl/sdk/network'
 import { GameState } from '../shared/schemas'
+import { isActive, isKnown } from './participation'
 
 // Authoritative ClutterSync watchers reconcile server state at this cadence rather
 // than every frame.  Local cleaning feedback is optimistic/instant, so polling the
@@ -29,42 +29,33 @@ export function currentPhase(): string {
   return 'playing'
 }
 
-// Returns the synced GameState phase, or null if GameState hasn't arrived yet.
-function syncedPhase(): string | null {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase
-  return null
-}
+// ── Participation gate ─────────────────────────────────────────────────────────
+// Participation used to be inferred client-side: whoever first synced mid-round was
+// a "waiter" until the phase returned to 'lobby'. Two things broke that. Rounds now
+// continue indefinitely, so 'lobby' may never come around — a waiter could be stuck
+// forever. And the GDD calls for pre sign-up rather than auto sign-up, so joining
+// must be a choice, not something that happens to a player.
+//
+// The server now owns it (see participation.ts): a player who arrives mid-round
+// spectates until they sign up, and is promoted at the next round boundary.
 
-// ── Mid-match lockout (client-side) ────────────────────────────────────────────
-// A player who first syncs into a match already in progress (playing/open) is a
-// "waiter" — they can't clean and see a "match in progress" screen until the match
-// ends and the phase returns to 'lobby', at which point they join the next match.
-let joinedMidMatch = false
-let decided = false
-
+/** True while this player is watching rather than cleaning. */
 export function isWaitingForMatch(): boolean {
-  return joinedMidMatch
+  // Before the server's first answer, treat an in-progress round as spectating so
+  // the sign-up prompt shows. Suppressed in the lobby, which has its own screen.
+  if (!isKnown()) return currentPhase() === 'playing'
+  return !isActive()
 }
 
-// Start the lockout watcher. Call once from initClient.
-export function initPhaseGate(): void {
-  engine.addSystem(() => {
-    const phase = syncedPhase()
-    if (phase === null) return   // GameState not synced yet
+// Kept for call-site compatibility. Participation now arrives by message, so there
+// is no local watcher to start.
+export function initPhaseGate(): void {}
 
-    // Decide once authoritative state has arrived: in a match already → waiter.
-    if (!decided && isStateSyncronized()) {
-      decided = true
-      joinedMidMatch = phase !== 'lobby'
-    }
-    // Any return to the lobby clears the wait — they join the next match normally.
-    if (phase === 'lobby') joinedMidMatch = false
-  })
-}
-
-// True only while players can clean: the playing phase AND not a mid-match waiter.
+// True only while this player can clean: the playing phase AND actually enrolled
+// in the shift. The server enforces the same rule when accepting cleans; this just
+// avoids offering pointer prompts that would be rejected.
 export function clicksAllowed(): boolean {
-  return currentPhase() === 'playing' && !joinedMidMatch
+  return currentPhase() === 'playing' && isActive()
 }
 
 // Subscribe to phase transitions. The handler fires once per change with the new

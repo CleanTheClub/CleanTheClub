@@ -1,5 +1,6 @@
 import { engine, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
 import { movePlayerTo, triggerSceneEmote } from '~system/RestrictedActions'
+import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
@@ -8,6 +9,12 @@ const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
 const EMOTE_TRIGGER_MS  = 200   // ms — delay after movePlayerTo before emote fires
+// If the player is already within INTERACT_DISTANCE + this slack, skip movePlayerTo
+// entirely. Most cleans happen with the player standing right on top of the item, so
+// the "step" was a sub-metre nudge that bought nothing and cost a camera swing —
+// and, for hold items, could slide the cursor off the patch mid-hold (see the
+// release-detection note in InteractionManager).
+const REPOSITION_SLACK  = 0.75  // metres
 
 let emoteActive = false
 
@@ -104,16 +111,27 @@ function playStepEmote(
     const dx  = playerPos.x - targetPos.x
     const dz  = playerPos.z - targetPos.z
     const len = Math.sqrt(dx * dx + dz * dz)
-    const nx  = len > 0.001 ? dx / len : 0
-    const nz  = len > 0.001 ? dz / len : 1
-    movePlayerTo({
-      newRelativePosition: {
+
+    // Only step to the item when the player is genuinely too far away to be
+    // "at" it — otherwise leave them exactly where they put themselves.
+    if (len > INTERACT_DISTANCE + REPOSITION_SLACK) {
+      const nx = len > 0.001 ? dx / len : 0
+      const nz = len > 0.001 ? dz / len : 1
+      const newRelativePosition = {
         x: targetPos.x + nx * INTERACT_DISTANCE,
         y: playerPos.y,
         z: targetPos.z + nz * INTERACT_DISTANCE,
-      },
-      avatarTarget: targetPos,
-    })
+      }
+      // avatarTarget force-rotates the AVATAR to face the item. On mobile the
+      // third-person camera follows avatar facing, so re-aiming on every clean
+      // wrenched the view out from under the player's own camera control —
+      // reported as "camera gets rotated when cleaning constantly". Desktop
+      // mouse-look is decoupled from avatar facing, so it keeps the nicer
+      // turn-to-face. Translating the player does NOT swing the camera, so the
+      // step-to-item behaviour itself is preserved on both platforms.
+      if (isMobile()) movePlayerTo({ newRelativePosition })
+      else            movePlayerTo({ newRelativePosition, avatarTarget: targetPos })
+    }
   }
 
   emoteActive = true
@@ -134,6 +152,6 @@ export function playPickupEmote(targetPos: { x: number; y: number; z: number }) 
 
 // Fires the mopping emote — hold-to-clean sticky patches. The player is already on
 // the patch, so it fires immediately (triggerDelayMs = 0) for an instant response.
-export function playMoppingEmote(targetPos: { x: number; y: number; z: number }) {
-  playStepEmote(targetPos, MOPPING_EMOTE_SRC, MOPPING_EMOTE_MS, 0)
+export function playMoppingEmote(targetPos: { x: number; y: number; z: number }, durationMs = MOPPING_EMOTE_MS) {
+  playStepEmote(targetPos, MOPPING_EMOTE_SRC, durationMs, 0)
 }

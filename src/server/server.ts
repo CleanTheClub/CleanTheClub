@@ -1,12 +1,18 @@
-import { engine, Entity, Transform, executeTask } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, executeTask, PlayerIdentityData } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
 import { Storage, EnvVar } from '@dcl/sdk/server'
-import { onEnterSceneObservable, onLeaveSceneObservable } from '@dcl/sdk/observables'
+import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler } from './RoundManager'
+import { OUTCOME_ADEQUATE } from '../shared/config'
+import { shiftRewards, titleProgress, titleForXp, UpgradeId } from '../shared/progression'
+import {
+  ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
+  purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords,
+} from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
 interface LeaderboardEntry { displayName: string; total: number }
@@ -152,13 +158,75 @@ async function saveLeaderboard(): Promise<void> {
   }
 }
 
+// ── Leaderboard categories (V2) ───────────────────────────────────────────────
+// The GDD asks for "expanded leaderboard categories and statistics". Rather than
+// building extra in-world boards, all categories ship in one payload and the single
+// board cycles through them (see leaderboardSystem).
+//
+// "Cleaned" deliberately still comes from the legacy leaderboard map rather than
+// progression's lifetimeItems: that map holds real historical data players have
+// already earned, while lifetimeItems starts at zero for everyone. Rebuilding the
+// board from progression would silently wipe every existing score from view.
+const LB_TOP_N = 10   // per category; keeps the payload far inside the ~13KB cap
+
+type LbCategory = {
+  key:         string
+  title:       string
+  scoreHeader: string
+  entries:     Array<{ displayName: string; score: string }>
+}
+
+function buildCategories(): LbCategory[] {
+  const progress = allProgressRecords().filter((r) => r.displayName)
+
+  const topBy = <T,>(
+    items: T[],
+    value: (t: T) => number,
+    label: (t: T) => string,
+    format: (t: T) => string,
+  ) =>
+    items
+      .filter((t) => value(t) > 0)   // an all-zero board reads as broken, not empty
+      .sort((a, b) => value(b) - value(a))
+      .slice(0, LB_TOP_N)
+      .map((t) => ({ displayName: label(t), score: format(t) }))
+
+  return [
+    {
+      key: 'cleaned', title: 'TOP CLEANERS', scoreHeader: 'CLEANED',
+      entries: topBy(
+        [...leaderboard.values()],
+        (e) => e.total, (e) => e.displayName, (e) => String(e.total),
+      ),
+    },
+    {
+      key: 'earnings', title: 'TOP EARNERS', scoreHeader: 'EARNED',
+      entries: topBy(
+        progress,
+        (r) => r.money, (r) => r.displayName, (r) => `$${r.money}`,
+      ),
+    },
+    {
+      key: 'rank', title: 'HIGHEST RANK', scoreHeader: 'TITLE',
+      entries: topBy(
+        progress,
+        (r) => r.xp, (r) => r.displayName, (r) => titleForXp(r.xp),
+      ),
+    },
+    {
+      key: 'shifts', title: 'MOST SHIFTS', scoreHeader: 'SHIFTS',
+      entries: topBy(
+        progress,
+        (r) => r.shifts, (r) => r.displayName, (r) => String(r.shifts),
+      ),
+    },
+  ]
+}
+
 function leaderboardJson(): string {
-  return JSON.stringify(
-    [...leaderboard.values()]
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 10)
-      .map(e => ({ displayName: e.displayName, count: e.total }))
-  )
+  // Categories only — the client falls back to treating a bare array as the legacy
+  // single-board shape, so an older client against a newer server still renders.
+  return JSON.stringify({ categories: buildCategories() })
 }
 
 function broadcastLeaderboard(to?: string[]): void {
@@ -193,6 +261,62 @@ function scheduleLbUpdate(): void {
       broadcastLeaderboard()
     })
   }, LB_DEBOUNCE_MS)
+}
+
+// ── Progression ───────────────────────────────────────────────────────────────
+
+/** Serialises one player's career state for the progressUpdate message. */
+function progressPayload(
+  address: string,
+  lastShift?: { money: number; xp: number; passed: boolean; items: number },
+  promotedTo?: string | null,
+): string {
+  const rec  = getProgress(address)
+  const prog = titleProgress(rec.xp)
+  return JSON.stringify({
+    money:     rec.money,
+    xp:        rec.xp,
+    shifts:    rec.shifts,
+    rank:      prog.rank,
+    title:     prog.title,
+    nextTitle: prog.nextTitle,
+    fraction:  prog.fraction,
+    upgrades:  rec.upgrades,
+    // Drives the "sign in to save your progress" nudge — guests earn and spend
+    // normally for the session, but nothing is written to storage.
+    isGuest:   isGuestAddress(address),
+    lastShift: lastShift ?? null,
+    promotedTo: promotedTo ?? null,
+  })
+}
+
+function sendProgress(
+  address: string,
+  lastShift?: { money: number; xp: number; passed: boolean; items: number },
+  promotedTo?: string | null,
+): void {
+  room.send('progressUpdate', { progressJson: progressPayload(address, lastShift, promotedTo) }, { to: [address] })
+}
+
+// ── Participation (pre sign-up) ───────────────────────────────────────────────
+// A shift is opt-in. Players who arrive mid-round — including anyone who reloaded
+// or whose phone backgrounded and reconnected — spectate until they sign up, and
+// join at the start of the next round rather than dropping into a half-cleaned club.
+//
+// The GDD specifies pre sign-up over auto sign-up, so arriving never silently
+// enrols anyone; they choose, and the choice takes effect at a clean boundary.
+//
+// Server-authoritative because participation gates whether cleans are ACCEPTED —
+// a client that decided this for itself could simply declare itself active.
+const activePlayers = new Set<string>()   // cleaning in the current round
+const signedUp      = new Set<string>()   // queued for the next round
+
+function sendParticipation(address: string): void {
+  room.send(
+    'participationUpdate',
+    { active: activePlayers.has(address), signedUp: signedUp.has(address) },
+    { to: [address] },
+  )
 }
 
 export function initServer() {
@@ -263,6 +387,52 @@ export function initServer() {
 
   initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales)
 
+  // Kick off the progression read early so records are in memory before the first
+  // shift ends. Failure is non-fatal: play continues, saves stay blocked.
+  executeTask(async () => { await ensureProgressLoaded() })
+
+  // ── Round start → promote everyone who signed up ────────────────────────────
+  setRoundStartHandler((roundNumber) => {
+    // A match started from the lobby enrols everyone present: they were already
+    // gathered and pressed START, so asking them to sign up again would be busywork.
+    if (roundNumber === 0) {
+      for (const address of activeSessions) activePlayers.add(address)
+    }
+    for (const address of signedUp) activePlayers.add(address)
+    signedUp.clear()
+
+    // Tell every known player where they stand — those promoted in, and those still
+    // spectating, so a spectator's UI shows the sign-up prompt for the new round.
+    for (const address of activeSessions) sendParticipation(address)
+    console.log(`[PARTICIPATION] round ${roundNumber} — ${activePlayers.size} cleaning, ${activeSessions.size - activePlayers.size} spectating`)
+  })
+
+  // ── Shift complete → pay wages, award XP, persist ───────────────────────────
+  // A completed round IS a shift. Rewards are derived entirely from the SERVER's
+  // cleanliness count and its own contribution tally — nothing here trusts a value
+  // that came from a client.
+  setShiftCompleteHandler((cleanedFraction, contributions, playersPresent) => {
+    // Only players who actually cleaned something are paid; idling through a shift
+    // earns nothing even though the club got cleaned around them.
+    for (const [address, items] of contributions) {
+      if (items <= 0) continue
+      const others  = Math.max(0, playersPresent - 1)
+      const rewards = shiftRewards(cleanedFraction, OUTCOME_ADEQUATE, others)
+      const { promotedTo } = awardShift(address, rewards.money, rewards.xp, items)
+      sendProgress(address, { ...rewards, items }, promotedTo)
+      if (promotedTo) console.log(`[PROGRESS] ${address} promoted to ${promotedTo}`)
+    }
+
+    // Earnings, rank and shift-count boards only change at shift end, so refresh
+    // them here — the clean-driven debounce would otherwise leave three of the four
+    // categories stale until someone happened to clean something.
+    broadcastLeaderboard()
+
+    // One write per shift end — the checkpoint the Storage API's rate limits expect.
+    // Never per clean.
+    executeTask(async () => { await saveProgress() })
+  })
+
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
   // ensureLeaderboardLoaded() guarantees only one load ever runs, even if registerPlayer
   // fires concurrently before this completes.
@@ -286,19 +456,79 @@ export function initServer() {
   function playerLeft(sessionId: string) {
     if (!activeSessions.has(sessionId)) return
     activeSessions.delete(sessionId)
+    // Drop participation too, so a rejoining player is asked to sign up again
+    // rather than being silently counted as cleaning while they're gone.
+    activePlayers.delete(sessionId)
+    signedUp.delete(sessionId)
     onPlayerLeave()
   }
 
   onEnterSceneObservable.add((player) => {
     playerEntered(player.userId)
   })
-  onLeaveSceneObservable.add((player) => {
-    playerLeft(player.userId)
-  })
+
+  // Leaves are deliberately NOT taken from onLeaveSceneObservable. On a scene
+  // reload the new connection's registerPlayer can arrive BEFORE the stale leave
+  // event for the dead connection: the re-register dedupes to a no-op ("already
+  // present"), the stale leave then decrements, and playerCount sits at 0 with the
+  // player still standing in the club — which blocks START MATCH in the lobby
+  // (onStartMatch guards on playerCount <= 0) and, in multiplayer, can drop the
+  // count to 0 mid-round and yank everyone back to the lobby via goToLobby().
+  //
+  // Instead, presence is reconciled against the engine's own PlayerIdentityData —
+  // the ground truth for who is actually connected. Anyone the engine sees is
+  // counted in immediately; anyone it stops seeing is only counted out after a
+  // grace window long enough to ride out a reload/reconnect flicker.
+  const PRESENCE_POLL_MS  = 2_000
+  const PRESENCE_GRACE_MS = 6_000
+  const missingSince = new Map<string, number>()   // session addr → first poll it wasn't seen
+
+  setInterval(() => {
+    // Case-insensitive on both sides — registerPlayer addresses come from message
+    // context while these come from the engine, and the two aren't guaranteed to
+    // agree on checksum casing.
+    const present = new Set<string>()
+    for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
+      present.add(data.address.toLowerCase())
+    }
+
+    // Connected players the count missed (reload race, lost register message).
+    for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
+      let known = false
+      for (const addr of activeSessions) {
+        if (addr.toLowerCase() === data.address.toLowerCase()) { known = true; break }
+      }
+      if (!known) {
+        console.log(`[SERVER] presence reconcile: counting in ${data.address}`)
+        playerEntered(data.address)
+      }
+    }
+
+    // Counted players the engine no longer sees — leave only after the grace window.
+    const now = Date.now()
+    for (const addr of [...activeSessions]) {
+      if (present.has(addr.toLowerCase())) { missingSince.delete(addr); continue }
+      const since = missingSince.get(addr)
+      if (since === undefined) {
+        missingSince.set(addr, now)
+      } else if (now - since >= PRESENCE_GRACE_MS) {
+        missingSince.delete(addr)
+        console.log(`[SERVER] presence reconcile: counting out ${addr}`)
+        playerLeft(addr)
+      }
+    }
+  }, PRESENCE_POLL_MS)
 
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
     if (getPhase() !== 'playing') {   // reject during lobby/countdown and intermission
+      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      return
+    }
+    // Spectators can watch but not clean. Enforced here rather than only in the
+    // client's pointer gating, since a crafted message would bypass that entirely
+    // and let a non-participant earn a wage.
+    if (!activePlayers.has(context.from)) {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
@@ -312,6 +542,11 @@ export function initServer() {
     cs.isCleaned = true
     cs.cleanedAt = now
     cs.cleanedBy = context.from
+
+    // Attribute this clean to the player for end-of-shift wages. Counted here, at
+    // the point the server ACCEPTS the clean, so respawns during the round can't
+    // erase the credit.
+    recordContribution(context.from)
 
     // Update all-time leaderboard score for this player.
     // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
@@ -362,6 +597,20 @@ export function initServer() {
   // No-op: client sends this immediately on join (before getUserData) to wake a cold server.
   room.onMessage('ping', (_data, _context) => {})
 
+  room.onMessage('signUpNext', (_data, context) => {
+    if (!context) return
+    const address = context.from
+    // Already cleaning — nothing to queue. Re-send so a stale client corrects itself.
+    if (!activePlayers.has(address)) signedUp.add(address)
+    sendParticipation(address)
+  })
+
+  room.onMessage('cancelSignUp', (_data, context) => {
+    if (!context) return
+    signedUp.delete(context.from)
+    sendParticipation(context.from)
+  })
+
   room.onMessage('startNextRound', (_data, _context) => {
     onNextRoundRequest()
   })
@@ -393,7 +642,39 @@ export function initServer() {
       // unnecessary churn and an extra wipe surface; the display name persists on the
       // player's next score change (scheduleLbUpdate). Just broadcast the current top-10.
       broadcastLeaderboard([address])
+
+      // Career state, so the HUD shows the right title and balance from the moment
+      // they arrive rather than only after their first shift ends.
+      await ensureProgressLoaded()
+      registerProgressPlayer(address, data.displayName)
+      sendProgress(address)
+      // Tells a joining player whether they're cleaning or spectating, which drives
+      // the sign-up prompt on their first frame rather than after a round boundary.
+      sendParticipation(address)
+
       console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
+    })
+  })
+
+  // Upgrade purchase. The client's shop is presentation only — cost, rank gate and
+  // affordability are all re-checked here against the server's copy, so a crafted
+  // message can't grant a level the player hasn't earned or paid for.
+  room.onMessage('buyUpgrade', (data, context) => {
+    if (!context) return
+    const address = context.from
+    executeTask(async () => {
+      await ensureProgressLoaded()
+      const result = purchaseUpgrade(address, data.upgradeId as UpgradeId)
+      if (!result.ok) {
+        console.log(`[PROGRESS] buyUpgrade refused (${result.reason}) for ${address}: ${data.upgradeId}`)
+        sendProgress(address)   // resync so a stale client shop corrects itself
+        return
+      }
+      console.log(`[PROGRESS] ${address} bought ${data.upgradeId} → level ${result.level}`)
+      sendProgress(address)
+      // Purchases are a checkpoint too: money left the wallet, and losing that to a
+      // server shutdown would be worse than losing an unsaved shift.
+      await saveProgress()
     })
   })
 

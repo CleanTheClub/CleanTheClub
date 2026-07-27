@@ -3,7 +3,7 @@ import { ClutterSync, GameState } from '../shared/schemas'
 import {
   CLUTTER_DEFS,
   ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS,
-  CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS,
+  CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS, RESPAWN_CUTOFF_FRACTION,
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
 
@@ -38,6 +38,38 @@ let nextRoundTriggered = false
 let roundTimer: ReturnType<typeof setTimeout> | null = null
 const respawnTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
+// ── Per-shift contribution tally ──────────────────────────────────────────────
+// address → items cleaned during the CURRENT round. Counted incrementally rather
+// than tallied from ClutterSync at round end, because items respawn mid-round and
+// clear their cleanedBy — a snapshot at the end would undercount badly.
+const roundContributions = new Map<string, number>()
+
+/** Called by the server for every accepted clean, to attribute it to a player. */
+export function recordContribution(address: string): void {
+  if (phase !== 'playing' || !address) return
+  roundContributions.set(address, (roundContributions.get(address) ?? 0) + 1)
+}
+
+// Fired when a round (= a shift) completes, with the final cleanliness fraction,
+// a copy of the contribution tally, and how many players were present.
+type ShiftCompleteHandler = (
+  cleanedFraction: number,
+  contributions: Map<string, number>,
+  playersPresent: number,
+) => void
+let onShiftComplete: ShiftCompleteHandler | undefined
+export function setShiftCompleteHandler(h: ShiftCompleteHandler): void {
+  onShiftComplete = h
+}
+
+// Fired the moment a new round begins — the point at which players who signed up
+// during the previous intermission are promoted into the shift.
+type RoundStartHandler = (roundNumber: number) => void
+let onRoundStart: RoundStartHandler | undefined
+export function setRoundStartHandler(h: RoundStartHandler): void {
+  onRoundStart = h
+}
+
 export function getPhase():       Phase  { return phase }
 export function getRoundNumber(): number { return roundNumber }
 
@@ -45,9 +77,18 @@ function getRoundDurationMs(): number {
   return ROUND_DURATIONS_MS[Math.min(roundNumber, ROUND_DURATIONS_MS.length - 1)]
 }
 
-// The final round is the last entry in ROUND_DURATIONS_MS.
-function isFinalRound(n: number): boolean {
-  return n >= ROUND_DURATIONS_MS.length - 1
+// ── Endless rounds (V2) ───────────────────────────────────────────────────────
+// Rounds no longer stop at five. Every Nth round is a MILESTONE that keeps the old
+// finale celebration ("Club Complete!") as a payoff beat, but play then continues
+// into the next round instead of returning to the lobby.
+//
+// getRoundDurationMs() already clamps to the last entry in ROUND_DURATIONS_MS, so
+// rounds beyond the table simply run at the shortest (hardest) duration.
+const MILESTONE_EVERY = ROUND_DURATIONS_MS.length
+
+// True on the last round of each milestone cycle (round 4, 9, 14, ... 0-indexed).
+function isMilestoneRound(n: number): boolean {
+  return (n + 1) % MILESTONE_EVERY === 0
 }
 
 // Active open-phase display window — longer for the finale victory hold.
@@ -115,12 +156,19 @@ function triggerOpen() {
   const total = itemEntities.size
   const pct = total > 0 ? countCleaned() / total : 0
   currentOutcome = computeOutcome(pct)
-  isFinale    = isFinalRound(roundNumber)   // final round just ended → victory hold
+  isFinale    = isMilestoneRound(roundNumber)   // milestone reached → celebration hold
   phase       = 'open'
   openStartMs = Date.now()
   syncGameState()
 
-  console.log(`[ROUND] Round ${roundNumber} ended — outcome: ${currentOutcome} (${Math.round(pct * 100)}%)${isFinale ? ' [FINALE]' : ''}`)
+  console.log(`[ROUND] Round ${roundNumber} ended — outcome: ${currentOutcome} (${Math.round(pct * 100)}%)${isFinale ? ' [MILESTONE]' : ''}`)
+
+  // A completed round IS a completed shift — this is the moment wages, XP and
+  // promotions are awarded. Handed to the server with the per-player contribution
+  // tally so rewards come from the server's own count, never a client's claim.
+  const contributions = new Map(roundContributions)
+  roundContributions.clear()
+  onShiftComplete?.(pct, contributions, playerCount)
 
   // Auto-advance after the display window (longer for the finale victory hold)
   roundTimer = setTimeout(() => {
@@ -132,18 +180,16 @@ function startNextRound(fullReset: boolean) {
   clearAllRespawns()
   if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
 
-  // Finale victory hold just finished → return to the lobby (don't auto-loop).
-  // The next match only begins when a player presses START again.
-  if (!fullReset && isFinale) {
-    goToLobby()
-    return
-  }
-
+  // V2: a milestone no longer ends the session. The celebration plays during the
+  // open phase and then play continues, so there is always a reason to start the
+  // next shift. Only an empty scene or an admin reset returns to the lobby.
   if (fullReset) {
     roundNumber = 0
     console.log('[ROUND] Match starting — round 0')
   } else {
-    roundNumber = Math.min(roundNumber + 1, ROUND_DURATIONS_MS.length - 1)
+    // Deliberately unclamped — rounds continue indefinitely. Durations clamp to the
+    // shortest entry, so difficulty plateaus rather than becoming impossible.
+    roundNumber = roundNumber + 1
     console.log(`[ROUND] Starting round ${roundNumber}`)
   }
 
@@ -162,6 +208,10 @@ function startNextRound(fullReset: boolean) {
     console.log('[ROUND] No players — round timer paused until first player enters')
   }
 
+  // Promote anyone who signed up during the intermission BEFORE syncing state, so
+  // the first frame of the round already reflects who is cleaning.
+  onRoundStart?.(roundNumber)
+
   syncGameState()
 }
 
@@ -177,6 +227,9 @@ function goToLobby() {
   starting           = false
   nextRoundTriggered = false
   roundStartMs       = 0
+  // Abandon any partial shift — an interrupted round pays nothing, so a player
+  // can't farm rewards by triggering resets.
+  roundContributions.clear()
   resetClutter()
   phase = 'lobby'
   syncGameState()
@@ -206,10 +259,35 @@ function scaledRespawnMs(baseMs: number): number {
   return Math.round(baseMs / factor)
 }
 
+/** Milliseconds left in the current round, or 0 when no round is running. */
+function roundMsRemaining(): number {
+  if (phase !== 'playing' || roundStartMs === 0) return 0
+  return Math.max(0, getRoundDurationMs() - (Date.now() - roundStartMs))
+}
+
+/**
+ * Whether a respawn scheduled `delayMs` from now should happen at all.
+ *
+ * Two reasons to decline:
+ *  • we're inside the closing window, where the club is meant to converge on clean
+ *    so the shift has a visible conclusion (see RESPAWN_CUTOFF_FRACTION);
+ *  • the item would land after the round ends anyway, where clearAllRespawns would
+ *    discard it — scheduling it just burns a timer.
+ */
+function respawnAllowed(delayMs: number): boolean {
+  const remaining = roundMsRemaining()
+  if (remaining === 0) return false
+  const cutoff = getRoundDurationMs() * RESPAWN_CUTOFF_FRACTION
+  if (remaining <= cutoff) return false
+  return delayMs < remaining - cutoff
+}
+
 export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
   if (phase !== 'playing') return
 
   const delay = scaledRespawnMs(def.fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS)
+  // Stays cleaned for the rest of the round — the club is closing out.
+  if (!respawnAllowed(delay)) { syncGameState(); return }
   const t = setTimeout(() => {
     respawnTimers.delete(def.id)
     const entity = itemEntities.get(def.id)!
@@ -229,6 +307,8 @@ export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
 export function onSceneItemCleaned(itemId: string, onRespawn: () => void, fast = false) {
   if (phase !== 'playing') return
   const delay = scaledRespawnMs(fast ? FAST_RESPAWN_MS : CLUTTER_RESPAWN_MS)
+  // Stays cleaned for the rest of the round — the club is closing out.
+  if (!respawnAllowed(delay)) { syncGameState(); return }
   const t = setTimeout(() => {
     respawnTimers.delete(itemId)
     onRespawn()

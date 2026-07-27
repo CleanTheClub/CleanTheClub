@@ -18,6 +18,7 @@ import {
   Transform, timers,
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
+import { getPlatform } from '@dcl/sdk/platform'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { room } from '../shared/messages'
@@ -50,6 +51,9 @@ export type RestoreDef = {
 type ItemState = {
   def:                  RestoreDef
   dirtyEnt:             Entity | undefined
+  // Entity carrying the pointer events — dirtyEnt on desktop, the enlarged
+  // mobile tap-target proxy returned by setupClickProxy on mobile.
+  clickEnt:             Entity | undefined
   animEnt:              Entity | undefined
   cleanEnt:             Entity | undefined
   allFound:             boolean
@@ -140,12 +144,16 @@ function showCleanInstant(s: ItemState, spark = true) {
 // ── Click registration ───────────────────────────────────────────────────────
 function enableClick(s: ItemState) {
   if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
+  // Pointer events bind to clickEnt (the mobile proxy when present), but positions
+  // must always come from dirtyEnt: the proxy is a CHILD, so its Transform holds a
+  // local offset, not a world position, and sparkles would fire at the wrong spot.
   const entity    = s.dirtyEnt!
+  const clickEnt  = s.clickEnt ?? entity
   const hoverText = s.def.hoverText ?? 'Clean'
 
-  pointerEventsSystem.onPointerHoverEnter({ entity }, () => playHoverSound())
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
-    { entity, opts: { button: InputAction.IA_POINTER, hoverText } },
+    { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText } },
     () => {
       if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (s.pendingClean) return
@@ -165,10 +173,11 @@ function enableClick(s: ItemState) {
 }
 
 function disableClick(s: ItemState) {
-  if (s.dirtyEnt === undefined) return
-  pointerEventsSystem.removeOnPointerDown(s.dirtyEnt)
-  pointerEventsSystem.removeOnPointerHoverEnter(s.dirtyEnt)
-  PointerEvents.deleteFrom(s.dirtyEnt)
+  const clickEnt = s.clickEnt ?? s.dirtyEnt
+  if (clickEnt === undefined) return
+  pointerEventsSystem.removeOnPointerDown(clickEnt)
+  pointerEventsSystem.removeOnPointerHoverEnter(clickEnt)
+  PointerEvents.deleteFrom(clickEnt)
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -180,7 +189,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   for (const def of defs) {
     states.set(def.itemId, {
       def,
-      dirtyEnt: undefined, animEnt: undefined, cleanEnt: undefined,
+      dirtyEnt: undefined, clickEnt: undefined, animEnt: undefined, cleanEnt: undefined,
       allFound: false, pendingClean: false,
       pendingAnimSwapTimer: undefined, lastSyncCleaned: null,
     })
@@ -212,7 +221,15 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   let remaining = defs.length   // items still waiting for all 3 GLBs
   const discoverStartMs = Date.now()
 
+  // setupClickProxy picks its collider shape from the platform, which the SDK
+  // resolves asynchronously — getPlatform() is null until it lands. Discovery would
+  // otherwise complete first and hand every phone the desktop colliders. Capped so
+  // an unresolved platform degrades to desktop rather than never discovering.
+  const PLATFORM_WAIT_MS = 5_000
+
   const discoverSystem = () => {
+    if (getPlatform() === null && Date.now() - discoverStartMs < PLATFORM_WAIT_MS) return
+
     for (const [e] of engine.getEntitiesWith(Name)) {
       const n     = Name.get(e).value
       const entry = nameIndex.get(n)
@@ -243,7 +260,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
         // that's the round-1 un-clickable bug for slow-loading assets.
         // Items with baked GLB offsets (stools) keep addBox=false; a box at their
         // entity origin would land at the wrong world position.
-        setupClickProxy(s.dirtyEnt, s.def.addBox ?? false)
+        s.clickEnt = setupClickProxy(s.dirtyEnt, s.def.addBox ?? false)
         Animator.createOrReplace(s.animEnt, {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })

@@ -20,9 +20,17 @@ import { initLeaderboardSystem } from './leaderboardSystem'
 import { initNpcCrowdSystem } from './npcCrowdSystem'
 import { initPhaseGate } from './phaseGate'
 import { initLobbyTeleport } from './lobbyTeleport'
+import { initProgressionStore } from './progressionStore'
+import { initUpgradeEffects } from './upgradeEffects'
+import { initParticipation } from './participation'
 
 export function initClient() {
   console.log('[CLIENT] started')
+  // Registered before setupUi so the first progressUpdate can't arrive between the
+  // UI mounting and the listener existing.
+  initProgressionStore()
+  initParticipation()   // server-owned: are we cleaning this shift or spectating?
+  initUpgradeEffects()   // applies purchased upgrades once levels arrive
   initPhaseGate()  // start the mid-match lockout watcher
   initLobbyTeleport()  // return players to the entrance when a match ends
   initSoundManager()

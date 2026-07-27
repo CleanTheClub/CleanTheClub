@@ -29,6 +29,23 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was
 //  4 players → 1.70× ( 71 s / 35 s)
 //  5+ players → 1.90× ( 63 s / 32 s)
 export const RESPAWN_SCALE_FACTORS = [0.70, 1.10, 1.40, 1.70, 1.90]
+
+// ── Closing window — let the club actually finish clean ───────────────────────
+// Playtest feedback: "when you finally finish cleaning a floor they respawn and the
+// game seems endless... the total percentage completed is difficult to guess until
+// the end." The problem isn't respawn SPEED, it's that the club can never visibly
+// REACH clean, so a shift has no felt conclusion and the cleanliness bar just
+// jitters instead of climbing.
+//
+// For the last stretch of every round, no new mess is scheduled. The bar then
+// converges honestly on the final score, players can see themselves finishing, and
+// the celebration lands on a club that is actually clean rather than one that
+// re-dirtied a second before the doors opened.
+//
+// Scaled as a FRACTION of the round rather than a fixed duration, so it stays
+// proportionate as rounds get shorter (3 min down to 1 min, and shorter still if
+// the duration table is ever extended).
+export const RESPAWN_CUTOFF_FRACTION = 0.25   // final 25% of a round spawns nothing
 export const HOLD_DURATION_MS   = DEBUG ? 500    : 2_500   // hold-to-clean duration (lined up with mop emote)
 export const PICKUP_EMOTE_MS    = 1_500                    // match PickUp_Anim_emote.glb clip length
 // The mopping emote now fires immediately on hold-start (no step delay — the player

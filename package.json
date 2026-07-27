@@ -6,18 +6,18 @@
     "start": "sdk-commands start",
     "deploy": "sdk-commands deploy",
     "build": "sdk-commands build",
-    "upgrade-sdk": "npm install --save-dev @dcl/sdk@latest",
+    "upgrade-sdk": "npm install --save-dev @dcl/sdk@auth-server",
     "upgrade-sdk:next": "npm install --save-dev @dcl/sdk@next",
     "server-logs": "sdk-commands sdk-server-logs"
   },
   "devDependencies": {
     "@dcl/asset-packs": "latest",
-    "@dcl/js-runtime": "7.23.2-25521226778.commit-1828100",
-    "@dcl/sdk": "^7.23.2-25521226778.commit-1828100"
+    "@dcl/js-runtime": "7.24.6-29505165911.commit-d270434",
+    "@dcl/sdk": "^7.24.6-29505165911.commit-d270434"
   },
   "engines": {
-    "node": ">=16.0.0",
-    "npm": ">=6.0.0"
+    "node": ">=22.0.0",
+    "npm": ">=10.0.0"
   },
   "prettier": {
     "semi": false,

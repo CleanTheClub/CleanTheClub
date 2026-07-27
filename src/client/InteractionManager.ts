@@ -3,7 +3,8 @@ import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, HOLD_DURATION_MS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
+import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
+import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound } from './soundManager'
@@ -85,7 +86,9 @@ function enableClick(id: string) {
         // Mopping emote — same step-to-item + emote logic as the pickup animation,
         // fired while the player holds to clean the sticky patch.
         const pos = Transform.getOrNull(entity)?.position
-        if (pos) playMoppingEmote(pos)
+        // Emote runs for exactly the (possibly upgraded) hold duration so it stops
+        // as the bar completes rather than looping past it.
+        if (pos) playMoppingEmote(pos, holdDurationMs())
       }
     )
     // NOTE: no onPointerUp here on purpose. It gave the patch an extra pointer-event
@@ -222,7 +225,7 @@ export function initInteractionManager(
     // onPointerUp only fires when the button is released over the entity, which can
     // be missed when the click's step-to-item move slides the cursor off the patch
     // (notably the first, distant patch). Without this, a single click would let
-    // the hold auto-complete after HOLD_DURATION_MS. The 60 ms grace avoids a
+    // the hold auto-complete after the full hold duration. The 60 ms grace avoids a
     // press-edge race on the very first frame of the hold.
     if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
       const { id } = activeHold
@@ -234,7 +237,9 @@ export function initInteractionManager(
       return
     }
 
-    const progress = heldMs / HOLD_DURATION_MS
+    // Read live, not captured at hold-start: the Mopping Speed upgrade shortens
+    // this, and the bar, the completion check and the emote must all agree.
+    const progress = heldMs / holdDurationMs()
     updateHoldBar(activeHold.id, Math.min(1, progress))
 
     if (progress >= 1) {

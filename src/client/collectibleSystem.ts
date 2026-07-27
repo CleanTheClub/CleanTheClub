@@ -55,7 +55,9 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
 
   type GltfRecord = {
     containerEntity: Entity
-    gltfEntity:      Entity
+    // Entity that carries the pointer events. On desktop this is the GLB entity
+    // itself; on mobile it is the enlarged tap-target proxy setupClickProxy returns.
+    clickEntity:     Entity
     // null = joined while this item was already cleaned; real scale not yet captured.
     // Captured the first time we call setVisible(false) and see a non-zero scale.
     originalScale:   { x: number; y: number; z: number } | null
@@ -87,19 +89,19 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   function disableClick(itemId: string) {
     const rec = gltfRecords.get(itemId)
     if (!rec) return
-    pointerEventsSystem.removeOnPointerDown(rec.gltfEntity)
-    pointerEventsSystem.removeOnPointerHoverEnter(rec.gltfEntity)
-    PointerEvents.deleteFrom(rec.gltfEntity)
+    pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
+    pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
+    PointerEvents.deleteFrom(rec.clickEntity)
   }
 
   function enableClick(itemId: string) {
     if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
     const rec = gltfRecords.get(itemId)
     if (!rec) return
-    const { gltfEntity, containerEntity } = rec
-    pointerEventsSystem.onPointerHoverEnter({ entity: gltfEntity }, () => playHoverSound())
+    const { clickEntity, containerEntity } = rec
+    pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
     pointerEventsSystem.onPointerDown(
-      { entity: gltfEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
+      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
       () => {
         if (pendingCleans.has(itemId)) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
@@ -190,8 +192,8 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         const rawScale = tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : null
         const originalScale = (rawScale && rawScale.x > 0.01) ? rawScale : null
 
-        setupClickProxy(gltfEnt)
-        gltfRecords.set(itemId, { containerEntity: entity, gltfEntity: gltfEnt, originalScale })
+        const clickEnt = setupClickProxy(gltfEnt)
+        gltfRecords.set(itemId, { containerEntity: entity, clickEntity: clickEnt, originalScale })
 
         const knownCleaned = lastState.get(itemId)
         if (knownCleaned !== undefined) {

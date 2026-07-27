@@ -16,6 +16,7 @@
 // loader never blocks the rest of the queue.
 
 import { engine, Entity } from '@dcl/sdk/ecs'
+import { getPlatform } from '@dcl/sdk/platform'
 import { popIn } from './itemFx'
 
 type SetupReq = {
@@ -34,11 +35,30 @@ const SETUP_STAGGER_S = 0.07   // seconds between successive item set-ups
 const SPAWN_STAGGER_S = 0.12   // seconds between successive pops
 const POP_S           = 0.45   // pop tween duration
 
+// Setup decides pointer-collider shape per platform (see setupClickProxy), but the
+// SDK resolves the platform asynchronously: getPlatform() is null until an explorer
+// round-trip lands, and isMobile() reports false for that unknown state. Running
+// setup first would silently give every phone the desktop colliders. So hold the
+// setup queue until the platform is known — capped, so a failed/slow platform call
+// degrades to desktop behaviour instead of leaving the scene permanently unclickable.
+const PLATFORM_WAIT_TIMEOUT_S = 5
+
 const setupQueue: SetupReq[] = []
 const spawnQueue: SpawnReq[] = []
-let setupAcc    = SETUP_STAGGER_S   // let the first ready task run promptly
-let spawnAcc    = SPAWN_STAGGER_S
-let systemAdded = false
+let setupAcc     = SETUP_STAGGER_S   // let the first ready task run promptly
+let spawnAcc     = SPAWN_STAGGER_S
+let platformWait = 0
+let systemAdded  = false
+
+function platformReady(dt: number): boolean {
+  if (getPlatform() !== null) return true
+  platformWait += dt
+  if (platformWait >= PLATFORM_WAIT_TIMEOUT_S) {
+    console.log('[DIRECTOR] platform unresolved after timeout — proceeding as desktop')
+    return true
+  }
+  return false
+}
 
 function ensureSystem(): void {
   if (systemAdded) return
@@ -69,7 +89,7 @@ function runFirstReady<T extends { isReady: () => boolean }>(q: T[]): T | undefi
 
 function directorTick(dt: number): void {
   // ── Setup queue (priority — the heavy work we most want to spread) ───────────
-  if (setupQueue.length > 0) {
+  if (setupQueue.length > 0 && platformReady(dt)) {
     setupAcc += dt
     if (setupAcc >= SETUP_STAGGER_S) {
       const task = runFirstReady(setupQueue)

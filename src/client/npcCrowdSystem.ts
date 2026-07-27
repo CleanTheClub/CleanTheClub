@@ -19,6 +19,7 @@
 
 import { engine, Entity, Transform, AvatarShape, Name, timers } from '@dcl/sdk/ecs'
 import { Quaternion, Color3 } from '@dcl/sdk/math'
+import { getPlatform, isMobile } from '@dcl/sdk/platform'
 import { GameState } from '../shared/schemas'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,8 +40,24 @@ const DANCE_LOOP_MS = 2_000
 const SIT_EMOTES = ['sittingChair1', 'sittingChair2']
 
 const SIT_SPOT_PREFIX = 'Sit Spot_'
-const MAX_SITTERS = 16
+
+// ── Crowd size vs the client's avatar budget ──────────────────────────────────
+// Every NPC is a real AvatarShape and competes with actual players for the
+// explorer's avatar-rendering budget, which is far tighter on mobile. At the
+// desktop sizes (9 dancers + 16 sitters = 25 avatars) a phone can exhaust that
+// budget on NPCs alone, and real players stop being drawn — reported as "user
+// cannot see other players after some rounds of clean the club" on iOS.
+//
+// Players must always win that contest, so mobile gets a much smaller crowd.
+// The club still reads as populated; there are simply fewer extras.
+const MAX_SITTERS_DESKTOP = 16
+const MAX_SITTERS_MOBILE  = 4
+const MAX_DANCERS_MOBILE  = 4
+
 const SIT_DISCOVERY_TIMEOUT_MS = 10_000
+// Cap on waiting for the SDK to resolve the platform before building the roster
+// (getPlatform() is null until an async explorer round-trip lands).
+const PLATFORM_WAIT_MS = 5_000
 const SITTER_BODY_CYCLE = [FEMALE, MALE]
 
 // Fraction of the crowd that stays as "residents" between rounds (open, non-finale).
@@ -145,6 +162,9 @@ type Npc = {
 
 const specs: NpcSpec[] = []
 const roster: Npc[] = []
+// Dancers are always pushed to `specs` before any sitter, so counting them is
+// enough to index sitters correctly regardless of the per-platform dancer cap.
+const dancerCount = () => specs.filter((s) => s.kind === 'dancer').length
 let rosterReady     = false
 let rosterJustBuilt = false   // true for one tick after buildRoster; seeds lastKey without spawning
 
@@ -261,24 +281,35 @@ function wantsPresent(npc: Npc, phase: string, finale: boolean): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function initNpcCrowdSystem(): void {
-  // ── Dancer specs — fixed floor coordinates ───────────────────────────────────
-  for (let i = 0; i < DANCER_DEFS.length; i++) {
-    const d = DANCER_DEFS[i]
-    specs.push(buildSpec(
-      'dancer', i,
-      d.bodyShape ?? FEMALE,
-      d.position,
-      Quaternion.fromEulerDegrees(0, d.rotationY ?? 0, 0),
-      DANCE_EMOTE,
-    ))
-  }
-
   // ── Sitter specs — discovered from the scene's "Sit Spot" smart items ────────
   const usedSpots = new Set<string>()
   const startMs   = Date.now()
+  let dancersBuilt = false
+  let maxSitters   = MAX_SITTERS_DESKTOP
 
   const discoverSitSpots = () => {
-    if (usedSpots.size < MAX_SITTERS) {
+    // Crowd size depends on the platform, which resolves asynchronously — build
+    // nothing until it is known, or a phone would get the full desktop crowd.
+    if (getPlatform() === null && Date.now() - startMs < PLATFORM_WAIT_MS) return
+
+    // ── Dancer specs — fixed floor coordinates ─────────────────────────────────
+    if (!dancersBuilt) {
+      dancersBuilt = true
+      maxSitters   = isMobile() ? MAX_SITTERS_MOBILE : MAX_SITTERS_DESKTOP
+      const maxDancers = isMobile() ? MAX_DANCERS_MOBILE : DANCER_DEFS.length
+      for (let i = 0; i < Math.min(maxDancers, DANCER_DEFS.length); i++) {
+        const d = DANCER_DEFS[i]
+        specs.push(buildSpec(
+          'dancer', i,
+          d.bodyShape ?? FEMALE,
+          d.position,
+          Quaternion.fromEulerDegrees(0, d.rotationY ?? 0, 0),
+          DANCE_EMOTE,
+        ))
+      }
+    }
+
+    if (usedSpots.size < maxSitters) {
       const found: { name: string; entity: Entity }[] = []
       for (const [e] of engine.getEntitiesWith(Name)) {
         const n = Name.get(e).value
@@ -292,11 +323,13 @@ export function initNpcCrowdSystem(): void {
       })
 
       for (const { name, entity } of found) {
-        if (usedSpots.size >= MAX_SITTERS) break
+        if (usedSpots.size >= maxSitters) break
         const tf = Transform.getOrNull(entity)
         if (!tf) continue   // transform not streamed in yet — retry next tick
         usedSpots.add(name)
-        const idx  = DANCER_DEFS.length + (usedSpots.size - 1)   // continue cycles
+        // Index off the dancers ACTUALLY built (fewer on mobile), not the full
+        // DANCER_DEFS list, so the name/outfit cycles stay contiguous and unique.
+        const idx  = dancerCount() + (usedSpots.size - 1)   // continue cycles
         const sIdx = usedSpots.size - 1
         specs.push(buildSpec(
           'sitter', idx,
@@ -308,9 +341,9 @@ export function initNpcCrowdSystem(): void {
       }
     }
 
-    if (usedSpots.size >= MAX_SITTERS || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
+    if (usedSpots.size >= maxSitters || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
       buildRoster()
-      console.log(`[NPC] Crowd ready — ${DANCER_DEFS.length} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
+      console.log(`[NPC] Crowd ready (${getPlatform() ?? 'unknown'}) — ${dancerCount()} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
       // warmUpHairstyles()   // re-enable if wiggle-bone hair glitch returns on first crowd
       engine.removeSystem(discoverSitSpots)
     }
@@ -320,6 +353,10 @@ export function initNpcCrowdSystem(): void {
   // ── Presence + pop animation + dancer loop ───────────────────────────────────
   let lastKey    = ''
   let sinceLoopMs = 0
+  // Long enough to sit well clear of FADE_OUT_TOTAL_MS transitions, short enough
+  // that a stranded avatar is never on screen for long.
+  let sinceReconcileMs = 0
+  const RECONCILE_MS   = 15_000
 
   engine.addSystem((dt: number) => {
     if (!rosterReady) return
@@ -335,6 +372,29 @@ export function initNpcCrowdSystem(): void {
       // happened to be in at roster-build time.
       if (!rosterJustBuilt) applyPresence(phase, finale)
       rosterJustBuilt = false
+    }
+
+    // ── Drift reconcile ────────────────────────────────────────────────────────
+    // Presence is otherwise driven purely by phase-transition edges, so a single
+    // missed or interrupted transition strands an avatar in the club forever —
+    // and a stranded AvatarShape keeps its floating nametag, which is what put a
+    // permanent "Party" clubgoer next to the scoreboard. Re-asserting the desired
+    // state on a timer makes that self-healing: applyPresence only acts on
+    // mismatches, so this is a no-op whenever the crowd is already correct.
+    sinceReconcileMs += dtMs
+    if (sinceReconcileMs >= RECONCILE_MS) {
+      sinceReconcileMs = 0
+      applyPresence(phase, finale)
+      // Invariant: a hidden NPC must not still own an entity. Runs before the
+      // all-hidden early-return below, which would otherwise skip the cleanup in
+      // exactly the case where a stray avatar is the only thing left alive.
+      for (const npc of roster) {
+        if (npc.phase === 'hidden' && npc.entity !== null) {
+          console.log(`[NPC] reclaiming stranded avatar "${npc.spec.name}"`)
+          engine.removeEntity(npc.entity)
+          npc.entity = null
+        }
+      }
     }
 
     // Empty club (everyone hidden) — nothing to animate or loop.
