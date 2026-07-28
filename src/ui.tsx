@@ -4,14 +4,14 @@ import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
 import { GameState } from './shared/schemas'
-import { ADMIN_ADDRESSES, DEBUG } from './shared/config'
+import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
-import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen } from './client/progressionUi'
+import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, CareerIntroOverlay, shouldShowCareerIntro } from './client/progressionUi'
 import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty } from './client/carrySystem'
 import { getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty } from './client/progressionStore'
@@ -155,7 +155,6 @@ const OUTCOME_IMAGES: Record<string, string> = {
 
 // Shown in place of the per-round outcome card during the FINALE celebration
 // (after the final round). Same 1024×128 aspect as the outcome images.
-const CLUB_COMPLETE_IMG = 'assets/scene/UI/ClubComplete.png'
 
 // Text colours — sourced from the shared theme.
 const COLOR_SUBTLE        = theme.text.subtle  // round label
@@ -195,7 +194,8 @@ const HUD_BG_PAD_TOP =  6   // gap above the banner image
 const HUD_BG_PAD_BOT = 18   // gap below the round label / next-round button
 
 // Admin panel (desktop only — right edge is unsafe on mobile)
-const ADMIN_TOP           = 20
+// Below the (enlarged) career bar — at the old top:20 the two overlapped.
+const ADMIN_TOP           = '34%' as const
 const ADMIN_RIGHT         = 20
 const ADMIN_FONT_SIZE     = 10
 const ADMIN_COLOR         = { r: 1, g: 0.6, b: 0.1, a: 0.8 } as const
@@ -303,7 +303,6 @@ function formatTime(s: number): string {
 // the old version labelled every round past the 5th "Final Round", which would be
 // wrong on every shift from then on. Milestone rounds (every 5th) keep a special
 // label since they still trigger the celebration hold.
-const MILESTONE_EVERY = 5
 function getRoundLabel(n: number): string {
   const isMilestone = (n + 1) % MILESTONE_EVERY === 0
   return isMilestone ? `Round ${n + 1} — Milestone` : `Round ${n + 1}`
@@ -356,6 +355,14 @@ export function setHoldBarZone(start: number | null, end = 0) {
   holdZoneStart = start
   holdZoneEnd   = end
 }
+
+// ── Mobile skill-check tap target ─────────────────────────────────────────────
+// Registered by InteractionManager at init (it already imports this module, so a
+// stored callback avoids an import cycle). A UI button is the only RELIABLE tap
+// target on touch: screen taps outside interactables go to the camera and never
+// reach inputSystem, which is why the tap-anywhere version didn't register.
+let skillTapHandler: (() => void) | null = null
+export function setSkillTapHandler(fn: () => void) { skillTapHandler = fn }
 
 // ── Skill-check result flash — fired by InteractionManager on release ─────────
 const PERFECT_FLASH_MS  = 700
@@ -522,10 +529,17 @@ const ui = () => {
   // crowd arrives, confetti, party music, the player's own emote — and a
   // full-screen modal would black out the exact reward the shift was earned for.
   //
-  // Everywhere else (lobby, spectating) it is a full-screen MODAL. Both of those
-  // are already scrims with nothing worth preserving behind them, and a modal
-  // gives the shop more room.
-  const shopAsPanel = isShopOpen() && isOpen && !waiting
+  // Everywhere else — lobby, spectating, and ALL of mobile — it is a full-screen
+  // MODAL. Lobby/spectate are already scrims; and on a phone the side panel ate
+  // half the screen while its content overflowed the short viewport, pushing
+  // CLOSE off-screen — the modal centres everything with room to spare.
+  // Career intro / welcome-back card — replaces the lobby or spectate screen
+  // once per session, until dismissed. Never interrupts active cleaning.
+  if ((isLobby || waiting) && shouldShowCareerIntro()) {
+    return <CareerIntroOverlay S={S} />
+  }
+
+  const shopAsPanel = isShopOpen() && isOpen && !waiting && !mobile
   if (isShopOpen() && !shopAsPanel) {
     return <UpgradeShopOverlay S={S} />
   }
@@ -661,9 +675,13 @@ const ui = () => {
   const outcomeAnimTop  = Math.round(lerp(centredTop,  normTop,  outcomeEased))
 
   // Source for the "settled" image slot (instructions or outcome card).
-  // The finale shows the dedicated ClubComplete card instead of a round outcome.
+  // Milestones show the round's REAL outcome card like any other round — the
+  // old "CLUB COMPLETE" banner read as an ending, which V2's endless loop no
+  // longer has (playtest: "very misleading"). The milestone still gets its
+  // longer hold, confetti, crowd and the next-shift countdown. If bespoke
+  // "MILESTONE!" art lands, swap it in here behind isFinale.
   const topImageSrc = isOpen
-    ? (isFinale ? CLUB_COMPLETE_IMG : (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal']))
+    ? (OUTCOME_IMAGES[outcome] ?? OUTCOME_IMAGES['suboptimal'])
     : 'assets/scene/UI/InstructionsUI.png'
 
   // Full-bleed overlays must NOT use virtual-px widths. The renderer fits the 1920x1080
@@ -999,7 +1017,7 @@ const ui = () => {
           }}
         >
           <Label
-            value={`New game in ${formatTime(seconds)}`}
+            value={`Next shift in ${formatTime(seconds)}`}
             fontSize={nextFont}
             color={COLOR_DIM}
           />
@@ -1104,7 +1122,7 @@ const ui = () => {
         >
           <Label
             value={holdZoneStart !== null
-              ? (mobile ? 'Tap in the green!' : 'Release in the green!')
+              ? (mobile ? 'Hit SCRUB in the green!' : 'Release in the green!')
               : 'Cleaning…'}
             fontSize={Math.round(HOLD_BAR_FONT * S)}
             color={holdZoneStart !== null ? WHITE : COLOR_DIM}
@@ -1170,6 +1188,22 @@ const ui = () => {
               }}
             />
           </UiEntity>
+
+          {/* Mobile skill input — the button IS the timing tap on touch. Bigger
+              while the tick is in the green, as a "NOW!" signal you can feel. */}
+          {mobile && holdZoneStart !== null && (
+            <Button
+              value="SCRUB!"
+              variant="primary"
+              fontSize={Math.round((holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd ? 40 : 32) * S)}
+              uiTransform={{
+                width:  Math.round(300 * S),
+                height: Math.round(100 * S),
+                margin: { top: Math.round(16 * S) },
+              }}
+              onMouseDown={() => skillTapHandler?.()}
+            />
+          )}
         </UiEntity>
       )}
 

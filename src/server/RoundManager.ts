@@ -2,7 +2,7 @@ import { Entity } from '@dcl/sdk/ecs'
 import { ClutterSync, GameState } from '../shared/schemas'
 import {
   CLUTTER_DEFS,
-  ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS,
+  ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS, MILESTONE_EVERY,
   CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS, RESPAWN_CUTOFF_FRACTION,
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
@@ -78,13 +78,9 @@ function getRoundDurationMs(): number {
 }
 
 // ── Endless rounds (V2) ───────────────────────────────────────────────────────
-// Rounds no longer stop at five. Every Nth round is a MILESTONE that keeps the old
-// finale celebration ("Club Complete!") as a payoff beat, but play then continues
-// into the next round instead of returning to the lobby.
-//
-// getRoundDurationMs() already clamps to the last entry in ROUND_DURATIONS_MS, so
-// rounds beyond the table simply run at the shortest (hardest) duration.
-const MILESTONE_EVERY = ROUND_DURATIONS_MS.length
+// Rounds no longer stop at five. Every MILESTONE_EVERY-th round is a MILESTONE
+// that keeps the celebration hold as a payoff beat, but play then continues into
+// the next round instead of returning to the lobby.
 
 // True on the last round of each milestone cycle (round 4, 9, 14, ... 0-indexed).
 function isMilestoneRound(n: number): boolean {

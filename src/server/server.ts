@@ -5,7 +5,7 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
-import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
+import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, upgradeValue, UpgradeId } from '../shared/progression'
@@ -328,6 +328,16 @@ const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in
 // itemId → stream, classified from the scene Name at discovery (see initServer).
 const rubbishTypes = new Map<string, RubbishType>()
 
+// Which carry stream (if any) an item fills. Glasses and bottles count too —
+// playtest: "not all collected rubbish seems to count towards my carry limit
+// which is unclear" — and being glass, they're recycling. Sticky patches are
+// mopped, not carried, so they return null.
+function carryStreamFor(itemId: string): RubbishType | null {
+  if (itemId.startsWith(RUBBISH_ID_PREFIX)) return rubbishTypes.get(itemId) ?? 'general'
+  if (itemId.startsWith(GLASS_ID_PREFIX) || itemId.startsWith(BOTTLE_ID_PREFIX)) return 'recycle'
+  return null
+}
+
 function getLoad(address: string): CarriedLoad {
   let l = carriedRubbish.get(address)
   if (!l) { l = { general: 0, recycle: 0 }; carriedRubbish.set(address, l) }
@@ -613,10 +623,9 @@ export function initServer() {
     // erase the credit.
     recordContribution(address)
 
-    // Accepted rubbish goes into the player's hands, in its stream's pouch.
-    if (itemId.startsWith(RUBBISH_ID_PREFIX)) {
-      getLoad(address)[rubbishTypes.get(itemId) ?? 'general']++
-    }
+    // Accepted carryable mess goes into the player's hands, in its stream's pouch.
+    const stream = carryStreamFor(itemId)
+    if (stream) getLoad(address)[stream]++
 
     // Update all-time leaderboard score for this player.
     // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
@@ -704,11 +713,11 @@ export function initServer() {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
-    // Carry gate — full hands can't pick up more rubbish. The client pre-empts this
-    // with a toast, but it's enforced here so a crafted message can't ignore the
-    // capacity the upgrade is selling. The resync corrects any stale client chip.
-    const isRubbish = data.itemId.startsWith(RUBBISH_ID_PREFIX)
-    if (isRubbish && carriedTotal(context.from) >= carryCapacityFor(context.from)) {
+    // Carry gate — full hands can't pick up more carryable mess (rubbish, glasses,
+    // bottles). The client pre-empts this with a toast + sound, but it's enforced
+    // here so a crafted message can't ignore the capacity the upgrade is selling.
+    const isCarryItem = carryStreamFor(data.itemId) !== null
+    if (isCarryItem && carriedTotal(context.from) >= carryCapacityFor(context.from)) {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       sendCarried(context.from)
       return
@@ -716,9 +725,12 @@ export function initServer() {
 
     applyAcceptedClean(context.from, data.itemId, entity)
 
-    if (isRubbish) {
-      const extra = vacuumExtraFor(context.from)
-      if (extra > 0) sweepNearbyRubbish(context.from, data.itemId, extra)
+    if (isCarryItem) {
+      // Vacuum sweeps loose rubbish only — glasses/bottles are picked one by one.
+      if (data.itemId.startsWith(RUBBISH_ID_PREFIX)) {
+        const extra = vacuumExtraFor(context.from)
+        if (extra > 0) sweepNearbyRubbish(context.from, data.itemId, extra)
+      }
       sendCarried(context.from)
     }
   })

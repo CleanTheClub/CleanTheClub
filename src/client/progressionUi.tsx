@@ -16,7 +16,8 @@ import { theme } from './theme'
 import {
   UPGRADES, UpgradeDef, maxLevel, nextUpgradeCost, rankForXp, JOB_TITLES,
 } from '../shared/progression'
-import { getCareer, getCareerOrEmpty, upgradeLevel, requestPurchase } from './progressionStore'
+import { OUTCOME_ADEQUATE } from '../shared/config'
+import { getCareer, getCareerOrEmpty, getLastPayoutMs, upgradeLevel, requestPurchase } from './progressionStore'
 import { getSafeArea, pct } from './safeArea'
 
 const WHITE  = theme.colors.white
@@ -59,13 +60,15 @@ export function CareerBar({ S }: { S: number }) {
   const c = getCareer()
   if (!c) return null   // no progressUpdate yet — render nothing rather than zeros
 
-  // Mobile: bigger (reported too small to read) — the safe-area math below then
-  // positions it lower, clear of the explorer's profile-icon cluster.
+  // Bigger than the ambient HUD everywhere (reported easy to miss), bigger still
+  // on mobile — this is the "what's that? gotta increase it!" surface, so it has
+  // to pull the eye. The safe-area math below drops it below the explorer's
+  // profile-icon cluster on mobile.
   const mobile = isMobile()
-  const Z = mobile ? S * 1.5 : S
+  const Z = mobile ? S * 1.7 : S * 1.3
 
-  const barW = Math.round(240 * Z)
-  const barH = Math.round(10 * Z)
+  const barW = Math.round(260 * Z)
+  const barH = Math.round(16 * Z)
   const font = Math.round(18 * Z)
   const pad  = Math.round(10 * Z)
 
@@ -82,6 +85,24 @@ export function CareerBar({ S }: { S: number }) {
   const topPos   = pct(sa.top + (mobile ? 0.14 : 0.03))
   const rightPos = pct(sa.right + 0.015)
 
+  // ── Juice ────────────────────────────────────────────────────────────────────
+  // The XP fill breathes; within reach of a promotion (≥80%) it turns gold and
+  // pulses urgently, and the label starts naming the prize. After a payout the
+  // money figure pops and the XP gain floats up off the panel.
+  const frac      = Math.max(0, Math.min(1, c.fraction))
+  const nearPromo = c.nextTitle !== null && frac >= 0.8
+  const pulse     = nearPromo
+    ? 0.7  + 0.3  * Math.sin(Date.now() / 120)
+    : 0.85 + 0.15 * Math.sin(Date.now() / 300)
+  const fillColor = nearPromo
+    ? Color4.create(1, 0.82, 0.25, Math.max(0.4, pulse))
+    : Color4.create(XP_FILL.r, XP_FILL.g, XP_FILL.b, Math.max(0.5, pulse))
+
+  const sincePayout = Date.now() - getLastPayoutMs()
+  const moneyPop    = sincePayout < 600 ? 1 + 0.35 * (1 - sincePayout / 600) : 1
+  const xpGain      = c.lastShift?.xp ?? 0
+  const xpFloatT    = sincePayout < 2500 && xpGain > 0 ? sincePayout / 2500 : -1
+
   return (
     <UiEntity
       uiTransform={{
@@ -95,7 +116,7 @@ export function CareerBar({ S }: { S: number }) {
     >
       <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
         <Label value={c.title} fontSize={font} color={WHITE} />
-        <Label value={`  ${money(c.money)}`} fontSize={font} color={GOLD} />
+        <Label value={`  ${money(c.money)}`} fontSize={Math.round(font * moneyPop)} color={GOLD} />
       </UiEntity>
 
       {/* Promotion progress. At max rank the bar is full and labelled, rather than
@@ -103,16 +124,33 @@ export function CareerBar({ S }: { S: number }) {
       <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: Math.round(6 * Z) } }}
         uiBackground={{ color: TRACK }}>
         <UiEntity
-          uiTransform={{ width: Math.round(barW * Math.max(0, Math.min(1, c.fraction))), height: barH }}
-          uiBackground={{ color: XP_FILL }}
+          uiTransform={{ width: Math.round(barW * frac), height: barH }}
+          uiBackground={{ color: fillColor }}
         />
       </UiEntity>
       <Label
-        value={c.nextTitle ? `${Math.round(c.fraction * 100)}% to ${c.nextTitle}` : 'Top of the ladder'}
+        value={c.nextTitle
+          ? (nearPromo
+            ? `${Math.round(frac * 100)}% — ${c.nextTitle} almost yours!`
+            : `${Math.round(frac * 100)}% to ${c.nextTitle}`)
+          : 'Top of the ladder'}
         fontSize={Math.round(14 * Z)}
-        color={SUBTLE}
+        color={nearPromo ? GOLD : SUBTLE}
         uiTransform={{ margin: { top: Math.round(3 * Z) } }}
       />
+
+      {/* +XP float — drifts up off the panel for a beat after each payout. */}
+      {xpFloatT >= 0 && (
+        <Label
+          value={`+${xpGain} XP`}
+          fontSize={Math.round(18 * Z)}
+          color={{ r: XP_FILL.r, g: XP_FILL.g, b: XP_FILL.b, a: 1 - xpFloatT }}
+          uiTransform={{
+            positionType: 'absolute',
+            position: { top: -Math.round((12 + 34 * xpFloatT) * Z), right: pad },
+          }}
+        />
+      )}
       {c.isGuest && (
         <Label
           value="Guest — sign in to save progress"
@@ -134,29 +172,33 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
   const shift = c?.lastShift
   if (!c || !shift) return null
 
-  const font  = Math.round(22 * S)
-  const small = Math.round(16 * S)
-  const pad   = Math.round(14 * S)
+  // The payout is the shift's headline moment and a focused overlay like the
+  // shop, so it shares SHOP_ZOOM — at ambient HUD sizes it was unreadable
+  // ("can't really read it") on both platforms.
+  const Z = S * SHOP_ZOOM
+
+  const font  = Math.round(22 * Z)
+  const small = Math.round(16 * Z)
+  const pad   = Math.round(14 * Z)
 
   const row = (label: string, value: string, color: Color4) => (
-    <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'space-between', width: Math.round(300 * S) }}>
+    <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'space-between', width: Math.round(300 * Z) }}>
       <Label value={label} fontSize={small} color={SUBTLE} />
       <Label value={value} fontSize={small} color={color} />
     </UiEntity>
   )
 
-  // Centre within the SAFE band, not the whole screen: a full-width centred row
-  // centres over the reserved left 25% (desktop chat/minimap) too, pushing the
-  // panel left of true-usable centre and under explorer UI. Offsetting by the
-  // safe-area left inset and narrowing to the safe width centres it in the region
-  // the player can actually see. `top` stays as passed (well below any top inset).
-  const sa = getSafeArea()
+  // Centre on the WHOLE screen. This used to centre within the safe band, but
+  // the fallback insets reserve the left 26% for desktop chat — visibly pushing
+  // the panel right of centre ("some things on desktop are misaligned") for the
+  // common case of a collapsed chat. At 56% height nothing actually overlaps a
+  // true-centred panel.
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute',
-        position: { top, left: pct(sa.left) },
-        width: pct(Math.max(0.1, 1 - sa.left - sa.right)),
+        position: { top, left: 0 },
+        width: '100%',
         flexDirection: 'row',
         justifyContent: 'center',
       }}
@@ -180,11 +222,18 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
           </UiEntity>
         ) : (
           <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-            <Label value="Shift Failed" fontSize={font} color={theme.bar.low} />
+            <Label value="Shift Below Standard" fontSize={font} color={theme.bar.low} />
+            {/* Docked pay is still pay — show exactly what was earned so a
+                below-standard shift never reads as "you got nothing" (playtest:
+                zero payout looked like a bug). */}
+            {row('Items cleaned', String(shift.items), WHITE)}
+            {row('Partial pay',   money(shift.money), GOLD)}
+            {row('XP',            `+${shift.xp}`,     XP_FILL)}
             <Label
-              value="The club wasn't clean enough — no wage this shift."
+              value={`Reach ${Math.round(OUTCOME_ADEQUATE * 100)}% cleanliness for full wages!`}
               fontSize={small}
               color={SUBTLE}
+              uiTransform={{ margin: { top: Math.round(6 * Z) } }}
             />
           </UiEntity>
         )}
@@ -192,9 +241,9 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
         {c.promotedTo && (
           <Label
             value={`PROMOTED — ${c.promotedTo}!`}
-            fontSize={Math.round(20 * S)}
+            fontSize={Math.round(20 * Z)}
             color={GOLD}
-            uiTransform={{ margin: { top: Math.round(8 * S) } }}
+            uiTransform={{ margin: { top: Math.round(8 * Z) } }}
           />
         )}
       </UiEntity>
@@ -356,6 +405,125 @@ export function UpgradeShopPanel({ S }: { S: number }) {
       uiBackground={{ color: Color4.create(0, 0, 0, 0.72) }}
     >
       <ShopBody S={Z} rowWidth={Math.round(520 * Z)} titleSize={Math.round(32 * Z)} />
+    </UiEntity>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Career intro — the storyline onboarding shown once per session, in the lobby
+// (or spectate screen), before normal play. New players (0 shifts) get a 3-card
+// story ending on their career card; returning players get a single welcome-back
+// card. Framing the loop as a career is the GDD's core promise, and this puts it
+// front-and-centre at the moment attention is highest.
+// ─────────────────────────────────────────────────────────────────────────────
+let introSeen  = false
+let introCard  = 0
+
+/** True while the intro should replace the lobby/spectate screen. */
+export function shouldShowCareerIntro(): boolean {
+  return !introSeen && getCareer() !== null
+}
+
+function dismissCareerIntro(): void {
+  introSeen = true
+  introCard = 0
+}
+
+export function CareerIntroOverlay({ S }: { S: number }) {
+  const c = getCareer()
+  if (!c) return null
+
+  const mobile = isMobile()
+  const Z = mobile ? S * 1.5 : S * 1.3
+  const heading = Math.round(40 * Z)
+  const body    = Math.round(22 * Z)
+  const gap     = Math.round(14 * Z)
+
+  const newbie = c.shifts === 0
+  const rung   = `Rung ${c.rank + 1} of ${JOB_TITLES.length}`
+  const barW   = Math.round(320 * Z)
+  const barH   = Math.round(16 * Z)
+  const frac   = Math.max(0, Math.min(1, c.fraction))
+
+  // Card contents. Returning players skip straight to the career card.
+  const storyCards: Array<{ title: string; lines: string[] }> = [
+    {
+      title: 'WELCOME TO THE CLUB',
+      lines: [
+        "Last night's party WRECKED the place —",
+        'and the old cleaning crew walked out.',
+      ],
+    },
+    {
+      title: 'MAKE YOUR CAREER',
+      lines: [
+        'Every shift pays. Wages buy gear,',
+        'XP earns promotions — twelve rungs',
+        'from Junior Janitor to CLUB OWNER.',
+      ],
+    },
+  ]
+  const onCareerCard = !newbie || introCard >= storyCards.length
+
+  return (
+    <UiEntity
+      uiTransform={{
+        positionType: 'absolute', position: { top: 0, left: 0 },
+        width: '100%', height: '100%',
+        flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+      }}
+      uiBackground={{ color: Color4.create(0, 0, 0, 0.9) }}
+    >
+      {!onCareerCard ? (
+        <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
+          <Label value={storyCards[introCard].title} fontSize={heading} color={GOLD} />
+          <Label
+            value={storyCards[introCard].lines.join('\n')}
+            fontSize={body}
+            color={WHITE}
+            textAlign="middle-center"
+            uiTransform={{ margin: { top: gap } }}
+          />
+          <Button
+            value="NEXT"
+            variant="primary"
+            fontSize={Math.round(24 * Z)}
+            uiTransform={{ width: Math.round(220 * Z), height: Math.round(64 * Z), margin: { top: gap * 2 } }}
+            onMouseDown={() => { introCard++ }}
+          />
+        </UiEntity>
+      ) : (
+        <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
+          <Label value={newbie ? 'YOUR CAREER CARD' : 'WELCOME BACK'} fontSize={heading} color={GOLD} />
+          <Label value={c.title} fontSize={Math.round(32 * Z)} color={WHITE}
+            uiTransform={{ margin: { top: gap } }} />
+          <Label value={rung} fontSize={body} color={SUBTLE}
+            uiTransform={{ margin: { top: Math.round(4 * Z) } }} />
+
+          <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: gap } }}
+            uiBackground={{ color: TRACK }}>
+            <UiEntity uiTransform={{ width: Math.round(barW * frac), height: barH }}
+              uiBackground={{ color: XP_FILL }} />
+          </UiEntity>
+          <Label
+            value={c.nextTitle
+              ? `${Math.round(frac * 100)}% to ${c.nextTitle}`
+              : 'Top of the ladder — defend it!'}
+            fontSize={body} color={SUBTLE}
+            uiTransform={{ margin: { top: Math.round(4 * Z) } }}
+          />
+          <Label value={`  ${money(c.money)} in the bank`} fontSize={body} color={GOLD}
+            uiTransform={{ margin: { top: Math.round(4 * Z) } }} />
+
+          <Button
+            value={newbie ? "LET'S CLEAN!" : 'BACK TO WORK'}
+            variant="primary"
+            fontSize={Math.round(26 * Z)}
+            uiTransform={{ width: Math.round(280 * Z), height: Math.round(72 * Z), margin: { top: gap * 2 } }}
+            onMouseDown={() => dismissCareerIntro()}
+          />
+        </UiEntity>
+      )}
     </UiEntity>
   )
 }

@@ -10,6 +10,7 @@
 
 import { engine, timers } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
+import { MILESTONE_EVERY } from '../shared/config'
 import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
 
@@ -24,9 +25,12 @@ const ROUND_START: Record<number, string> & { DEFAULT: string } = {
   1:         "Round 2: the crowd expects better!",
   2:         "Round 3: no excuses, make it shine!",
   3:         "Round 4: you're on fire, keep going!",
-  4:         "Final round — give it everything you've got!",
   DEFAULT:   "New round: keep it up!",
 }
+
+// Rounds loop forever now — there is no "final round". Every MILESTONE_EVERY-th
+// round (5, 10, 15, …) is a milestone with its own celebration hold instead.
+const MILESTONE_ROUND_START = "Milestone round — give it everything you've got!"
 
 // Cleanliness milestones — fires once per round when pct crosses the threshold.
 // Keys are percentages (0–100). Add or remove entries freely.
@@ -53,12 +57,12 @@ const ROUND_END: Record<string, string> = {
   DEFAULT:    "Round over: doors are open!",
 }
 
-// Finale messages — shown after the FINAL round during the victory hold.
-// The game loops back to round 1 once the hold ends, so this is the big payoff.
+// Milestone messages — shown during the every-5th-round celebration hold.
+// Rounds loop forever in V2, so this is a recurring payoff, not an ending.
 const FINALE_MESSAGES: string[] = [
-  "CLUB COMPLETE! You cleaned every round!",
+  "MILESTONE NIGHT! Five rounds down!",
   "The crowd is going wild — what a night!",
-  "Take a bow… then it's back to the top!",
+  "Take a bow… the mess never sleeps!",
 ]
 // Gap between each finale message during the victory hold.
 const FINALE_MESSAGE_GAP_MS = 4_000
@@ -146,7 +150,10 @@ export function initNarrativeSystem(): void {
 
       if (prev !== -1 || phase === 'playing') {
         // Fire for every round including round 0 on first load
-        const text = ROUND_START[roundNumber] ?? ROUND_START.DEFAULT
+        const isMilestone = (roundNumber + 1) % MILESTONE_EVERY === 0
+        const text = isMilestone
+          ? MILESTONE_ROUND_START
+          : (ROUND_START[roundNumber] ?? ROUND_START.DEFAULT)
         timers.setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
       }
     }

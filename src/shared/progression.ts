@@ -45,7 +45,18 @@ export function shiftRewards(
   passMark: number,
   otherPlayers = 0,
 ): { money: number; xp: number; passed: boolean } {
-  if (cleanedFraction < passMark) return { money: 0, xp: 0, passed: false }
+  // Below the standard: DOCKED pay proportional to effort rather than nothing.
+  // A zero payout on a near-miss read as a bug in playtests ("shift failed, no
+  // income?") and is brutal for solo/mobile sessions; half-rate pay keeps every
+  // shift worth something while leaving a clear gap to a real pass.
+  if (cleanedFraction < passMark) {
+    const effort = cleanedFraction / Math.max(0.0001, passMark)   // 0..1 toward the standard
+    return {
+      money:  Math.round(BASE_WAGE * 0.5 * effort),
+      xp:     Math.round(BASE_XP   * 0.5 * effort),
+      passed: false,
+    }
+  }
 
   // How far above the pass mark, as a 0..1 fraction of the available headroom.
   const headroom = Math.max(0.0001, 1 - passMark)
@@ -191,8 +202,11 @@ export const UPGRADES: UpgradeDef[] = [
     id: 'carryCapacity',
     name: 'Carry Capacity',
     description: 'Hold more rubbish before emptying.',
-    // How many pieces of rubbish can be held before a trip to a big rubbish bag.
-    levelValues: [5, 8, 12, 17, 25],
+    // Total pieces held across both streams before a bin trip. Round numbers on
+    // purpose — "8" read as arbitrary in playtests; a 10-…-30 ladder in steps of
+    // 5 is legible at a glance and starts a touch easier (glasses/bottles count
+    // toward the load since they joined the carry loop).
+    levelValues: [10, 15, 20, 25, 30],
     costs:       [300, 650, 1_300, 2_400],
     minRank:     2,   // Cleaner
     implemented: true,

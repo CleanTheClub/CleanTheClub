@@ -8,9 +8,24 @@
 // call clicksAllowed() to guard their own enableClick so a mid-intermission state
 // change (e.g. a round-reset) can't silently re-register pointer events.
 
-import { engine } from '@dcl/sdk/ecs'
+import { engine, Transform } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
 import { isActive, isKnown } from './participation'
+
+// ── Reach gate ────────────────────────────────────────────────────────────────
+// Pointer raycasts pass through walls/floors that only carry physics colliders
+// (no CL_POINTER layer), so items were cleanable from the other side of a wall
+// or the floor below — worst on mobile, whose enlarged tap targets stick out of
+// thin geometry. True 3D distance (y included) blocks the cross-floor case.
+export const MAX_REACH_M = 4
+
+export function withinReach(pos: { x: number; y: number; z: number } | undefined | null): boolean {
+  if (!pos) return true   // unknown item position — don't block the interaction
+  const p = Transform.getOrNull(engine.PlayerEntity)?.position
+  if (!p) return true
+  const dx = p.x - pos.x, dy = p.y - pos.y, dz = p.z - pos.z
+  return dx * dx + dy * dy + dz * dz <= MAX_REACH_M * MAX_REACH_M
+}
 
 // Authoritative ClutterSync watchers reconcile server state at this cadence rather
 // than every frame.  Local cleaning feedback is optimistic/instant, so polling the

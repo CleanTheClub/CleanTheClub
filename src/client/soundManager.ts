@@ -14,6 +14,9 @@ const SND_PROMOTION     = 'assets/scene/Sounds/promotionSound.mp3'
 // Bin deposit thunk — file pending (drop it in and it just works; a missing clip
 // is silent, never an error). Something like a bag-drop / lid-clunk, ~0.5s.
 const SND_DEPOSIT       = 'assets/scene/Sounds/depositSound.mp3'
+// Error buzz for blocked actions (hands full / too far / skill-check miss) —
+// file pending. Short dull "uh-uh", ~0.3s, clearly distinct from the toast ding.
+const SND_ERROR         = 'assets/scene/Sounds/errorSound.mp3'
 
 const VOL_HOVER   = 0.7
 const VOL_CLICK   = 0.9
@@ -48,6 +51,7 @@ let notificationEntity: Entity
 let moneyEntity:        Entity
 let promotionEntity:    Entity
 let depositEntity:      Entity
+let errorEntity:        Entity
 
 // Pool of 3 clean-sound entities, round-robined on each play call.
 // A single entity can't retrigger while playing=true — the false→true toggle
@@ -104,6 +108,10 @@ export function initSoundManager() {
   depositEntity = engine.addEntity()
   Transform.create(depositEntity, { position: INIT_POS })
   AudioSource.create(depositEntity, { audioClipUrl: SND_DEPOSIT, playing: false, loop: false, volume: 1.0 })
+
+  errorEntity = engine.addEntity()
+  Transform.create(errorEntity, { position: INIT_POS })
+  AudioSource.create(errorEntity, { audioClipUrl: SND_ERROR, playing: false, loop: false, volume: 0.8 })
 }
 
 export function playSquelchSound() { playAt(squelchEntity) }
@@ -130,13 +138,12 @@ export function playPerfectSound(streak: number) {
   playAt(notificationEntity)
 }
 
-/** Skill-check miss — the same ding pitched low and quiet: a soft "nope". */
-export function playMissSound() {
-  const src = AudioSource.getMutable(notificationEntity)
-  src.pitch  = 0.65
-  src.volume = 0.6
-  playAt(notificationEntity)
-}
+/**
+ * Blocked-action buzz (hands full, too far, skill-check miss). Its own file so
+ * it can't be mistaken for the notification ding it used to be a pitched-down
+ * version of. Silent until Sounds/errorSound.mp3 is added.
+ */
+export function playMissSound() { playAt(errorEntity) }
 
 /** Rubbish deposited in a bin. Silent until Sounds/depositSound.mp3 is added. */
 export function playDepositSound()   { playAt(depositEntity) }

@@ -7,20 +7,30 @@ import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss } from '../ui'
+import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setSkillTapHandler } from '../ui'
 import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
 
 const pendingCleans     = new Set<string>()
 const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
 const lastState         = new Map<string, boolean>()
 
-// Stored after sync so enable/disable can re-register handlers at any time
-type ItemRef = { entity: Entity; type: InteractionType }
+// Stored after sync so enable/disable can re-register handlers at any time.
+// posEntity: where the item actually IS. On mobile the pointer `entity` is the
+// enlarged tap-proxy — a CHILD whose Transform.position is local (0,0,0) — so
+// reading position off it measured distance to the scene origin and made every
+// sticky patch "too far away" on phones. World positions always come from the
+// scene container entity instead.
+type ItemRef = { entity: Entity; type: InteractionType; posEntity: Entity }
 const itemRefs = new Map<string, ItemRef>()
+
+function itemPos(id: string) {
+  const ref = itemRefs.get(id)
+  return ref ? Transform.getOrNull(ref.posEntity)?.position : undefined
+}
 
 // zoneStart/zoneEnd: the Fisch-style skill-check window (fractions of the hold).
 // Releasing while progress is inside it completes the clean instantly; releasing
@@ -65,6 +75,15 @@ function maybeShowOpenPhaseToast() {
   showNarrativeToast('Wait for the next round!')
 }
 
+let lastTooFarToastMs = 0
+function maybeShowTooFarToast() {
+  playMissSound()   // every attempt gets the "nope" blip; the toast is throttled
+  const now = Date.now()
+  if (now - lastTooFarToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastTooFarToastMs = now
+  showNarrativeToast('Too far away — get closer!')
+}
+
 function findClutterEntity(itemId: string): Entity | undefined {
   for (const [entity] of engine.getEntitiesWith(ClutterSync)) {
     if (ClutterSync.get(entity).itemId === itemId) return entity
@@ -98,12 +117,18 @@ function enableClick(id: string) {
 
   if (type === 'hold') {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean' } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: MAX_REACH_M } },
       () => {
         if (pendingCleans.has(id) || activeHold) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+        // Reach gate — pointer rays pass through pointer-layer-free walls/floors,
+        // so a patch upstairs was moppable from below. Real distance check instead.
+        if (!withinReach(itemPos(id))) {
+          maybeShowTooFarToast()
+          return
+        }
         playStickySound()
         const { zoneStart, zoneEnd } = rollSkillZone()
         activeHold = { id, startMs: Date.now(), zoneStart, zoneEnd }
@@ -113,7 +138,7 @@ function enableClick(id: string) {
 
         // Mopping emote — same step-to-item + emote logic as the pickup animation,
         // fired while the player holds to clean the sticky patch.
-        const pos = Transform.getOrNull(entity)?.position
+        const pos = itemPos(id)
         // Emote runs for exactly the (possibly upgraded) hold duration so it stops
         // as the bar completes rather than looping past it.
         if (pos) playMoppingEmote(pos, holdDurationMs())
@@ -126,7 +151,7 @@ function enableClick(id: string) {
     // so the pointer events now match the other mess items exactly (hover + down).
   } else {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: MAX_REACH_M } },
       () => {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
@@ -235,12 +260,15 @@ export function initInteractionManager(
   // Populate item refs immediately — enable/disable can be called as soon as sync fires
   for (const def of CLUTTER_DEFS) {
     if (def.sceneGlb) continue   // click + visuals owned by a scene-discovery system
-    itemRefs.set(def.id, { entity: dirtyEntities.get(def.id)!, type: def.type ?? 'quick' })
+    const e = dirtyEntities.get(def.id)!
+    itemRefs.set(def.id, { entity: e, type: def.type ?? 'quick', posEntity: e })
   }
-  // Scene-discovered hold entities (e.g. StickyPatches from GLB) — type is always 'hold'
+  // Scene-discovered hold entities (e.g. StickyPatches from GLB) — type is always
+  // 'hold'. The container entity stays the position source even after
+  // updateSceneHoldGltf swaps the pointer entity to the (mobile) tap proxy.
   if (sceneHoldEntities) {
     for (const [itemId, entity] of sceneHoldEntities) {
-      itemRefs.set(itemId, { entity, type: 'hold' })
+      itemRefs.set(itemId, { entity, type: 'hold', posEntity: entity })
     }
   }
 
@@ -262,7 +290,7 @@ export function initInteractionManager(
       flashPerfect(perfectStreak)
       playPerfectSound(perfectStreak)   // chime rises with the streak
       playCleanSound()
-      const holdPos = Transform.getOrNull(itemRefs.get(id)!.entity)?.position
+      const holdPos = itemPos(id)
       if (holdPos) playSparkle(holdPos)
       // Streak milestones get a confetti pop — the club celebrates with you.
       if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
@@ -273,6 +301,15 @@ export function initInteractionManager(
       playMissSound()
     }
   }
+
+  // The mobile SCRUB button resolves the check at the tick's current position.
+  // Same 250 ms grace as the tap path, so the starting tap can't insta-resolve.
+  setSkillTapHandler(() => {
+    if (!activeHold) return
+    const heldMs = Date.now() - activeHold.startMs
+    if (heldMs <= 250) return
+    resolveSkillCheck(heldMs / holdDurationMs())
+  })
 
   // Frame system: drives hold progress + fires on completion
   engine.addSystem(() => {
@@ -307,7 +344,7 @@ export function initInteractionManager(
       activeHold = null
       showHoldBar(id, false)
       playCleanSound()
-      const holdPos = Transform.getOrNull(itemRefs.get(id)!.entity)?.position
+      const holdPos = itemPos(id)
       if (holdPos) playSparkle(holdPos)
       tryClean(id, applyCleanState)
     }

@@ -9,12 +9,13 @@ import { SceneItemDef } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
+import { playHoverSound, playClickSound, playCleanSound, playMissSound } from './soundManager'
+import { isCarryFull } from './carrySystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
 export type CollectibleConfig = {
@@ -35,6 +36,27 @@ function maybeShowOpenPhaseToast() {
   if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
   lastOpenPhaseToastMs = now
   showNarrativeToast('Wait for the next round!')
+}
+
+// Module-level (shared by the glasses AND bottles groups) so the cooldowns don't
+// double-fire when both groups are being clicked. Miss blip on every attempt;
+// only the toast is throttled.
+let lastFullToastMs = 0
+function maybeShowFullToast() {
+  playMissSound()
+  const now = Date.now()
+  if (now - lastFullToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastFullToastMs = now
+  showNarrativeToast('Hands full! Empty them at a bin')
+}
+
+let lastTooFarToastMs = 0
+function maybeShowTooFarToast() {
+  playMissSound()
+  const now = Date.now()
+  if (now - lastTooFarToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
+  lastTooFarToastMs = now
+  showNarrativeToast('Too far away — get closer!')
 }
 
 export function initCollectibleGroup(cfg: CollectibleConfig) {
@@ -101,12 +123,16 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     const { clickEntity, containerEntity } = rec
     pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
     pointerEventsSystem.onPointerDown(
-      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean' } },
+      // Glasses and bottles are glass — they fill the recycling pouch, and the
+      // prompt says so, so the carry chip's green number can't be a mystery.
+      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Collect (Recycling)', maxDistance: MAX_REACH_M } },
       () => {
         if (pendingCleans.has(itemId)) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
-        pendingCleans.add(itemId)
+        if (isCarryFull()) { maybeShowFullToast(); return }
         const pos = Transform.getOrNull(containerEntity)?.position
+        if (!withinReach(pos)) { maybeShowTooFarToast(); return }
+        pendingCleans.add(itemId)
         disableClick(itemId)
         playClickSound()
         playCleanSound()

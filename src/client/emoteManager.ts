@@ -106,8 +106,17 @@ function playStepEmote(
 ) {
   if (emoteActive) stopPickupEmote()
 
+  // Step-to-item is DESKTOP ONLY. Two mobile problems killed it there:
+  //  • avatarTarget re-aims the avatar, and the mobile third-person camera
+  //    follows avatar facing — every clean wrenched the view around ("camera
+  //    gets rotated when cleaning constantly");
+  //  • the enlarged mobile tap targets make DISTANT grabs routine (including
+  //    items poking through thin walls or on the other floor), and teleporting
+  //    the avatar toward those spots can drop it inside geometry — the physics
+  //    resolver then ejects it, reported as "often teleported outside the club".
+  // Mobile simply plays the emote where the player stands.
   const playerPos = Transform.getOrNull(engine.PlayerEntity)?.position
-  if (playerPos) {
+  if (playerPos && !isMobile()) {
     const dx  = playerPos.x - targetPos.x
     const dz  = playerPos.z - targetPos.z
     const len = Math.sqrt(dx * dx + dz * dz)
@@ -122,15 +131,9 @@ function playStepEmote(
         y: playerPos.y,
         z: targetPos.z + nz * INTERACT_DISTANCE,
       }
-      // avatarTarget force-rotates the AVATAR to face the item. On mobile the
-      // third-person camera follows avatar facing, so re-aiming on every clean
-      // wrenched the view out from under the player's own camera control —
-      // reported as "camera gets rotated when cleaning constantly". Desktop
-      // mouse-look is decoupled from avatar facing, so it keeps the nicer
-      // turn-to-face. Translating the player does NOT swing the camera, so the
-      // step-to-item behaviour itself is preserved on both platforms.
-      if (isMobile()) movePlayerTo({ newRelativePosition })
-      else            movePlayerTo({ newRelativePosition, avatarTarget: targetPos })
+      // avatarTarget turn-to-face is fine here: desktop mouse-look is decoupled
+      // from avatar facing, so the camera stays under the player's control.
+      movePlayerTo({ newRelativePosition, avatarTarget: targetPos })
     }
   }
 

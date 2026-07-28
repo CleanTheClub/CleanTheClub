@@ -8,12 +8,12 @@ import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
+import { playHoverSound, playClickSound, playCleanSound, playMissSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
 import { isCarryFull } from './carrySystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
@@ -40,14 +40,26 @@ function maybeShowOpenPhaseToast() {
 }
 
 // Full-hands pickups are pre-empted here (no message sent, no shrink-then-restore
-// flicker); the server enforces the same capacity for crafted messages.
+// flicker); the server enforces the same capacity for crafted messages. The miss
+// blip plays on EVERY attempt (playtest: repeated errors need audible feedback);
+// only the toast is throttled.
 const FULL_TOAST_COOLDOWN_MS = 3_000
 let lastFullToastMs = 0
 function maybeShowFullToast() {
+  playMissSound()
   const now = Date.now()
   if (now - lastFullToastMs < FULL_TOAST_COOLDOWN_MS) return
   lastFullToastMs = now
-  showNarrativeToast('Hands full! Empty your rubbish into a big bag')
+  showNarrativeToast('Hands full! Empty them at a bin')
+}
+
+let lastTooFarToastMs = 0
+function maybeShowTooFarToast() {
+  playMissSound()
+  const now = Date.now()
+  if (now - lastTooFarToastMs < FULL_TOAST_COOLDOWN_MS) return
+  lastTooFarToastMs = now
+  showNarrativeToast('Too far away — get closer!')
 }
 
 type GltfRecord = {
@@ -104,14 +116,18 @@ function enableClick(itemId: string) {
       opts: {
         button: InputAction.IA_POINTER,
         hoverText: rubbishTypes.get(itemId) === 'recycle' ? 'Clean (Recycling)' : 'Clean (General)',
+        // Matches the reach gate, so the explorer never offers (or red-outlines)
+        // an item the click would refuse anyway.
+        maxDistance: MAX_REACH_M,
       },
     },
     () => {
       if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (isCarryFull()) { maybeShowFullToast(); return }
       if (pendingCleans.has(itemId)) return
-      pendingCleans.add(itemId)
       const pos = Transform.getOrNull(containerEntity)?.position
+      if (!withinReach(pos)) { maybeShowTooFarToast(); return }
+      pendingCleans.add(itemId)
       disableClick(itemId)
       playClickSound()
       playCleanSound()

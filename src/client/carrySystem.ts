@@ -137,7 +137,9 @@ export function initCarrySystem(): void {
 
     pointerEventsSystem.onPointerHoverEnter({ entity: bin }, () => playHoverSound())
     pointerEventsSystem.onPointerDown(
-      { entity: bin, opts: { button: InputAction.IA_POINTER, hoverText: style.hover } },
+      // Slightly longer reach than items — bins are destinations you walk at,
+      // and cutting the prompt at 4m made them feel unresponsive on approach.
+      { entity: bin, opts: { button: InputAction.IA_POINTER, hoverText: style.hover, maxDistance: 6 } },
       () => {
         if (!known) return
         const inStream = pos.type === 'general' ? carriedGeneral : carriedRecycle

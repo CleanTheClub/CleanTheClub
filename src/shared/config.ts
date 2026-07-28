@@ -1,15 +1,25 @@
 // Set to true for fast timers during local testing
 export const DEBUG = false
 
-const _ROUND_DURATIONS_MS  = [3 * 60_000, 2.5 * 60_000, 2 * 60_000, 1.5 * 60_000, 60_000]
-const _DEBUG_DURATIONS_MS  = [30_000, 25_000, 20_000, 15_000, 10_000]
+// V2: every round runs the SAME duration (per the GDD — the old shrinking table
+// 3:00→1:00 was a V1 finale-pressure mechanic that no longer fits the endless
+// loop). Difficulty comes from respawn scaling, not a shrinking clock. Single
+// entry: getRoundDurationMs clamps to the last index, so all rounds read it.
+const _ROUND_DURATIONS_MS  = [2.5 * 60_000]
+const _DEBUG_DURATIONS_MS  = [30_000]
 export const ROUND_DURATIONS_MS = DEBUG ? _DEBUG_DURATIONS_MS : _ROUND_DURATIONS_MS
 
+// Every Nth round is a MILESTONE (longer celebration hold). Explicit — it used
+// to be derived from the duration table's length, which broke the moment the
+// table stopped having five entries.
+export const MILESTONE_EVERY = 5
+
 export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // normal intermission window
-// Longer "victory hold" shown after the FINAL round before looping back to round 1.
-// Gives players a satisfying 'Club Complete!' celebration / payoff moment —
-// held for ~1.5 min so the full crowd + music celebration can breathe.
-export const FINALE_DISPLAY_MS  = DEBUG ? 30_000 : 90_000   // finale celebration window
+// Longer celebration hold after every MILESTONE round (each 5th). V2 loops
+// forever, so this is a recurring payoff beat, not a game-over — 90s per cycle
+// dragged ("round 5 big celebration doesn't match our V2 path"); 30s lets the
+// crowd + confetti + music land and then gets everyone back to work.
+export const FINALE_DISPLAY_MS  = DEBUG ? 30_000 : 30_000   // milestone celebration window
 export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  :  8_000   // min before early-start unlocks
 export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 120_000  // base respawn (was 90s — eased)
 export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was 45s — eased)
@@ -21,14 +31,14 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was
 // factor > 1 → items respawn faster  (scaledMs = baseMs / factor)
 // factor < 1 → items respawn slower  (easier)
 //
-// Eased pass: base bumped to 120 s / 60 s and the per-player scaling flattened so
-// the mess returns more gently at every group size.
-//  1 player  → 0.70× (171 s / 86 s — solo breathing room)
-//  2 players → 1.10× (109 s / 55 s)
-//  3 players → 1.40× ( 86 s / 43 s)
-//  4 players → 1.70× ( 71 s / 35 s)
-//  5+ players → 1.90× ( 63 s / 32 s)
-export const RESPAWN_SCALE_FACTORS = [0.70, 1.10, 1.40, 1.70, 1.90]
+// Second eased pass (mobile playtest: "too hard with 1 person") — solo and duo
+// now get substantially more breathing room; larger groups barely change.
+//  1 player  → 0.50× (240 s / 120 s — solo breathing room)
+//  2 players → 0.95× (126 s /  63 s)
+//  3 players → 1.30× ( 92 s /  46 s)
+//  4 players → 1.60× ( 75 s /  38 s)
+//  5+ players → 1.80× ( 67 s /  33 s)
+export const RESPAWN_SCALE_FACTORS = [0.50, 0.95, 1.30, 1.60, 1.80]
 
 // ── Closing window — let the club actually finish clean ───────────────────────
 // Playtest feedback: "when you finally finish cleaning a floor they respawn and the
