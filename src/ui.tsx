@@ -11,10 +11,10 @@ import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
-import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, CareerIntroOverlay, shouldShowCareerIntro } from './client/progressionUi'
-import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty } from './client/carrySystem'
+import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
+import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit } from './client/carrySystem'
 import { getSafeArea, pct as saPct } from './client/safeArea'
-import { getCareerOrEmpty } from './client/progressionStore'
+import { getCareerOrEmpty, getContract } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
@@ -183,7 +183,9 @@ const NARR_LABEL_LEFT     = 0.325   // narrative body text: horizontal position
 const NARR_LABEL_W_FRAC   = 0.6   // narrative text box width as fraction of toast width
 // Toast container anchor — percentage strings scale with the canvas on all devices
 const TOAST_POS_DESKTOP   = { top: '33%', right: '2%'  } as const
-const TOAST_POS_MOBILE    = { top: '9%',  left: '38%'  } as const
+// Below the top-centre HUD block (timer/bar/contract) — at 9% the stack sat
+// straight over them on phones ('notifications overlap the task and timer').
+const TOAST_POS_MOBILE    = { top: '36%', left: '2%' } as const
 
 // HUD backdrop — single semi-transparent scrim behind all top-centre elements.
 // Sized to the banner width + padding so it frames the whole cluster cleanly.
@@ -364,11 +366,12 @@ export function setHoldBarZone(start: number | null, end = 0) {
 let skillTapHandler: (() => void) | null = null
 export function setSkillTapHandler(fn: () => void) { skillTapHandler = fn }
 
-// ── Skill-check result flash — fired by InteractionManager on release ─────────
+// ── Action flash — one pop-and-fade slot shared by the moment-to-moment juice
+// (PERFECT skill hits, MISSED, cleaning SPREEs). Latest event wins the slot.
 const PERFECT_FLASH_MS  = 700
 let perfectFlashStartMs = -1
 let perfectFlashStreak  = 0
-let perfectFlashKind: 'perfect' | 'miss' = 'perfect'
+let perfectFlashKind: 'perfect' | 'miss' | 'spree' = 'perfect'
 export function flashPerfect(streak: number) {
   perfectFlashStartMs = Date.now()
   perfectFlashStreak  = streak
@@ -378,6 +381,11 @@ export function flashMiss() {
   perfectFlashStartMs = Date.now()
   perfectFlashStreak  = 0
   perfectFlashKind    = 'miss'
+}
+export function flashSpree(combo: number) {
+  perfectFlashStartMs = Date.now()
+  perfectFlashStreak  = combo
+  perfectFlashKind    = 'spree'
 }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
@@ -429,16 +437,20 @@ function CarryChip({ S }: { S: number }) {
           flexDirection: 'row',
           alignItems: 'center',
           padding: { top: pad, bottom: pad, left: pad, right: Math.round(pad * 1.8) },
+          borderRadius: Math.round(22 * S),   // pill, echoing the nametag plate
         }}
         uiBackground={{ color: theme.hud.bg }}
       >
         <UiEntity
           uiTransform={{ width: icon, height: icon, margin: { right: Math.round(8 * S) } }}
-          uiBackground={{ texture: { src: 'assets/scene/UI/upgrade_carryCapacity.png' }, textureMode: 'stretch', color: WHITE }}
+          // The BAG, not the Strength bicep: the chip shows what you're
+          // carrying; the upgrade tile shows what makes you carry more.
+          uiBackground={{ texture: { src: 'assets/scene/UI/carry_bag_chip.png' }, textureMode: 'stretch', color: WHITE }}
         />
-        {/* Sorted streams: gold = general waste, green = recycling, then the
+        {/* Sorted streams: gold = general waste, blue = recycling, then the
             shared capacity. Colours match the bins so the mapping is learnable
-            without a legend. */}
+            without a legend — and amber/blue stays readable for colourblind
+            players where the old gold/green did not. */}
         <Label
           value={`${getCarriedGeneral()}`}
           fontSize={font}
@@ -448,7 +460,7 @@ function CarryChip({ S }: { S: number }) {
         <Label
           value={`${getCarriedRecycle()}`}
           fontSize={font}
-          color={{ r: 0.35, g: 1, b: 0.55, a: 1 }}
+          color={{ r: 0.45, g: 0.68, b: 1, a: 1 }}
         />
         <Label
           value={`  /  ${getCarryCapacity()}`}
@@ -498,6 +510,7 @@ const ui = () => {
   const seconds       = gs?.secondsLeft ?? 0
   const phase         = gs?.phase ?? 'lobby'
   const roundNumber   = gs?.roundNumber ?? 0
+  const isMilestoneRound = (roundNumber + 1) % MILESTONE_EVERY === 0
   const outcome       = gs?.outcome ?? ''
   const isFinale      = gs?.isFinale ?? false
   const pct           = Math.min(1, cleaned / total)
@@ -534,8 +547,9 @@ const ui = () => {
   // half the screen while its content overflowed the short viewport, pushing
   // CLOSE off-screen — the modal centres everything with room to spare.
   // Career intro / welcome-back card — replaces the lobby or spectate screen
-  // once per session, until dismissed. Never interrupts active cleaning.
-  if ((isLobby || waiting) && shouldShowCareerIntro()) {
+  // once per session, until dismissed. Never interrupts active cleaning (an
+  // admin preview is the one exception; see shouldShowCareerIntro).
+  if (shouldShowCareerIntro(isLobby || waiting)) {
     return <CareerIntroOverlay S={S} />
   }
 
@@ -558,21 +572,32 @@ const ui = () => {
   const holdBarW     = mobile ? HOLD_BAR_W_MOBILE : HOLD_BAR_W_DESKTOP
   const holdBarHeight = Math.round(HOLD_BAR_HEIGHT * S)
 
-  // Skill-check flash animation — quick cubic pop of the font, then a fade-out.
-  // PERFECT pops big and gold; MISSED pops smaller and red.
+  // Action flash animation — quick cubic pop of the font, then a fade-out.
+  // PERFECT pops big and gold, SPREE mid-size and orange, MISSED small and red.
   const perfectElapsed = perfectFlashStartMs >= 0 ? Date.now() - perfectFlashStartMs : Infinity
   const perfectPop     = Math.min(1, perfectElapsed / 250)
   const perfectEase    = 1 - Math.pow(1 - perfectPop, 3)
-  const flashIsPerfect = perfectFlashKind === 'perfect'
-  const perfectFont    = Math.round(lerp(flashIsPerfect ? 34 : 24, flashIsPerfect ? 64 : 40, perfectEase) * S)
   const perfectAlpha   = perfectElapsed < 400 ? 1 : Math.max(0, 1 - (perfectElapsed - 400) / (PERFECT_FLASH_MS - 400))
-  const flashText      = flashIsPerfect
+  const flashSizes     = perfectFlashKind === 'perfect' ? [34, 64] : perfectFlashKind === 'spree' ? [26, 44] : [24, 40]
+  const perfectFont    = Math.round(lerp(flashSizes[0], flashSizes[1], perfectEase) * S)
+  const flashText      = perfectFlashKind === 'perfect'
     ? (perfectFlashStreak > 1 ? `PERFECT ×${perfectFlashStreak}!` : 'PERFECT!')
+    : perfectFlashKind === 'spree'
+    ? `SPREE ×${perfectFlashStreak}!`
     : 'MISSED!'
-  const flashColor     = flashIsPerfect
+  const flashColor     = perfectFlashKind === 'perfect'
     ? { r: 1, g: 0.82, b: 0.25, a: perfectAlpha }
+    : perfectFlashKind === 'spree'
+    ? { r: 1, g: 0.62, b: 0.2,  a: perfectAlpha }
     : { r: 1, g: 0.35, b: 0.3,  a: perfectAlpha }
-  const nextFont     = Math.round(NEXT_FONT_SIZE     * S)
+
+  // Deposit flash — reads carrySystem's last-deposit state (no setter import,
+  // which would cycle). "+N BINNED!" pops mid-screen right after a bin empty.
+  const dep        = getLastDeposit()
+  const depElapsed = dep.ms >= 0 ? Date.now() - dep.ms : Infinity
+  const depEase    = 1 - Math.pow(1 - Math.min(1, depElapsed / 250), 3)
+  const depFont    = Math.round(lerp(26, 46, depEase) * S)
+  const depAlpha   = depElapsed < 400 ? 1 : Math.max(0, 1 - (depElapsed - 400) / (PERFECT_FLASH_MS - 400))
   const btnW         = Math.round(BTN_WIDTH          * S)
   const btnH         = Math.round(BTN_HEIGHT         * S)
   const btnFont      = Math.round(BTN_FONT_SIZE      * S)
@@ -720,15 +745,8 @@ const ui = () => {
       : STRIP_TOP + Math.round(roundFont * 1.5) + HUD_BG_PAD_BOT
   const hudBgHeight  = hudBgBottomY - hudBgTop
 
-  // Achieved-cleanliness % — sits just below the centred outcome / ClubComplete card.
-  // Still valid during the whole open phase: triggerOpen() does NOT reset the clutter
-  // (resetClutter only runs when the next round starts), so cleaned/total continue to
-  // hold the round-end value. Revealed once the card has settled at centre.
-  const pctFont        = Math.round(PCT_FONT_SIZE * S)
-  const pctRowTop      = centredTop + introImgH + Math.round(10 * S)
-  const outcomeSettled = outcomeProgress >= 1
-  // Finale countdown sits just below the % number.
-  const finaleBlockTop  = pctRowTop + pctFont + Math.round(12 * S)
+  // (The achieved-cleanliness % and finale countdown that used to be laid out
+  // here now live inside the shift report card, which sizes itself.)
 
   // ── Lobby overlay — gather + START a match. Replaces the whole HUD. ───────────
   // Centering uses the same mechanism as the HUD timer/banner: each element sits in
@@ -754,20 +772,24 @@ const ui = () => {
             uiBackground={{ texture: { src: 'assets/scene/UI/InstructionsUI.png' }, textureMode: 'stretch', color: WHITE }}
           />
         </UiEntity>
+        {/* Copy matches what the club actually does now: shifts run back to back
+            and the lobby auto-starts, so this is a "next shift" beat rather than
+            V1's manual gate ("sent back to the lobby… doesn't work well for the
+            new game style"). */}
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(14 * S) } }}>
-          <Label value="Clean the club before time runs out!"
+          <Label value="The mess never sleeps — every shift pays."
             fontSize={Math.round(26 * S)} color={COLOR_SUBTLE} />
         </UiEntity>
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(30 * S) } }}>
-          <Label value={`Players in lobby: ${playersIn}`}
+          <Label value={`Cleaners in the club: ${playersIn}`}
             fontSize={Math.round(32 * S)} color={WHITE} />
         </UiEntity>
         <UiEntity uiTransform={centeredRow}>
           {starting ? (
-            <Label value={`Starting in ${seconds}…`} fontSize={Math.round(64 * S)} color={WHITE} />
+            <Label value={`Next shift in ${seconds}…`} fontSize={Math.round(64 * S)} color={WHITE} />
           ) : (
             <Button
-              value="START MATCH"
+              value="START NOW"
               variant="primary"
               fontSize={Math.round(34 * S)}
               uiTransform={{ width: Math.round(360 * S), height: Math.round(92 * S) }}
@@ -872,7 +894,9 @@ const ui = () => {
            the failure mode that produced the narrative/speech-bubble overlap. It
            renders only during the intermission, and only once a payout has arrived. */}
       <CareerBar S={S} />
-      {isOpen && <ShiftPayoutPanel S={S} top="56%" />}
+      {/* The whole intermission in one centred card — outcome art, grade, score,
+          payout and countdown. Self-centring, so it can't overflow. */}
+      {isOpen && <ShiftPayoutPanel S={S} imageSrc={topImageSrc} pct={pct} seconds={seconds} />}
 
       {/* Rubbish carry count — live while cleaning; hidden during the intermission,
           when there is nothing in hand to track (round start resets it anyway). */}
@@ -898,27 +922,30 @@ const ui = () => {
       {shopAsPanel && <UpgradeShopPanel S={S} />}
 
       {/* ── HUD backdrop — renders first so it sits behind all other elements ───
-           Every top-centre element (this backdrop, the image slots, the animated
-           overlays) is horizontally centred by a full-width flex row rather than
-           computed left offsets: virtual-px arithmetic drifts off true centre on
-           displays where the canvas mapping misreports (the mobile "shifted left"
-           bug), while '100%' always resolves to the real screen. The animations
-           only ever vary TOP and SIZE — horizontal was always "centred" — so the
-           flex wrapper preserves them exactly. */}
-      <UiEntity
-        uiTransform={{
-          positionType: 'absolute',
-          position:     { top: hudBgTop, left: 0 },
-          width:        '100%',
-          flexDirection: 'row',
-          justifyContent: 'center',
-        }}
-      >
+           Horizontally centred by a full-width flex row rather than computed
+           left offsets: virtual-px arithmetic drifts off true centre on displays
+           where the canvas mapping misreports (the mobile "shifted left" bug),
+           while '100%' always resolves to the real screen.
+
+           Hidden during the intermission: it was sized to the outcome banner,
+           which the shift report card has replaced, so it would otherwise be a
+           dark rectangle floating behind nothing. ───────────────────────────── */}
+      {!isOpen && (
         <UiEntity
-          uiTransform={{ width: hudBgWidth, height: hudBgHeight }}
-          uiBackground={{ color: HUD_BG_COLOR }}
-        />
-      </UiEntity>
+          uiTransform={{
+            positionType: 'absolute',
+            position:     { top: hudBgTop, left: 0 },
+            width:        '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
+          }}
+        >
+          <UiEntity
+            uiTransform={{ width: hudBgWidth, height: hudBgHeight }}
+            uiBackground={{ color: HUD_BG_COLOR }}
+          />
+        </UiEntity>
+      )}
 
       {/* ── Top image slot — hidden whenever an animated overlay covers it. ───── */}
       <UiEntity
@@ -962,67 +989,12 @@ const ui = () => {
         </UiEntity>
       )}
 
-      {/* ── Outcome overlay — normal → centre when round ends, holds at centre ── */}
-      {isOpen && (
-        <UiEntity
-          uiTransform={{
-            positionType: 'absolute',
-            position:     { top: outcomeAnimTop, left: 0 },
-            width:        '100%',
-            flexDirection: 'row',
-            justifyContent: 'center',
-          }}
-        >
-          <UiEntity
-            uiTransform={{ width: outcomeAnimW, height: outcomeAnimH }}
-            uiBackground={{
-              texture:     { src: topImageSrc },
-              textureMode: 'stretch',
-              color:       WHITE,
-            }}
-          />
-        </UiEntity>
-      )}
-
-      {/* ── Achieved cleanliness % — prominent number just below the centred card; */}
-      {/*    shown during both the per-round intermission and the finale celebration. */}
-      {isOpen && outcomeSettled && (
-        <UiEntity
-          uiTransform={{
-            positionType:   'absolute',
-            position:       { top: pctRowTop, left: 0 },
-            width:          '100%',
-            flexDirection:  'row',
-            justifyContent: 'center',
-          }}
-        >
-          <Label
-            value={`${Math.round(pct * 100)}% Clean`}
-            fontSize={pctFont}
-            color={WHITE}
-          />
-        </UiEntity>
-      )}
-
-      {/* ── Finale celebration — special centred title + countdown, confetti +  */}
-      {/*    crowd handle the rest.  Replaces the normal strip during the finale. */}
-      {isOpen && isFinale && (
-        <UiEntity
-          uiTransform={{
-            positionType:   'absolute',
-            position:       { top: finaleBlockTop, left: 0 },
-            width:          '100%',
-            flexDirection:  'row',
-            justifyContent: 'center',
-          }}
-        >
-          <Label
-            value={`Next shift in ${formatTime(seconds)}`}
-            fontSize={nextFont}
-            color={COLOR_DIM}
-          />
-        </UiEntity>
-      )}
+      {/* The outcome banner, the standalone "% Clean" figure and the finale
+          countdown all used to live here as separate top-centre overlays. They
+          are now the header, score line and footer of the single shift report
+          card (ShiftPayoutPanel) — one thing to read instead of three competing
+          for the same screen space. The confetti, crowd and music still play
+          around it, which is what the intermission is actually for. */}
 
       {/* ── Timer row: icon left, big bold countdown right ───────────────────── */}
       {/* Hidden during intro — the intro timer overlay takes over             */}
@@ -1228,6 +1200,25 @@ const ui = () => {
         </UiEntity>
       )}
 
+      {/* ── Deposit flash — "+N BINNED!" pops after emptying into a bin. ───────── */}
+      {depElapsed < PERFECT_FLASH_MS && (
+        <UiEntity
+          uiTransform={{
+            positionType:   'absolute',
+            position:       { top: '38%', left: 0 },
+            width:          '100%',
+            flexDirection:  'row',
+            justifyContent: 'center',
+          }}
+        >
+          <Label
+            value={`+${dep.count} BINNED!`}
+            fontSize={depFont}
+            color={{ r: 1, g: 0.82, b: 0.25, a: depAlpha }}
+          />
+        </UiEntity>
+      )}
+
       {/* ── Info strip (round label + next-round controls) ────────────────────── */}
       <UiEntity
         uiTransform={{
@@ -1241,9 +1232,11 @@ const ui = () => {
         <UiEntity
           uiTransform={{ width: stripWidth, flexDirection: 'column', alignItems: 'center' }}
         >
-          {/* Round label — hidden during the finale (the celebration overlay owns
-              the centre of the screen, so this would only clash with it). */}
-          {!isFinale && (
+          {/* Round label — only when it MEANS something. Endless rounds make a
+              plain "Round 7" noise in an already-tight strip (and unreadable on
+              mobile), but a milestone round is worth announcing. Kept always in
+              DEBUG, where the round number is a testing tool. */}
+          {!isFinale && (DEBUG || isMilestoneRound) && (
             <Label
               value={DEBUG ? `[DEBUG] ${getRoundLabel(roundNumber)}` : getRoundLabel(roundNumber)}
               fontSize={roundFont}
@@ -1252,15 +1245,47 @@ const ui = () => {
             />
           )}
 
-          {/* Normal intermission countdown.  The finale uses its own celebration
-              overlay above instead, so this only renders for regular rounds. */}
-          {isOpen && !isFinale && (
+          {/* Shift contract — the round's server-rolled mini-goal, live progress.
+              Its own chip (background + generous type) rather than another line
+              of small text: it was illegible on mobile against a busy scene, and
+              it's the one thing here the player is actively working toward.
+              Green once complete so the bonus feels banked. */}
+          {!isOpen && getContract() && (
+            <UiEntity
+              uiTransform={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: {
+                  top: Math.round(5 * S), bottom: Math.round(5 * S),
+                  left: Math.round(12 * S), right: Math.round(12 * S),
+                },
+                margin: { bottom: LABEL_MARGIN_SMALL },
+                borderRadius: Math.round(14 * S),
+              }}
+              uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
+            >
+              <Label
+                value={`${getContract()!.label}   ${Math.min(getContract()!.progress, getContract()!.target)}/${getContract()!.target}`}
+                fontSize={Math.round(26 * S)}
+                color={getContract()!.progress >= getContract()!.target
+                  ? theme.colors.success
+                  : { r: 1, g: 0.82, b: 0.25, a: 1 }}
+              />
+            </UiEntity>
+          )}
+
+          {/* Closing-time frenzy — final seconds, sprees count double. */}
+          {!isOpen && phase === 'playing' && seconds <= 20 && seconds > 0 && (
             <Label
-              value={`Next round in ${formatTime(seconds)}`}
-              fontSize={nextFont}
-              color={COLOR_DIM}
+              value="FRENZY! Sprees count double"
+              fontSize={Math.round(24 * S)}
+              color={{ r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(Date.now() / 120) }}
+              uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
             />
           )}
+
+          {/* The intermission countdown moved into the shift report card — it was
+              the other half of the two-competing-UIs problem. */}
         </UiEntity>
       </UiEntity>
 
@@ -1318,6 +1343,23 @@ const ui = () => {
               if (rank <= 0) return   // already at the bottom rung
               room.send('adminGrant', { money: 0, xp: TITLE_XP[rank - 1] - c.xp })
             }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          {/* Intro previews — the lobby is a ~5s beat now, so catching the cards
+              naturally isn't practical. "New" forces the 3-card story even on an
+              account that has already worked shifts. */}
+          <Button
+            value="Intro: new"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => replayCareerIntro(true)}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <Button
+            value="Intro: returning"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => replayCareerIntro(false)}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
           <Button

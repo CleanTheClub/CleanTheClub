@@ -19,6 +19,13 @@ import { isActive, isKnown } from './participation'
 // thin geometry. True 3D distance (y included) blocks the cross-floor case.
 export const MAX_REACH_M = 4
 
+// Pointer-event maxDistance is measured from the CAMERA, not the player — and
+// the mobile third-person camera floats 3-5m behind the avatar, so a 4m cutoff
+// refused interactions while standing ON the item ("like there's no pointer
+// event", worst on furniture). Prompts therefore use this camera-based range;
+// withinReach (player-based, above) remains the true accept gate on click.
+export const POINTER_MAX_DIST = 7
+
 export function withinReach(pos: { x: number; y: number; z: number } | undefined | null): boolean {
   if (!pos) return true   // unknown item position — don't block the interaction
   const p = Transform.getOrNull(engine.PlayerEntity)?.position

@@ -23,8 +23,8 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { room } from '../shared/messages'
 import { setupClickProxy } from '../shared/sceneItemHelpers'
-import { clicksAllowed, onPhaseChange, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
-import { playHoverSound, playClickSound, playCleanSound } from './soundManager'
+import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { playHoverSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 
@@ -153,14 +153,13 @@ function enableClick(s: ItemState) {
 
   pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
-    { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: MAX_REACH_M } },
+    { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: POINTER_MAX_DIST } },
     () => {
       if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (s.pendingClean) return
       s.pendingClean = true
       disableClick(s)
 
-      playClickSound()
       playCleanSound()
       const pos = Transform.getOrNull(entity)?.position
       if (pos) playSparkle(pos)

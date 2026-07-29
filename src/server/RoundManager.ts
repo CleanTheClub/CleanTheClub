@@ -273,6 +273,11 @@ function roundMsRemaining(): number {
 function respawnAllowed(delayMs: number): boolean {
   const remaining = roundMsRemaining()
   if (remaining === 0) return false
+  // Round 0 is a warm-up: nothing respawns, so a match opens as a straight
+  // "clean what's in front of you" round. New players get to see the club
+  // actually getting cleaner before the mess starts fighting back, which is
+  // where V2 read as harder than V1.
+  if (roundNumber === 0) return false
   const cutoff = getRoundDurationMs() * RESPAWN_CUTOFF_FRACTION
   if (remaining <= cutoff) return false
   return delayMs < remaining - cutoff
@@ -374,6 +379,14 @@ export function initRoundManager(
   goToLobby()
 
   setInterval(() => {
+    // The club never closes. V1's lobby was a manual gate — press START, wait for
+    // others — which in V2's endless loop is a dead end: a player who arrives (or
+    // whose server restarted mid-session) sits looking at a button with nothing
+    // else happening. Instead the lobby auto-starts the moment anyone is present,
+    // so it's a brief "next shift starting" beat rather than a screen you can be
+    // stranded on. The START button remains as a way to skip the wait.
+    if (phase === 'lobby' && !starting && playerCount > 0) onStartMatch()
+
     if (phase === 'playing' || phase === 'open' || phase === 'lobby') syncGameState()
   }, 1_000)
 }

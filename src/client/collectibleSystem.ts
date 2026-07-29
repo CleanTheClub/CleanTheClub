@@ -9,13 +9,14 @@ import { SceneItemDef } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playClickSound, playCleanSound, playMissSound } from './soundManager'
+import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
 import { isCarryFull } from './carrySystem'
+import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
 export type CollectibleConfig = {
@@ -125,7 +126,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     pointerEventsSystem.onPointerDown(
       // Glasses and bottles are glass — they fill the recycling pouch, and the
       // prompt says so, so the carry chip's green number can't be a mystery.
-      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Collect (Recycling)', maxDistance: MAX_REACH_M } },
+      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean (Recycling)', maxDistance: POINTER_MAX_DIST } },
       () => {
         if (pendingCleans.has(itemId)) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
@@ -133,8 +134,8 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         const pos = Transform.getOrNull(containerEntity)?.position
         if (!withinReach(pos)) { maybeShowTooFarToast(); return }
         pendingCleans.add(itemId)
+        registerSpreeHit()
         disableClick(itemId)
-        playClickSound()
         playCleanSound()
         if (pos) playPickupEmote(pos)
         room.send('cleanItem', { itemId })

@@ -19,9 +19,26 @@ export type ShiftPayout = {
   xp:     number
   passed: boolean
   items:  number
+  // Juice layer — all optional-shaped so an older server payload still parses.
+  grade:         string
+  tip:           number
+  contractLabel: string | null
+  contractDone:  boolean
+  contractBonus: number
+  openingBonus:  boolean
+  streakDays:    number
+  streakXp:      number
+  newBest:       boolean
+}
+
+/** The shift contract mirror — server-rolled goal + live progress. */
+export type ContractState = {
+  kind: string; target: number; progress: number
+  money: number; xp: number; label: string
 }
 
 export type CareerState = {
+  openingAvailable: boolean
   money:      number
   xp:         number
   shifts:     number
@@ -36,6 +53,7 @@ export type CareerState = {
 }
 
 const EMPTY: CareerState = {
+  openingAvailable: false,
   money: 0, xp: 0, shifts: 0, rank: 0,
   title: 'Junior Janitor', nextTitle: 'Janitor', fraction: 0,
   upgrades: {}, isGuest: false, lastShift: null, promotedTo: null,
@@ -62,7 +80,18 @@ export function requestPurchase(id: UpgradeId): void {
   room.send('buyUpgrade', { upgradeId: id })
 }
 
+let contract: ContractState | null = null
+export const getContract = (): ContractState | null => contract
+
 export function initProgressionStore(): void {
+  room.onMessage('contractUpdate', (data) => {
+    try {
+      contract = data.contractJson ? (JSON.parse(data.contractJson) as ContractState) : null
+    } catch {
+      contract = null
+    }
+  })
+
   room.onMessage('progressUpdate', (data) => {
     try {
       const next = JSON.parse(data.progressJson) as CareerState

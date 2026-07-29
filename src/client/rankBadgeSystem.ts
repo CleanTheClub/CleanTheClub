@@ -1,20 +1,24 @@
-// Career plate — the player's job title on a nametag-style pill, floating just
-// above their real nametag.
+// Career nametags — the scene's replacement for the explorer's own nametags.
 //
-// The scene cannot change a player's actual wearables, so this is how a rank
-// reads at a glance. Styled to match the explorer's own nametag (translucent
-// dark pill, clean text) rather than an iconographic badge — playtest verdict
-// on the medallion: "replicate the player's actual nametag style … that would
-// look nicer". The title text takes the career tier's colour, so the ladder
-// still reads bronze → silver → teal → purple → gold.
+// The scene hides real nametags inside the club (AMT_HIDE_NAMETAGS, see
+// initNametagHideArea) and renders these plates instead: the player's name on
+// the first line, their job title on the second in their career-tier colour.
+// That's the "put their career in the nametag" idea — the SDK still can't edit
+// the real tag, but with hiding available we can own the whole thing rather
+// than stacking a second label above it.
 //
-// LOCAL ONLY for now: entities a client creates aren't replicated, so other
-// players can't see your plate yet. Making it social needs the server to
-// broadcast everyone's rank — planned once the look is signed off.
+// Plates are rendered for EVERY player in the scene, not just the local one:
+// hiding nametags without that would leave everyone else anonymous. Ranks come
+// from the server's ranksUpdate broadcast; a player we have no rank for yet
+// still gets their name, so nobody is ever nameless.
 
-import { engine, Entity, Transform, MeshRenderer, Material, MaterialTransparencyMode, TextShape, AvatarAttach, AvatarAnchorPointType, Billboard } from '@dcl/sdk/ecs'
-import { Color4 } from '@dcl/sdk/math'
-import { getCareer } from './progressionStore'
+import {
+  engine, Entity, Transform, MeshRenderer, Material, MaterialTransparencyMode,
+  TextShape, Font, AvatarAttach, AvatarAnchorPointType, Billboard, PlayerIdentityData,
+  AvatarModifierArea, AvatarModifierType,
+} from '@dcl/sdk/ecs'
+import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
+import { room } from '../shared/messages'
 
 // Rank index → tier colour. Tiers group the ladder: janitors (0-2), senior
 // cleaners (3-4), supervisors (5-6), managers (7-9), the top (10-11).
@@ -27,133 +31,264 @@ const TIER_COLORS: Color4[] = [
   Color4.create(1.00, 0.82, 0.30, 1),   // gold
 ]
 
-// Sized and positioned to read as a second line of the explorer's own nametag
-// stack (playtest: "same size as the name tag… fully in tandem"). Tune here.
-const PLATE_Y_OFFSET = 0.24   // metres above the name-tag anchor
-const PLATE_HEIGHT   = 0.16   // world metres — pill height ≈ the real tag's
-const TITLE_FONT     = 1.0
-// Pill width tracks title length: perChar + padding, in world metres.
-const PILL_W_PER_CHAR = 0.055
-const PILL_W_PAD      = 0.14
+// Sized to sit where the real nametag did. Authored at REF_DIST_M and scaled by
+// camera distance so the plate keeps a near-constant screen size, then faded at
+// range — both behaviours copied from the explorer's own tag.
+const PLATE_Y      = 0.10
+const NAME_FONT    = 0.95
+const TITLE_FONT   = 0.8
+const PILL_H       = 0.30
+// The pill texture is a white stadium drawn in the middle 25% band of a square
+// PNG (the rest transparent), so the quad is scaled 4× the visible height and
+// the shape supplies the rounded corners. White on purpose: albedoColor tints
+// it, so one texture serves every colour.
+const PILL_TEX       = 'assets/scene/UI/plate_pill.png'
+const PILL_BAND      = 0.25
+const PILL_PER_CHAR = 0.052
+const PILL_PAD     = 0.16
+const REF_DIST_M   = 6
+const SCALE_MIN    = 0.7
+const SCALE_MAX    = 2.6
+const FADE_START_M = 14
+const FADE_END_M   = 20
 
-let plateRoot: Entity | null = null
-let pillPlane: Entity | null = null
-let titleText: Entity | null = null
-let currentTitle = ''
-let currentColor = Color4.White()
-let lastFade     = -1
+type RankInfo = { name: string; title: string; rank: number }
+const ranks = new Map<string, RankInfo>()   // lowercased address → career info
 
-// ── Native-tag behaviour ──────────────────────────────────────────────────────
-// The explorer's real nametag keeps a near-constant SCREEN size (it scales with
-// camera distance) and fades out at range. A fixed world-size plate visibly
-// shrinks/grows against it — the "doesn't behave the same" feedback — so the
-// plate mirrors both behaviours: authored sizes are correct at REF_DIST_M and
-// scale linearly with camera distance, then fade to nothing at range.
-const REF_DIST_M   = 4
-const SCALE_MIN    = 0.8
-const SCALE_MAX    = 3.0
-const FADE_START_M = 12
-const FADE_END_M   = 18
+type Plate = {
+  root:    Entity   // AvatarAttach'd to the player
+  carrier: Entity   // billboarded holder — animated (float + promotion pop)
+  pill:    Entity
+  nameT:   Entity
+  titleT:  Entity
+  avatar:  Entity   // the PlayerIdentityData entity, for distance/fade
+  key:     string   // last rendered content, so we only rebuild on change
+  fade:    number
+  scale:   number   // last distance-derived scale, reused by the animator
+  rank:    number   // to detect promotions
+  popMs:   number   // >=0 while a promotion pop is playing
+  bob:     number   // per-plate phase so plates don't float in lockstep
+}
 
-function applyFade(fade: number): void {
-  if (!pillPlane || !titleText) return
-  Material.setPbrMaterial(pillPlane, {
-    albedoColor:      Color4.create(0, 0, 0, 0.55 * fade),
-    transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
+// ── Cuteness knobs ────────────────────────────────────────────────────────────
+// The plate keeps a flat dark pill for legibility (a coloured glow washed the
+// text out), and earns its character from motion instead: it drifts gently and
+// pops on promotion. Rank colour lives in the title text.
+const BOB_AMPLITUDE_M = 0.012
+const BOB_SPEED       = 1.6
+const POP_MS          = 700
+const POP_SCALE       = 0.45   // extra scale at the peak of a promotion pop
+const plates = new Map<string, Plate>()   // lowercased address → plate
+
+function buildPlate(address: string, avatar: Entity): Plate {
+  const root = engine.addEntity()
+  // avatarId targets a specific player; without it AvatarAttach binds to the
+  // local player, which is why the old single-plate version was local-only.
+  AvatarAttach.create(root, {
+    avatarId:      address,
+    anchorPointId: AvatarAnchorPointType.AAPT_NAME_TAG,
+  })
+
+  const carrier = engine.addEntity()
+  Transform.create(carrier, { parent: root, position: { x: 0, y: PLATE_Y, z: 0 } })
+  Billboard.create(carrier, {})
+
+  const pill = engine.addEntity()
+  Transform.create(pill, { parent: carrier })
+  MeshRenderer.setPlane(pill)
+
+  const nameT = engine.addEntity()
+  Transform.create(nameT, { parent: carrier, position: { x: 0, y: 0.062, z: -0.012 } })
+  TextShape.create(nameT, {
+    text: '', fontSize: NAME_FONT, textColor: Color4.White(),
+    outlineColor: Color4.Black(), outlineWidth: 0.12,
+  })
+
+  const titleT = engine.addEntity()
+  Transform.create(titleT, { parent: carrier, position: { x: 0, y: -0.075, z: -0.012 } })
+  // Serif + caps (applied in renderPlate) styles the rank as an engraved plaque
+  // line under the sans name — the only typographic contrast TextShape offers
+  // (three built-in families, no weights). Revert = drop `font` and the
+  // toUpperCase().
+  TextShape.create(titleT, {
+    text: '', fontSize: TITLE_FONT, font: Font.F_SERIF, textColor: Color4.White(),
+    outlineColor: Color4.Black(), outlineWidth: 0.12,
+  })
+
+  return {
+    root, carrier, pill, nameT, titleT, avatar,
+    key: '', fade: -1, scale: 1, rank: -1, popMs: -1,
+    bob: Math.random() * Math.PI * 2,
+  }
+}
+
+function destroyPlate(p: Plate): void {
+  for (const e of [p.pill, p.nameT, p.titleT, p.carrier, p.root]) engine.removeEntity(e)
+}
+
+/**
+ * Pill paint — rounded shape from the texture's alpha over a flat dark base.
+ *
+ * NO emissive. A tier-coloured emissive ADDS light on top of the albedo, so a
+ * bronze tier over black produced a tan slab that swallowed the text. Rank
+ * identity lives in the title's text colour instead, where it can't fight
+ * legibility. `alphaTexture` is set explicitly: without it the quad's
+ * transparent region is still shaded and the pill reads as a rectangle.
+ */
+function paintPill(p: Plate, fade: number): void {
+  const tex = Material.Texture.Common({ src: PILL_TEX })
+  Material.setPbrMaterial(p.pill, {
+    texture:           tex,
+    alphaTexture:      tex,
+    albedoColor:       Color4.create(0, 0, 0, 0.85 * fade),
+    emissiveColor:     Color3.Black(),
+    emissiveIntensity: 0,
+    transparencyMode:  MaterialTransparencyMode.MTM_ALPHA_BLEND,
     specularIntensity: 0,
     metallic:  0,
     roughness: 1,
   })
-  const ts = TextShape.getMutable(titleText)
-  ts.textColor    = Color4.create(currentColor.r, currentColor.g, currentColor.b, fade)
-  ts.outlineColor = Color4.create(0, 0, 0, fade)
 }
 
-function tagBehaviourSystem(): void {
-  if (!plateRoot) return
+/** Applies name/title/colour + pill width. Only called when the content changes. */
+function renderPlate(p: Plate, info: RankInfo): void {
+  const tier = TIER_FOR_RANK[Math.max(0, Math.min(info.rank, TIER_FOR_RANK.length - 1))]
+  p.fade = -1   // force a repaint so the new tier's glow is applied
+  const nt = TextShape.getMutable(p.nameT)
+  nt.text = info.name
+  const tt = TextShape.getMutable(p.titleT)
+  tt.text = info.title.toUpperCase()
+  tt.textColor = TIER_COLORS[tier]
+
+  // Y is divided by the band fraction because the stadium only occupies the
+  // middle quarter of the texture; the rest is transparent padding.
+  // Caps run wider than lowercase, so the title's contribution is padded.
+  const chars = Math.max(info.name.length, Math.round(info.title.length * 1.15))
+  Transform.getMutable(p.pill).scale = {
+    x: PILL_PER_CHAR * chars + PILL_PAD,
+    y: (info.title ? PILL_H : PILL_H * 0.6) / PILL_BAND,
+    z: 1,
+  }
+}
+
+/** Distance-compensated scale + range fade, per plate (each has its own owner). */
+function applyDistance(p: Plate): void {
   const cam = Transform.getOrNull(engine.CameraEntity)?.position
-  const ply = Transform.getOrNull(engine.PlayerEntity)?.position
-  if (!cam || !ply) return
-  const dx = cam.x - ply.x, dy = cam.y - (ply.y + 2), dz = cam.z - ply.z
+  const pos = Transform.getOrNull(p.avatar)?.position
+  if (!cam || !pos) return
+  const dx = cam.x - pos.x, dy = cam.y - (pos.y + 2), dz = cam.z - pos.z
   const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
 
-  const s = Math.min(SCALE_MAX, Math.max(SCALE_MIN, dist / REF_DIST_M))
-  Transform.getMutable(plateRoot).scale = { x: s, y: s, z: s }
+  // Stored, not applied: the per-frame animator combines it with the float and
+  // any promotion pop so the two can't fight over the transform.
+  p.scale = Math.min(SCALE_MAX, Math.max(SCALE_MIN, dist / REF_DIST_M))
 
   const fade = dist <= FADE_START_M
     ? 1
     : Math.max(0, 1 - (dist - FADE_START_M) / (FADE_END_M - FADE_START_M))
-  if (Math.abs(fade - lastFade) > 0.02) {
-    lastFade = fade
-    applyFade(fade)
+  if (Math.abs(fade - p.fade) <= 0.03) return
+  p.fade = fade
+
+  paintPill(p, fade)
+  const nt = TextShape.getMutable(p.nameT)
+  nt.textColor    = Color4.create(1, 1, 1, fade)
+  nt.outlineColor = Color4.create(0, 0, 0, fade)
+  const tier = TextShape.get(p.titleT).textColor ?? Color4.White()
+  TextShape.getMutable(p.titleT).textColor = Color4.create(tier.r, tier.g, tier.b, fade)
+}
+
+/**
+ * Hides the explorer's own nametags across the club, so our plates replace them
+ * rather than stacking under them. The box is generous vertically: the docs warn
+ * the tag reappears if a player's head leaves the area (e.g. a double jump).
+ */
+function initNametagHideArea(): void {
+  const area = engine.addEntity()
+  Transform.create(area, { position: Vector3.create(16, 12, 16) })
+  AvatarModifierArea.create(area, {
+    area:       Vector3.create(40, 40, 40),   // covers all 4 parcels + both floors
+    modifiers:  [AvatarModifierType.AMT_HIDE_NAMETAGS],
+    excludeIds: [],
+  })
+}
+
+/**
+ * Per-frame plate animation: a gentle float, plus a springy pop when a player is
+ * promoted. Kept separate from the 0.4 s reconcile loop so motion stays smooth.
+ */
+function animatePlates(dt: number): void {
+  for (const [, p] of plates) {
+    p.bob += dt * BOB_SPEED
+    let scale = p.scale
+
+    if (p.popMs >= 0) {
+      p.popMs += dt * 1000
+      const t = Math.min(1, p.popMs / POP_MS)
+      // Out-and-back: swells fast, settles slow.
+      scale += POP_SCALE * Math.sin(t * Math.PI) * (1 - t * 0.35)
+      if (t >= 1) p.popMs = -1
+    }
+
+    const ct = Transform.getMutableOrNull(p.carrier)
+    if (!ct) continue
+    ct.scale    = { x: scale, y: scale, z: scale }
+    ct.position = { x: 0, y: PLATE_Y + Math.sin(p.bob) * BOB_AMPLITUDE_M, z: 0 }
   }
 }
 
-function buildPlate(): void {
-  const root = engine.addEntity()
-  AvatarAttach.create(root, { anchorPointId: AvatarAnchorPointType.AAPT_NAME_TAG })
-
-  // One billboarded carrier so pill + text always turn together.
-  plateRoot = engine.addEntity()
-  Transform.create(plateRoot, { parent: root, position: { x: 0, y: PLATE_Y_OFFSET, z: 0 } })
-  Billboard.create(plateRoot, {})
-
-  // Plain translucent quad, coloured in-material rather than textured: the 3D
-  // texture path ignored the pill PNG's alpha and rendered a white plane, and a
-  // colour-only material can't fail that way. Square corners at 0.16m tall are
-  // indistinguishable from the real tag's rounding at any normal distance.
-  pillPlane = engine.addEntity()
-  Transform.create(pillPlane, { parent: plateRoot })
-  MeshRenderer.setPlane(pillPlane)
-  Material.setPbrMaterial(pillPlane, {
-    albedoColor:      Color4.create(0, 0, 0, 0.55),
-    transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
-    specularIntensity: 0,
-    metallic:  0,
-    roughness: 1,
-  })
-
-  titleText = engine.addEntity()
-  // Slightly in front of the pill along the billboard axis so it can't z-fight.
-  Transform.create(titleText, { parent: plateRoot, position: { x: 0, y: 0, z: -0.012 } })
-  TextShape.create(titleText, {
-    text:         '',
-    fontSize:     TITLE_FONT,
-    textColor:    Color4.White(),
-    outlineColor: Color4.Black(),
-    outlineWidth: 0.1,
-  })
-}
-
-function applyTitle(title: string, tier: number): void {
-  if (!pillPlane || !titleText) return
-  currentColor = TIER_COLORS[tier]
-  const ts = TextShape.getMutable(titleText)
-  ts.text      = title
-  ts.textColor = currentColor
-
-  // Pill width tracks the title length ("Junior Janitor" vs shorter titles).
-  const pillW = PILL_W_PER_CHAR * title.length + PILL_W_PAD
-  Transform.getMutable(pillPlane).scale = { x: pillW, y: PLATE_HEIGHT, z: 1 }
-}
-
 export function initRankBadgeSystem(): void {
-  engine.addSystem(tagBehaviourSystem)   // per-frame distance scale + range fade
+  initNametagHideArea()
+  engine.addSystem(animatePlates)
+
+  room.onMessage('ranksUpdate', (data) => {
+    try {
+      const roster = JSON.parse(data.rosterJson) as Array<{ a: string; n: string; t: string; r: number }>
+      ranks.clear()
+      for (const e of roster) ranks.set(e.a.toLowerCase(), { name: e.n, title: e.t, rank: e.r })
+    } catch (e) {
+      console.log('[BADGE] failed to parse ranksUpdate:', e)
+    }
+  })
 
   let acc = 0
   engine.addSystem((dt: number) => {
     acc += dt
-    if (acc < 0.5) return   // title changes are rare — no need to check per frame
+    if (acc < 0.4) return   // roster changes are rare; no need to scan per frame
     acc = 0
 
-    const c = getCareer()
-    if (!c) return   // no career yet — no plate rather than a wrong one
-    if (c.title === currentTitle && plateRoot !== null) return
-    currentTitle = c.title
+    // Reconcile plates against who is actually in the scene.
+    const present = new Set<string>()
+    for (const [avatar, data] of engine.getEntitiesWith(PlayerIdentityData)) {
+      const key = data.address.toLowerCase()
+      present.add(key)
 
-    if (plateRoot === null) buildPlate()
-    const tier = TIER_FOR_RANK[Math.max(0, Math.min(c.rank, TIER_FOR_RANK.length - 1))]
-    applyTitle(c.title, tier)
-    console.log(`[BADGE] career plate → "${c.title}" (tier ${tier + 1})`)
+      let plate = plates.get(key)
+      if (!plate) {
+        plate = buildPlate(data.address, avatar)
+        plates.set(key, plate)
+      }
+
+      // No rank yet (broadcast in flight) → show the name alone rather than
+      // leaving a player anonymous behind a hidden nametag.
+      // PlayerIdentityData carries no display name, so the stand-in is a short
+      // address — replaced the moment the roster broadcast lands.
+      const info = ranks.get(key) ?? { name: `${data.address.slice(0, 6)}…`, title: '', rank: 0 }
+      const contentKey = `${info.name}|${info.title}|${info.rank}`
+      if (contentKey !== plate.key) {
+        // A rank that went UP is a promotion — celebrate it on the plate, so
+        // everyone nearby sees the moment, not just the promoted player.
+        if (plate.rank >= 0 && info.rank > plate.rank) plate.popMs = 0
+        plate.rank = info.rank
+        plate.key  = contentKey
+        renderPlate(plate, info)
+      }
+      applyDistance(plate)
+    }
+
+    for (const [key, plate] of plates) {
+      if (present.has(key)) continue
+      destroyPlate(plate)
+      plates.delete(key)
+    }
   })
 }

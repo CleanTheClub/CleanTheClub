@@ -46,6 +46,21 @@ export const Messages = {
    */
   progressUpdate:   Schemas.Map({ progressJson: Schemas.String }),
   /**
+   * Everyone's career rank, broadcast to ALL clients so each can render a career
+   * plate above every avatar. Required because the scene hides the explorer's
+   * own nametags (AMT_HIDE_NAMETAGS) and the plate takes their place — a
+   * local-only plate would leave every other player nameless.
+   * JSON array of { a: address, n: displayName, t: title, r: rank }.
+   */
+  ranksUpdate:      Schemas.Map({ rosterJson: Schemas.String }),
+  /**
+   * This player's shift contract — a server-rolled mini-goal for the current
+   * round ("Mop 3 sticky patches"), with live progress. JSON for shape freedom:
+   * { label, kind, progress, target, money, xp }. Sent at round start and on
+   * every progress tick; null-ish (empty string) when no contract is active.
+   */
+  contractUpdate:   Schemas.Map({ contractJson: Schemas.String }),
+  /**
    * Whether this player is cleaning this shift, and whether they're queued for the
    * next one. Server-authoritative: participation gates whether cleans are accepted,
    * so the client must not decide it for itself.

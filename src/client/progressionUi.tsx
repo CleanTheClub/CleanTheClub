@@ -29,11 +29,6 @@ const XP_FILL = theme.colors.success
 
 const money = (n: number): string => `$${n.toLocaleString('en-US')}`
 
-// Local mirror of the renderer's PositionUnit rather than a deep import from
-// @dcl/react-ecs/dist/... — reaching into dist internals breaks on any SDK
-// restructure, and this only needs the two forms the payout panel actually uses.
-type TopUnit = number | `${number}%`
-
 // ── Shop zoom ─────────────────────────────────────────────────────────────────
 // Extra scale applied to EVERYTHING inside the shop (fonts, icons, rows, buttons)
 // on top of the caller's platform scale S. The shop is a focused full-attention
@@ -43,7 +38,17 @@ type TopUnit = number | `${number}%`
 //
 // TUNE HERE: raise toward 2.5 if the shop still reads small; lower toward 1.5 if
 // it crowds the screen (check mobile before going higher).
-const SHOP_ZOOM = 2.0
+// The shop must fit FIVE upgrade rows inside the 720-tall virtual canvas with no
+// scrolling. It was tuned when only two upgrades were implemented; all five ship
+// now, so the zoom is capped and the row chrome (below) is compact. Mobile gets
+// slightly less again — it multiplies MOBILE_SCALE on top of this.
+const SHOP_ZOOM_DESKTOP = 1.6
+const SHOP_ZOOM_MOBILE  = 1.3
+const shopZoom = (): number => (isMobile() ? SHOP_ZOOM_MOBILE : SHOP_ZOOM_DESKTOP)
+
+// The payout panel has no row-count pressure of its own but grew several bonus
+// rows with the contracts/streaks work, so it keeps its own (larger) zoom.
+const PAYOUT_ZOOM = 1.5
 
 // ── Shop open/closed ──────────────────────────────────────────────────────────
 // Module state rather than React state: the renderer re-runs ui() continuously, so
@@ -111,6 +116,7 @@ export function CareerBar({ S }: { S: number }) {
         flexDirection: 'column',
         alignItems: 'flex-end',
         padding: { top: pad, bottom: pad, left: pad, right: pad },
+        borderRadius: Math.round(12 * Z),
       }}
       uiBackground={{ color: theme.hud.bg }}
     >
@@ -167,19 +173,29 @@ export function CareerBar({ S }: { S: number }) {
 // End-of-shift payout — the GDD's "clear feedback at the end of every shift".
 // Rendered by ui.tsx during the intermission, below the outcome banner.
 // ─────────────────────────────────────────────────────────────────────────────
-export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
+export function ShiftPayoutPanel(
+  { S, imageSrc, pct, seconds }:
+  { S: number; imageSrc: string; pct: number; seconds: number },
+) {
   const c = getCareer()
   const shift = c?.lastShift
   if (!c || !shift) return null
 
-  // The payout is the shift's headline moment and a focused overlay like the
-  // shop, so it shares SHOP_ZOOM — at ambient HUD sizes it was unreadable
-  // ("can't really read it") on both platforms.
-  const Z = S * SHOP_ZOOM
+  // The payout is the shift's headline moment, so it renders well above ambient
+  // HUD size ("can't really read it") — but it also gained grade/tip/contract/
+  // streak rows, so its zoom is its own constant rather than the shop's.
+  const Z = S * PAYOUT_ZOOM
 
   const font  = Math.round(22 * Z)
   const small = Math.round(16 * Z)
   const pad   = Math.round(14 * Z)
+
+  // Pop-in — the card slides up and fades in over ~220ms, replacing the outcome
+  // banner's old fly-to-centre beat (which is what used to collide with it).
+  const popT    = Math.min(1, Math.max(0, (Date.now() - getLastPayoutMs()) / 220))
+  const popEase = 1 - Math.pow(1 - popT, 3)
+  const popDrop = Math.round((1 - popEase) * 46 * Z)   // px it rises through
+  const popBg   = Color4.create(PANEL.r, PANEL.g, PANEL.b, PANEL.a * popEase)
 
   const row = (label: string, value: string, color: Color4) => (
     <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'space-between', width: Math.round(300 * Z) }}>
@@ -188,19 +204,24 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
     </UiEntity>
   )
 
-  // Centre on the WHOLE screen. This used to centre within the safe band, but
-  // the fallback insets reserve the left 26% for desktop chat — visibly pushing
-  // the panel right of centre ("some things on desktop are misaligned") for the
-  // common case of a collapsed chat. At 56% height nothing actually overlaps a
-  // true-centred panel.
+  // ONE consolidated shift report, vertically centred on the screen.
+  //
+  // The intermission used to show two competing UIs: the outcome banner + "44%
+  // Clean" claiming the middle of the screen, and this panel below it — which
+  // then had nowhere to go and ran off the bottom on mobile. They are the same
+  // information beat, so they are now one card: outcome art, grade, score,
+  // payout, countdown. A centring flex column (rather than a fixed `top`) means
+  // the card can never overflow, whatever rows a given shift earns.
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute',
-        position: { top, left: 0 },
+        position: { top: 0, left: 0 },
         width: '100%',
-        flexDirection: 'row',
+        height: '100%',
+        flexDirection: 'column',
         justifyContent: 'center',
+        alignItems: 'center',
       }}
     >
       <UiEntity
@@ -208,9 +229,36 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
           flexDirection: 'column',
           alignItems: 'center',
           padding: { top: pad, bottom: pad, left: pad * 2, right: pad * 2 },
+          margin: { top: popDrop, bottom: -popDrop },   // rise without shifting the centre
+          borderRadius: Math.round(18 * Z),
         }}
-        uiBackground={{ color: PANEL }}
+        uiBackground={{ color: popBg }}
       >
+        {/* Outcome art — the card's headline, replacing the separate banner. */}
+        <UiEntity
+          uiTransform={{
+            width: Math.round(330 * Z),
+            height: Math.round(41 * Z),   // 8:1, matching the source art
+            margin: { bottom: Math.round(6 * Z) },
+          }}
+          uiBackground={{ texture: { src: imageSrc }, textureMode: 'stretch', color: WHITE }}
+        />
+
+        {/* Grade + cleanliness on one line — the shift's score at a glance. */}
+        <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { bottom: Math.round(4 * Z) } }}>
+          {shift.grade && (
+            <Label
+              value={shift.grade}
+              fontSize={Math.round(46 * Z)}
+              color={shift.grade === 'S' ? GOLD
+                : shift.grade === 'A' ? theme.colors.success
+                : shift.grade === 'B' ? WHITE
+                : theme.bar.low}
+            />
+          )}
+          <Label value={`  ${Math.round(pct * 100)}% Clean`} fontSize={Math.round(26 * Z)} color={WHITE} />
+        </UiEntity>
+
         {/* UiEntity columns rather than JSX fragments — the DCL renderer's
             jsxFactory has no fragment support. */}
         {shift.passed ? (
@@ -238,6 +286,23 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
           </UiEntity>
         )}
 
+        {/* Bonus rows — each one earned, each one named. Older payloads without
+            these fields simply render nothing. */}
+        {(shift.tip ?? 0) > 0 && row('Patron tip', `+${money(shift.tip)}`, GOLD)}
+        {shift.contractLabel && (shift.contractDone
+          ? row(shift.contractLabel, `+${money(shift.contractBonus)}`, theme.colors.success)
+          : row(shift.contractLabel, 'missed', SUBTLE))}
+        {shift.openingBonus && row('Opening shift bonus', '×2 XP', GOLD)}
+        {(shift.streakXp ?? 0) > 0 && row(`Day ${shift.streakDays} work streak`, `+${shift.streakXp} XP`, XP_FILL)}
+        {shift.newBest && (
+          <Label
+            value="NEW PERSONAL BEST!"
+            fontSize={Math.round(18 * Z)}
+            color={GOLD}
+            uiTransform={{ margin: { top: Math.round(6 * Z) } }}
+          />
+        )}
+
         {c.promotedTo && (
           <Label
             value={`PROMOTED — ${c.promotedTo}!`}
@@ -246,6 +311,16 @@ export function ShiftPayoutPanel({ S, top }: { S: number; top: TopUnit }) {
             uiTransform={{ margin: { top: Math.round(8 * Z) } }}
           />
         )}
+
+        {/* Countdown lives here too — it used to be a separate line in the HUD
+            strip, which is the other half of what made the intermission read as
+            two competing UIs. */}
+        <Label
+          value={`Next shift in 0:${seconds < 10 ? '0' : ''}${seconds}`}
+          fontSize={Math.round(18 * Z)}
+          color={SUBTLE}
+          uiTransform={{ margin: { top: Math.round(10 * Z) } }}
+        />
       </UiEntity>
     </UiEntity>
   )
@@ -276,9 +351,9 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
   const maxed    = cost === null
   const affordable = cost !== null && c.money >= cost
 
-  const font  = Math.round(21 * S)
-  const small = Math.round(15 * S)
-  const icon  = Math.round(64 * S)
+  const font  = Math.round(19 * S)
+  const small = Math.round(14 * S)
+  const icon  = Math.round(46 * S)
 
   // One clear reason why a purchase isn't available, rather than a dead button.
   const statusLabel = maxed
@@ -296,8 +371,9 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
         alignItems: 'center',
         justifyContent: 'space-between',
         width,
-        margin: { bottom: Math.round(10 * S) },
-        padding: { top: Math.round(10 * S), bottom: Math.round(10 * S), left: Math.round(12 * S), right: Math.round(14 * S) },
+        margin: { bottom: Math.round(7 * S) },
+        padding: { top: Math.round(6 * S), bottom: Math.round(6 * S), left: Math.round(10 * S), right: Math.round(12 * S) },
+        borderRadius: Math.round(10 * S),
       }}
       uiBackground={{ color: Color4.create(1, 1, 1, 0.06) }}
     >
@@ -318,8 +394,8 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
         <Button
           value={statusLabel}
           variant={affordable ? 'primary' : 'secondary'}
-          fontSize={Math.round(18 * S)}
-          uiTransform={{ width: Math.round(150 * S), height: Math.round(52 * S) }}
+          fontSize={Math.round(17 * S)}
+          uiTransform={{ width: Math.round(130 * S), height: Math.round(42 * S) }}
           // Still sent when unaffordable: the server is the authority and will
           // refuse and resync, which self-corrects a client showing stale money.
           onMouseDown={() => requestPurchase(def.id)}
@@ -340,20 +416,41 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
 
   return (
     <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-      <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { bottom: Math.round(16 * S) } }}>
+      <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { bottom: Math.round(12 * S) } }}>
         <Label value="UPGRADES" fontSize={titleSize} color={WHITE} />
         <Label value={`   ${money(c.money)}`} fontSize={Math.round(titleSize * 0.82)} color={GOLD} />
       </UiEntity>
 
       {visible.map((def) => <UpgradeRow key={def.id} def={def} S={S} width={rowWidth} />)}
+    </UiEntity>
+  )
+}
 
-      <Button
-        value="CLOSE"
-        variant="secondary"
-        fontSize={Math.round(20 * S)}
-        uiTransform={{ width: Math.round(180 * S), height: Math.round(52 * S), margin: { top: Math.round(16 * S) } }}
-        onMouseDown={() => { shopOpen = false }}
-      />
+/**
+ * Corner close control. The SDK ships no standard close icon (dcl-ui-toolkit has
+ * one, but it's a separate package — not worth a dependency for a glyph), so
+ * this is a plain square hit target with an X: the convention players already
+ * know, always in the same corner, and far easier to hit than a text button that
+ * could be pushed off a short viewport (which is exactly what happened to the
+ * old bottom-anchored CLOSE on mobile).
+ */
+function CloseX({ Z }: { Z: number }) {
+  const size = Math.round(52 * Z)
+  return (
+    <UiEntity
+      uiTransform={{
+        positionType: 'absolute',
+        position: { top: Math.round(14 * Z), right: Math.round(14 * Z) },
+        width: size,
+        height: size,
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderRadius: Math.round(size / 2),   // circular close, standard affordance
+      }}
+      uiBackground={{ color: Color4.create(1, 1, 1, 0.16) }}
+      onMouseDown={() => { shopOpen = false }}
+    >
+      <Label value="X" fontSize={Math.round(30 * Z)} color={WHITE} />
     </UiEntity>
   )
 }
@@ -364,7 +461,7 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
  */
 export function UpgradeShopOverlay({ S }: { S: number }) {
   if (!shopOpen) return null
-  const Z = S * SHOP_ZOOM
+  const Z = S * shopZoom()
   return (
     <UiEntity
       uiTransform={{
@@ -374,7 +471,9 @@ export function UpgradeShopOverlay({ S }: { S: number }) {
       }}
       uiBackground={{ color: PANEL }}
     >
-      <ShopBody S={Z} rowWidth={Math.round(700 * Z)} titleSize={Math.round(44 * Z)} />
+      <ShopBody S={Z} rowWidth={Math.round(620 * Z)} titleSize={Math.round(38 * Z)} />
+      {/* Screen corner — the same place on every device, never clipped. */}
+      <CloseX Z={Z} />
     </UiEntity>
   )
 }
@@ -390,7 +489,7 @@ export function UpgradeShopOverlay({ S }: { S: number }) {
  */
 export function UpgradeShopPanel({ S }: { S: number }) {
   if (!shopOpen) return null
-  const Z = S * SHOP_ZOOM
+  const Z = S * shopZoom()
   const pad = Math.round(16 * Z)
   return (
     <UiEntity
@@ -404,7 +503,8 @@ export function UpgradeShopPanel({ S }: { S: number }) {
       // confetti-filled scene without hiding it.
       uiBackground={{ color: Color4.create(0, 0, 0, 0.72) }}
     >
-      <ShopBody S={Z} rowWidth={Math.round(520 * Z)} titleSize={Math.round(32 * Z)} />
+      <ShopBody S={Z} rowWidth={Math.round(500 * Z)} titleSize={Math.round(30 * Z)} />
+      <CloseX Z={Z} />
     </UiEntity>
   )
 }
@@ -418,15 +518,36 @@ export function UpgradeShopPanel({ S }: { S: number }) {
 // ─────────────────────────────────────────────────────────────────────────────
 let introSeen  = false
 let introCard  = 0
+// Admin preview: force the intro open from anywhere (the lobby is a 5-second
+// beat now, so waiting to catch it naturally isn't practical), and optionally
+// force the new-player story path for an account that has already worked shifts.
+let introForced       = false
+let introForceNewbie  = false
 
-/** True while the intro should replace the lobby/spectate screen. */
-export function shouldShowCareerIntro(): boolean {
-  return !introSeen && getCareer() !== null
+/**
+ * True while the intro should replace the screen. `atRestScreen` is the caller's
+ * "we're in the lobby or spectating" state — the intro never interrupts active
+ * cleaning, except when an admin has explicitly forced a preview.
+ */
+export function shouldShowCareerIntro(atRestScreen: boolean): boolean {
+  if (getCareer() === null) return false   // no career data yet — nothing to show
+  return introForced || (atRestScreen && !introSeen)
+}
+
+/** Admin preview hook — `asNewPlayer` shows the 3-card story rather than the
+ *  returning-player welcome card. */
+export function replayCareerIntro(asNewPlayer: boolean): void {
+  introSeen        = false
+  introCard        = 0
+  introForced      = true
+  introForceNewbie = asNewPlayer
 }
 
 function dismissCareerIntro(): void {
-  introSeen = true
-  introCard = 0
+  introSeen        = true
+  introCard        = 0
+  introForced      = false
+  introForceNewbie = false
 }
 
 export function CareerIntroOverlay({ S }: { S: number }) {
@@ -439,7 +560,7 @@ export function CareerIntroOverlay({ S }: { S: number }) {
   const body    = Math.round(22 * Z)
   const gap     = Math.round(14 * Z)
 
-  const newbie = c.shifts === 0
+  const newbie = introForceNewbie || c.shifts === 0
   const rung   = `Rung ${c.rank + 1} of ${JOB_TITLES.length}`
   const barW   = Math.round(320 * Z)
   const barH   = Math.round(16 * Z)
@@ -514,6 +635,16 @@ export function CareerIntroOverlay({ S }: { S: number }) {
           />
           <Label value={`  ${money(c.money)} in the bank`} fontSize={body} color={GOLD}
             uiTransform={{ margin: { top: Math.round(4 * Z) } }} />
+
+          {/* Daily hook, delivered at the moment attention peaks. */}
+          {c.openingAvailable && (
+            <Label
+              value="★ Opening shift bonus ready — first passed shift pays DOUBLE XP!"
+              fontSize={Math.round(18 * Z)}
+              color={GOLD}
+              uiTransform={{ margin: { top: gap } }}
+            />
+          )}
 
           <Button
             value={newbie ? "LET'S CLEAN!" : 'BACK TO WORK'}

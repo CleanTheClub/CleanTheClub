@@ -9,10 +9,11 @@ import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setSkillTapHandler } from '../ui'
 import { promotionBurst } from './confettiSystem'
-import { playHoverSound, playClickSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
+import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { registerSpreeHit } from './spreeSystem'
 
 const pendingCleans     = new Set<string>()
 const pendingVisualHide = new Set<string>()  // items awaiting delayed hide at touch moment
@@ -99,6 +100,7 @@ function tryClean(
   const syncEnt = findClutterEntity(id)
   if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
   pendingCleans.add(id)
+  registerSpreeHit()
   disableClick(id)            // remove prompt immediately while pending
   applyCleanState(id, true)   // optimistic swap
   room.send('cleanItem', { itemId: id })
@@ -117,7 +119,7 @@ function enableClick(id: string) {
 
   if (type === 'hold') {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: MAX_REACH_M } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: POINTER_MAX_DIST } },
       () => {
         if (pendingCleans.has(id) || activeHold) return
         const syncEnt = findClutterEntity(id)
@@ -151,14 +153,13 @@ function enableClick(id: string) {
     // so the pointer events now match the other mess items exactly (hover + down).
   } else {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: MAX_REACH_M } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: POINTER_MAX_DIST } },
       () => {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
 
-        playClickSound()
         playCleanSound()               // instant audio feedback on click
         pendingCleans.add(id)
         disableClick(id)

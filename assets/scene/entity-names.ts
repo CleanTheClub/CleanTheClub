@@ -5,6 +5,19 @@
  * Object containing all entity names in the scene for autocomplete support.
  */
 export enum EntityNames {
+  Bin_General = "Bin_General",
+  Bin_General_2 = "Bin_General_2",
+  Bin_General_3 = "Bin_General_3",
+  Bin_General_4 = "Bin_General_4",
+  Bin_Recycling = "Bin_Recycling",
+  Bin_Recycling_2 = "Bin_Recycling_2",
+  Bin_Recycling_3 = "Bin_Recycling_3",
+  Bin_Recycling_4 = "Bin_Recycling_4",
+  Bins = "Bins",
+  Bins_Stand = "Bins_Stand",
+  Bins_Stand_2 = "Bins_Stand_2",
+  Bins_Stand_3 = "Bins_Stand_3",
+  Bins_Stand_4 = "Bins_Stand_4",
   Bottle = "Bottle",
   Bottle_10 = "Bottle_10",
   Bottle_11 = "Bottle_11",
@@ -69,7 +82,6 @@ export enum EntityNames {
   NFT_1 = "NFT_1",
   NFT_2 = "NFT_2",
   NFT_3 = "NFT_3",
-  NFT_4 = "NFT_4",
   ResetItems = "ResetItems",
   Rubbish = "Rubbish",
   Rubbish_Bag = "Rubbish Bag",

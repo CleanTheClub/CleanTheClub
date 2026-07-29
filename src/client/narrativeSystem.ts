@@ -13,6 +13,7 @@ import { GameState } from '../shared/schemas'
 import { MILESTONE_EVERY } from '../shared/config'
 import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
+import { playCrowdSound } from './soundManager'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Messages — edit these ────────────────────────────────────────────────────
@@ -165,6 +166,7 @@ export function initNarrativeSystem(): void {
         if (!firedMilestones.has(m.pct) && pctInt >= m.pct) {
           firedMilestones.add(m.pct)
           showNarrativeToast(m.text)
+          playCrowdSound()   // the club applauds the progress
         }
       }
 

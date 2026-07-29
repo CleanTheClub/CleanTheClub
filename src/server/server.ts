@@ -2,16 +2,17 @@ import { engine, Entity, Name, Transform, executeTask } from '@dcl/sdk/ecs'
 import { syncEntity } from '@dcl/sdk/network'
 import { Storage, EnvVar } from '@dcl/sdk/server'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
-import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
+import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
-import { shiftRewards, titleProgress, titleForXp, upgradeValue, UpgradeId } from '../shared/progression'
+import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
-  purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust,
+  purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -193,6 +194,15 @@ function buildCategories(): LbCategory[] {
 
   return [
     {
+      // Daily board — resets every UTC day, so newcomers always have a winnable
+      // race even while the all-time boards belong to the veterans.
+      key: 'today', title: "TODAY'S TOP", scoreHeader: 'CLEANED',
+      entries: topBy(
+        progress.filter((r) => r.dailyDay === todayStr()),
+        (r) => r.dailyItems, (r) => r.displayName, (r) => String(r.dailyItems),
+      ),
+    },
+    {
       key: 'cleaned', title: 'TOP CLEANERS', scoreHeader: 'CLEANED',
       entries: topBy(
         [...leaderboard.values()],
@@ -254,10 +264,14 @@ function scheduleLbUpdate(): void {
       try {
         await ensureLeaderboardLoaded()
       } catch {
-        console.log('[SERVER] Leaderboard load failed — skipping save to prevent data loss')
+        console.log('[SERVER] Leaderboard load failed — skipping broadcast')
         return
       }
-      await saveLeaderboard()
+      // Broadcast ONLY — no write. Persisting here meant one full-document PUT
+      // per burst of cleaning (5-10 per round); the external store now gets a
+      // single checkpoint write at shift end instead, alongside progress. Worst
+      // case a server crash mid-round loses that round's score deltas, which is
+      // exactly the checkpoint granularity the Storage guidance asks for.
       broadcastLeaderboard()
     })
   }, LB_DEBOUNCE_MS)
@@ -265,15 +279,25 @@ function scheduleLbUpdate(): void {
 
 // ── Progression ───────────────────────────────────────────────────────────────
 
+/** Everything the payout screen celebrates about one finished shift. */
+type LastShift = {
+  money: number; xp: number; passed: boolean; items: number
+  grade: string; tip: number
+  contractLabel: string | null; contractDone: boolean; contractBonus: number
+  openingBonus: boolean; streakDays: number; streakXp: number; newBest: boolean
+}
+
 /** Serialises one player's career state for the progressUpdate message. */
 function progressPayload(
   address: string,
-  lastShift?: { money: number; xp: number; passed: boolean; items: number },
+  lastShift?: LastShift,
   promotedTo?: string | null,
 ): string {
   const rec  = getProgress(address)
   const prog = titleProgress(rec.xp)
   return JSON.stringify({
+    // Fuels the welcome-back card's "opening shift bonus ready!" line.
+    openingAvailable: rec.lastWorkDay !== todayStr(),
     money:     rec.money,
     xp:        rec.xp,
     shifts:    rec.shifts,
@@ -292,7 +316,7 @@ function progressPayload(
 
 function sendProgress(
   address: string,
-  lastShift?: { money: number; xp: number; passed: boolean; items: number },
+  lastShift?: LastShift,
   promotedTo?: string | null,
 ): void {
   room.send('progressUpdate', { progressJson: progressPayload(address, lastShift, promotedTo) }, { to: [address] })
@@ -310,6 +334,9 @@ function sendProgress(
 // a client that decided this for itself could simply declare itself active.
 const activePlayers = new Set<string>()   // cleaning in the current round
 const signedUp      = new Set<string>()   // queued for the next round
+// Everyone currently counted as in-scene. Module scope alongside the other
+// presence sets so helpers here (e.g. broadcastRanks) can read it.
+const activeSessions = new Set<string>()
 
 // ── Rubbish carrying (GDD: bin depositing + Carry Capacity upgrade) ───────────
 // Rubbish must be CARRIED to a big rubbish bag: each accepted rubbish clean fills
@@ -387,6 +414,91 @@ function sendCarried(address: string): void {
     },
     { to: [address] },
   )
+}
+
+// ── Shift contracts ───────────────────────────────────────────────────────────
+// A server-rolled mini-goal per player per round ("Mop 3 sticky patches"),
+// paying a bonus at shift end. Progress is tallied HERE, from the server's own
+// accepted cleans — the client only renders it, so a crafted message can't
+// claim a contract it didn't do.
+type ContractKind = 'general' | 'recycle' | 'glasses' | 'sticky' | 'deposits'
+type Contract = {
+  kind: ContractKind; target: number; progress: number
+  money: number; xp: number; label: string
+}
+const contracts = new Map<string, Contract>()
+
+const CONTRACT_DEFS: Array<{
+  kind: ContractKind; min: number; max: number
+  moneyPer: number; xpPer: number; label: (n: number) => string
+}> = [
+  { kind: 'general',  min: 8, max: 14, moneyPer: 4,  xpPer: 2, label: (n) => `Clean ${n} general waste` },
+  { kind: 'recycle',  min: 8, max: 14, moneyPer: 4,  xpPer: 2, label: (n) => `Clean ${n} recyclables` },
+  { kind: 'glasses',  min: 5, max: 9,  moneyPer: 6,  xpPer: 3, label: (n) => `Collect ${n} glasses` },
+  { kind: 'sticky',   min: 2, max: 4,  moneyPer: 15, xpPer: 8, label: (n) => `Mop ${n} sticky patches` },
+  { kind: 'deposits', min: 2, max: 3,  moneyPer: 12, xpPer: 6, label: (n) => `Empty bins ${n} times` },
+]
+
+function rollContract(): Contract {
+  const def = CONTRACT_DEFS[Math.floor(Math.random() * CONTRACT_DEFS.length)]
+  const target = def.min + Math.floor(Math.random() * (def.max - def.min + 1))
+  return {
+    kind: def.kind, target, progress: 0,
+    money: target * def.moneyPer, xp: target * def.xpPer,
+    label: def.label(target),
+  }
+}
+
+function sendContract(address: string): void {
+  const c = contracts.get(address)
+  room.send('contractUpdate', { contractJson: c ? JSON.stringify(c) : '' }, { to: [address] })
+}
+
+function bumpContract(address: string, kinds: ContractKind[]): void {
+  const c = contracts.get(address)
+  if (!c || c.progress >= c.target || !kinds.includes(c.kind)) return
+  c.progress++
+  sendContract(address)
+}
+
+/** Which contract kinds an accepted clean of this item advances. */
+function contractKindsFor(itemId: string): ContractKind[] {
+  const kinds: ContractKind[] = []
+  const stream = carryStreamFor(itemId)
+  if (stream === 'general') kinds.push('general')
+  if (stream === 'recycle') kinds.push('recycle')
+  if (itemId.startsWith(GLASS_ID_PREFIX))  kinds.push('glasses')
+  if (itemId.startsWith(STICKY_ID_PREFIX)) kinds.push('sticky')
+  return kinds
+}
+
+// Grade stamp for the payout screen — same thresholds the wage math uses.
+function gradeFor(pct: number): string {
+  if (pct >= 0.95)             return 'S'
+  if (pct >= OUTCOME_OPTIMAL)  return 'A'
+  if (pct >= OUTCOME_ADEQUATE) return 'B'
+  return 'C'
+}
+
+/**
+ * Broadcasts every in-scene player's career rank to everyone. Clients render a
+ * plate above each avatar from this, standing in for the explorer nametags the
+ * scene hides. Sent whenever the roster or anyone's rank can have changed —
+ * joins, shift payouts, admin grants — never per frame.
+ */
+function broadcastRanks(): void {
+  const roster: Array<{ a: string; n: string; t: string; r: number }> = []
+  for (const address of activeSessions) {
+    const rec = getProgress(address)
+    if (!rec.displayName) continue   // name not known yet; the plate falls back
+    roster.push({
+      a: address.toLowerCase(),
+      n: rec.displayName,
+      t: titleForXp(rec.xp),
+      r: rankForXp(rec.xp),
+    })
+  }
+  room.send('ranksUpdate', { rosterJson: JSON.stringify(roster) })
 }
 
 function sendParticipation(address: string): void {
@@ -494,6 +606,12 @@ export function initServer() {
     portableUsed.clear()
     for (const address of activeSessions) sendCarried(address)
 
+    // Fresh contracts for everyone cleaning this round; spectators get none
+    // (an empty send clears any stale contract chip on their HUD).
+    contracts.clear()
+    for (const address of activePlayers) contracts.set(address, rollContract())
+    for (const address of activeSessions) sendContract(address)
+
     // Tell every known player where they stand — those promoted in, and those still
     // spectating, so a spectator's UI shows the sign-up prompt for the new round.
     for (const address of activeSessions) sendParticipation(address)
@@ -505,25 +623,63 @@ export function initServer() {
   // cleanliness count and its own contribution tally — nothing here trusts a value
   // that came from a client.
   setShiftCompleteHandler((cleanedFraction, contributions, playersPresent) => {
+    const grade = gradeFor(cleanedFraction)
     // Only players who actually cleaned something are paid; idling through a shift
     // earns nothing even though the club got cleaned around them.
     for (const [address, items] of contributions) {
       if (items <= 0) continue
       const others  = Math.max(0, playersPresent - 1)
       const rewards = shiftRewards(cleanedFraction, OUTCOME_ADEQUATE, others)
-      const { promotedTo } = awardShift(address, rewards.money, rewards.xp, items)
-      sendProgress(address, { ...rewards, items }, promotedTo)
-      if (promotedTo) console.log(`[PROGRESS] ${address} promoted to ${promotedTo}`)
+      let money = rewards.money
+      let xp    = rewards.xp
+
+      // Contract payout — validated against the server's own tally.
+      const c = contracts.get(address)
+      const contractDone = c !== undefined && c.progress >= c.target
+      if (c && contractDone) { money += c.money; xp += c.xp }
+
+      // Patron tip — a small variable reward, passed shifts only.
+      let tip = 0
+      if (rewards.passed && Math.random() < 0.4) {
+        tip = 5 + Math.floor(Math.random() * 21)
+        money += tip
+      }
+
+      const res = awardShift(address, money, xp, items, rewards.passed)
+      sendProgress(address, {
+        money,
+        xp: res.xpApplied,
+        passed: rewards.passed,
+        items,
+        grade,
+        tip,
+        contractLabel: c?.label ?? null,
+        contractDone,
+        contractBonus: contractDone && c ? c.money : 0,
+        openingBonus: res.openingBonus,
+        streakDays: res.streakDays,
+        streakXp: res.streakXp,
+        newBest: res.newBest,
+      }, res.promotedTo)
+      if (res.promotedTo) console.log(`[PROGRESS] ${address} promoted to ${res.promotedTo}`)
+      // Poor-man's analytics — grep [METRICS] in server-logs for balance tuning.
+      console.log(`[METRICS] shift: player=${address.slice(0, 8)} items=${items} clean=${Math.round(cleanedFraction * 100)}% passed=${rewards.passed} grade=${grade} contract=${contractDone} tip=$${tip} players=${playersPresent}`)
     }
+
+    // Promotions land here, so refresh everyone's plates.
+    broadcastRanks()
 
     // Earnings, rank and shift-count boards only change at shift end, so refresh
     // them here — the clean-driven debounce would otherwise leave three of the four
     // categories stale until someone happened to clean something.
     broadcastLeaderboard()
 
-    // One write per shift end — the checkpoint the Storage API's rate limits expect.
-    // Never per clean.
-    executeTask(async () => { await saveProgress() })
+    // One write per document per shift end — the checkpoint granularity the
+    // Storage guidance expects. Never per clean, never per burst.
+    executeTask(async () => {
+      await saveProgress()
+      await saveLeaderboard()
+    })
   })
 
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
@@ -538,8 +694,6 @@ export function initServer() {
   // registerPlayer fire for the same player (the normal walk-in path), and
   // ensures teleport-in players (who skip the boundary event) are still counted
   // once registerPlayer arrives.
-  const activeSessions = new Set<string>()
-
   // Players who vanished mid-shift while actively cleaning (reload, backgrounded
   // phone). If they come back inside the grace window they're re-enrolled instead
   // of being demoted to spectator — reported as "reloading the scene kicks you out
@@ -551,6 +705,28 @@ export function initServer() {
   function playerEntered(sessionId: string) {
     if (activeSessions.has(sessionId)) return
     activeSessions.add(sessionId)
+
+    // Reconnect grace — HERE, on the universal entry path, not in registerPlayer.
+    // registerPlayer fires once per client session, but a mobile app-switch
+    // suspends the client WITHOUT reloading: heartbeats stop, the player is
+    // counted out, and their resumed pings re-enter them through this function.
+    // When the grace only lived in registerPlayer, such a player came back into
+    // the room but never back into the shift, while their client still believed
+    // it was active — every clean got cleanRejected, and scrubbed items snapped
+    // back instantly in a loop.
+    const vanishedAt = recentlyActive.get(sessionId)
+    if (vanishedAt !== undefined) {
+      recentlyActive.delete(sessionId)
+      if (Date.now() - vanishedAt <= RECONNECT_GRACE_MS) {
+        if (getPhase() === 'playing') activePlayers.add(sessionId)
+        else signedUp.add(sessionId)
+        console.log(`[PARTICIPATION] ${sessionId} returned within grace — re-enrolled`)
+      }
+    }
+    // Always resync participation on entry — a suspended client's mirror is
+    // stale in exactly the cases where it matters most.
+    sendParticipation(sessionId)
+
     onPlayerEnter()
   }
 
@@ -564,6 +740,7 @@ export function initServer() {
     if (activePlayers.has(sessionId)) recentlyActive.set(sessionId, Date.now())
     activePlayers.delete(sessionId)
     signedUp.delete(sessionId)
+    contracts.delete(sessionId)
     onPlayerLeave()
   }
 
@@ -586,8 +763,8 @@ export function initServer() {
   // any message refreshes its sender's lastSeen, and a player is only counted out
   // after PRESENCE_TIMEOUT_MS of silence. A reload never drops the count, because
   // the new connection pings under the same address well inside the window.
-  const PRESENCE_POLL_MS    = 2_000
-  const PRESENCE_TIMEOUT_MS = 15_000   // ~3 missed 5s heartbeats
+  const PRESENCE_POLL_MS    = 4_000
+  const PRESENCE_TIMEOUT_MS = 30_000   // ~2.5 missed 12s heartbeats
 
   const lastSeen = new Map<string, number>()   // address → last message of any kind
 
@@ -626,6 +803,9 @@ export function initServer() {
     // Accepted carryable mess goes into the player's hands, in its stream's pouch.
     const stream = carryStreamFor(itemId)
     if (stream) getLoad(address)[stream]++
+
+    // Advance the player's shift contract if this clean matches it.
+    bumpContract(address, contractKindsFor(itemId))
 
     // Update all-time leaderboard score for this player.
     // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
@@ -764,7 +944,10 @@ export function initServer() {
   room.onMessage('depositRubbish', (data, context) => {
     if (!context) return
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
-    getLoad(context.from)[stream] = 0
+    const load = getLoad(context.from)
+    // A real (non-empty) deposit advances the deposits contract.
+    if (load[stream] > 0) bumpContract(context.from, ['deposits'])
+    load[stream] = 0
     sendCarried(context.from)
   })
 
@@ -798,19 +981,7 @@ export function initServer() {
 
     // Fallback enter-trigger for players who teleport directly into the scene
     // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
-    heartbeat(address)
-
-    // Reconnect grace: a cleaner who reloaded rejoins their shift rather than
-    // being benched until the next round.
-    const vanishedAt = recentlyActive.get(address)
-    if (vanishedAt !== undefined) {
-      recentlyActive.delete(address)
-      if (Date.now() - vanishedAt <= RECONNECT_GRACE_MS) {
-        if (getPhase() === 'playing') activePlayers.add(address)
-        else signedUp.add(address)
-        console.log(`[PARTICIPATION] ${address} reconnected within grace — re-enrolled`)
-      }
-    }
+    heartbeat(address)   // covers reconnect-grace re-enrollment (see playerEntered)
 
     executeTask(async () => {
       // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,
@@ -837,6 +1008,8 @@ export function initServer() {
       sendParticipation(address)
       // Carry state, so the HUD chip shows the right capacity from the first frame.
       sendCarried(address)
+      // Everyone (including the joiner) needs the updated roster for plates.
+      broadcastRanks()
 
       console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
     })
@@ -889,6 +1062,7 @@ export function initServer() {
       const { promotedTo } = adminAdjust(address, data.money, data.xp)
       console.log(`[SERVER] adminGrant: +$${data.money} +${data.xp}xp → ${address}${promotedTo ? ` (${promotedTo})` : ''}`)
       sendProgress(address, undefined, promotedTo)
+      broadcastRanks()   // an admin rank grant changes the plate
       await saveProgress()
     })
   })

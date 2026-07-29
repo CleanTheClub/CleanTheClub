@@ -38,6 +38,12 @@ export type ProgressRecord = {
   shifts:       number   // completed shifts, for stats / leaderboard categories
   lifetimeItems: number  // total items cleaned, all time
   displayName:  string
+  // ── Retention hooks ─────────────────────────────────────────────────────────
+  bestItems:    number   // personal best items cleaned in a single shift
+  lastWorkDay:  string   // UTC 'YYYY-MM-DD' of the last PASSED shift
+  workStreak:   number   // consecutive days with at least one passed shift
+  dailyItems:   number   // items cleaned on dailyDay (drives the daily board)
+  dailyDay:     string   // UTC day the dailyItems counter belongs to
 }
 
 type ProgressDoc = {
@@ -53,7 +59,16 @@ const emptyRecord = (displayName = ''): ProgressRecord => ({
   shifts: 0,
   lifetimeItems: 0,
   displayName,
+  bestItems: 0,
+  lastWorkDay: '',
+  workStreak: 0,
+  dailyItems: 0,
+  dailyDay: '',
 })
+
+/** UTC day stamp — the boundary all daily mechanics share. */
+export const todayStr = (): string => new Date().toISOString().slice(0, 10)
+const yesterdayStr = (): string => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
 
 /** Defensive upgrade of any stored record to the current schema. */
 function migrate(raw: any): ProgressRecord {
@@ -66,6 +81,11 @@ function migrate(raw: any): ProgressRecord {
   if (typeof raw.shifts === 'number')        rec.shifts        = Math.max(0, Math.floor(raw.shifts))
   if (typeof raw.lifetimeItems === 'number') rec.lifetimeItems = Math.max(0, Math.floor(raw.lifetimeItems))
   if (typeof raw.displayName === 'string')   rec.displayName   = raw.displayName
+  if (typeof raw.bestItems === 'number')     rec.bestItems     = Math.max(0, Math.floor(raw.bestItems))
+  if (typeof raw.lastWorkDay === 'string')   rec.lastWorkDay   = raw.lastWorkDay
+  if (typeof raw.workStreak === 'number')    rec.workStreak    = Math.max(0, Math.floor(raw.workStreak))
+  if (typeof raw.dailyItems === 'number')    rec.dailyItems    = Math.max(0, Math.floor(raw.dailyItems))
+  if (typeof raw.dailyDay === 'string')      rec.dailyDay      = raw.dailyDay
   if (raw.upgrades && typeof raw.upgrades === 'object') {
     for (const [k, v] of Object.entries(raw.upgrades)) {
       if (typeof v === 'number' && v > 0) rec.upgrades[k as UpgradeId] = Math.floor(v)
@@ -167,18 +187,65 @@ export function getProgress(address: string): ProgressRecord {
   return rec
 }
 
-/** Applies a completed shift's rewards. Returns the record for broadcasting back. */
+// Streak bonus: +10 XP per consecutive work day, capped so a long streak is a
+// treat rather than the dominant income source.
+const STREAK_XP_PER_DAY = 10
+const STREAK_XP_CAP_DAYS = 5
+
+/**
+ * Applies a completed shift's rewards plus the daily retention hooks:
+ *  • opening bonus  — the first PASSED shift each UTC day doubles the shift XP;
+ *  • work streak    — consecutive days with a passed shift add bonus XP;
+ *  • daily counter  — items cleaned today, for the daily leaderboard;
+ *  • personal best  — most items in a single shift.
+ * Returns everything the payout screen needs to celebrate each piece.
+ */
 export function awardShift(
   address: string,
   money: number,
   xp: number,
   itemsCleaned: number,
-): { record: ProgressRecord; promotedTo: string | null } {
+  passed: boolean,
+): {
+  record: ProgressRecord
+  promotedTo: string | null
+  openingBonus: boolean
+  streakDays: number
+  streakXp: number
+  xpApplied: number
+  newBest: boolean
+} {
   const rec = getProgress(address)
   const rankBefore = rankForXp(rec.xp)
+  const today = todayStr()
+
+  let xpApplied    = Math.max(0, Math.round(xp))
+  let openingBonus = false
+  let streakXp     = 0
+
+  if (passed) {
+    if (rec.lastWorkDay !== today) {
+      openingBonus = true
+      xpApplied *= 2
+      rec.workStreak = rec.lastWorkDay === yesterdayStr() ? rec.workStreak + 1 : 1
+    }
+    if (rec.workStreak > 1) {
+      streakXp = STREAK_XP_PER_DAY * Math.min(rec.workStreak - 1, STREAK_XP_CAP_DAYS)
+      xpApplied += streakXp
+    }
+    rec.lastWorkDay = today
+  }
+
+  // Daily counter — reset on the day boundary, then accumulate (pass or fail:
+  // the daily board rewards graft, not just wins).
+  if (rec.dailyDay !== today) { rec.dailyDay = today; rec.dailyItems = 0 }
+  rec.dailyItems += Math.max(0, itemsCleaned)
+
+  const newBest = itemsCleaned > rec.bestItems
+  if (newBest) rec.bestItems = itemsCleaned
 
   rec.money += Math.max(0, Math.round(money))
-  rec.xp    += Math.max(0, Math.round(xp))
+  rec.xp    += xpApplied
   rec.shifts += 1
   rec.lifetimeItems += Math.max(0, itemsCleaned)
 
@@ -190,6 +257,11 @@ export function awardShift(
     // Surfaced so the end-of-shift screen can celebrate a promotion explicitly,
     // which is the GDD's core "closer to my next promotion" payoff moment.
     promotedTo: rankAfter > rankBefore ? titleForXp(rec.xp) : null,
+    openingBonus,
+    streakDays: rec.workStreak,
+    streakXp,
+    xpApplied,
+    newBest,
   }
 }
 

@@ -9,78 +9,67 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, MeshRenderer, MeshCollider, ColliderLayer, Material } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
-import { playHoverSound, playClickSound, playDepositSound, playMissSound } from './soundManager'
+import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
+import { requestSetup } from './spawnDirector'
+import { POINTER_MAX_DIST } from './phaseGate'
+import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
+import { promotionBurst } from './confettiSystem'
 
-// PLACEHOLDER deposit bins — glowing cubes spawned in code. The scene's bag
-// props can't serve as bins: every bag mesh in the club (bigRubbishBag included)
-// reads as collectible mess, so players clean them rather than deposit into them.
-// When a real, visually distinct bin model lands in the scene, replace this table
-// with name-prefix discovery of those props and delete the cube setup.
-//
-// Positions mirror the old bigRubbishBag spread (one per zone, both floors),
-// nudged ~1m toward open floor so the cubes don't intersect the bag props.
-// Sorted streams: gold cubes take general waste, green cubes take recycling —
-// each floor gets both types so no stream ever forces a stair trip.
-const BIN_POSITIONS: Array<{ x: number; y: number; z: number; type: RubbishType }> = [
-  { x: 26.5, y: 0,   z: 12.2, type: 'general' },
-  { x: 5.1,  y: 0,   z: 11.0, type: 'recycle' },
-  { x: 26.6, y: 0,   z: 19.8, type: 'recycle' },
-  { x: 4.8,  y: 0,   z: 19.8, type: 'general' },
-  { x: 13.7, y: 0,   z: 22.1, type: 'general' },
-  { x: 23.5, y: 7.3, z: 10.5, type: 'general' },
-  { x: 10.0, y: 7.3, z: 28.3, type: 'recycle' },
+// REAL bin models, discovered by name prefix — the placeholder cubes are gone.
+// The scene ships four stations (two per floor), each pairing a Bin_General_N
+// and a Bin_Recycling_N at a SHARED entity origin (the meshes are offset inside
+// the GLBs, on a common stand). That shared origin means origin-centred box
+// colliders would overlap — so pointer events bind to the bins' own visible
+// meshes instead (setupClickProxy with addBox=false), which also gives the
+// hover outline on the exact bin you're aiming at.
+const BIN_PREFIXES: Array<{ prefix: string; type: RubbishType }> = [
+  { prefix: 'Bin_General',   type: 'general' },
+  { prefix: 'Bin_Recycling', type: 'recycle' },
 ]
-const BIN_SIZE = { x: 1.2, y: 1.4, z: 1.2 }
 
-const BIN_STYLE: Record<RubbishType, { emissive: Color4; text: string; textColor: Color4; hover: string }> = {
-  general: {
-    emissive:  Color4.create(1, 0.72, 0.15, 1),
-    text:      'GENERAL\nWASTE',
-    textColor: Color4.create(1, 0.82, 0.25, 1),
-    hover:     'Empty general waste',
-  },
-  recycle: {
-    emissive:  Color4.create(0.2, 1, 0.45, 1),
-    text:      'RECYCLING',
-    textColor: Color4.create(0.35, 1, 0.55, 1),
-    hover:     'Empty recycling',
-  },
+// Hover prompts stay per-type — the painted bin labels plus these prompts do
+// the type teaching now that real art is in place.
+const BIN_HOVER: Record<RubbishType, string> = {
+  general: 'Empty general waste',
+  recycle: 'Empty recycling',
 }
 
-// Floating markers above each deposit bin, shown only while the player carries
-// something in that bin's stream — the moment the information matters and the
-// only moment it isn't noise.
-const markersByType: Record<RubbishType, Entity[]> = { general: [], recycle: [] }
+// ONE floating marker per station (the two bins share an origin, so per-type
+// markers would overlap in mid-air). Its job is findability, not type teaching:
+// shown while the player carries anything at all.
+const stationMarkers: Entity[] = []
+const stationKeys = new Set<string>()   // rounded position → already has a marker
 
-function createBinMarker(pos: { x: number; y: number; z: number }, type: RubbishType): void {
-  const style = BIN_STYLE[type]
+function ensureStationMarker(pos: { x: number; y: number; z: number }): void {
+  const key = `${Math.round(pos.x)}|${Math.round(pos.y)}|${Math.round(pos.z)}`
+  if (stationKeys.has(key)) return
+  stationKeys.add(key)
+
   const marker = engine.addEntity()
   Transform.create(marker, {
     position: { x: pos.x, y: pos.y + 2.4, z: pos.z },
     scale: { x: 0, y: 0, z: 0 },   // hidden until the first carriedUpdate says otherwise
   })
   TextShape.create(marker, {
-    text: style.text,
+    text: 'EMPTY BINS',
     fontSize: 3,
-    textColor: style.textColor,
+    textColor: Color4.create(1, 0.82, 0.25, 1),
     outlineColor: Color4.Black(),
     outlineWidth: 0.15,
   })
   Billboard.create(marker, {})
-  markersByType[type].push(marker)
+  stationMarkers.push(marker)
 }
 
 function refreshMarkers(): void {
-  for (const type of ['general', 'recycle'] as RubbishType[]) {
-    const s = (type === 'general' ? carriedGeneral : carriedRecycle) > 0 ? 1 : 0
-    for (const m of markersByType[type]) {
-      Transform.getMutable(m).scale = { x: s, y: s, z: s }
-    }
+  const s = carriedGeneral + carriedRecycle > 0 ? 1 : 0
+  for (const m of stationMarkers) {
+    Transform.getMutable(m).scale = { x: s, y: s, z: s }
   }
 }
 
@@ -89,6 +78,22 @@ let carriedRecycle = 0
 let capacity     = 5      // matches the un-upgraded baseline until the server answers
 let portableLeft = 0      // Portable Bin self-empties remaining this shift
 let known        = false  // no carriedUpdate yet — hide the chip rather than guess
+
+// Last deposit (time + size), read by ui.tsx for the "+N BINNED!" flash — a
+// getter rather than a ui import, which would cycle.
+let lastDepositMs    = -1
+let lastDepositCount = 0
+export const getLastDeposit = () => ({ ms: lastDepositMs, count: lastDepositCount })
+
+// Big loads earn a confetti pop on top of the sparkle — daring a fuller bag
+// should feel better than trickling deposits.
+const BIG_DEPOSIT = 8
+
+function recordDeposit(count: number): void {
+  lastDepositMs    = Date.now()
+  lastDepositCount = count
+  if (count >= BIG_DEPOSIT) promotionBurst()
+}
 
 export const getCarried        = (): number => carriedGeneral + carriedRecycle
 export const getCarriedGeneral = (): number => carriedGeneral
@@ -102,6 +107,7 @@ export const isCarryFull       = (): boolean => known && carriedGeneral + carrie
 export function requestPortableEmpty(): void {
   if (!known || getCarried() === 0 || portableLeft === 0) return
   playDepositSound()
+  recordDeposit(getCarried())
   room.send('portableEmpty', { dummy: true })
 }
 
@@ -115,48 +121,50 @@ export function initCarrySystem(): void {
     refreshMarkers()
   })
 
-  // Spawn the placeholder cube bins — no GLB streaming to wait for, so setup is
-  // immediate and every bin is clickable from the first frame.
-  for (const pos of BIN_POSITIONS) {
-    const style = BIN_STYLE[pos.type]
-    const bin = engine.addEntity()
-    Transform.create(bin, {
-      position: { x: pos.x, y: pos.y + BIN_SIZE.y / 2, z: pos.z },
-      scale: BIN_SIZE,
-    })
-    MeshRenderer.setBox(bin)
-    MeshCollider.setBox(bin, ColliderLayer.CL_POINTER)
-    // Glowing (gold = general, green = recycling) so it reads as "special
-    // interactable", not more loose mess.
-    Material.setPbrMaterial(bin, {
-      albedoColor:       Color4.create(0.15, 0.1, 0.02, 1),
-      emissiveColor:     style.emissive,
-      emissiveIntensity: 1.2,
-    })
-    createBinMarker(pos, pos.type)
+  // Discover the placed bin models by name prefix. ('Bins_Stand' and the 'Bins'
+  // group match neither prefix, so the dressing stays inert.)
+  let found = 0
+  for (const [entity] of engine.getEntitiesWith(Name)) {
+    const n = Name.get(entity).value
+    const def = BIN_PREFIXES.find((b) => n.startsWith(b.prefix))
+    if (!def) continue
+    found++
+    const type = def.type
+    const stationPos = Transform.getOrNull(entity)?.position
+    if (stationPos) ensureStationMarker(stationPos)
 
-    pointerEventsSystem.onPointerHoverEnter({ entity: bin }, () => playHoverSound())
-    pointerEventsSystem.onPointerDown(
-      // Slightly longer reach than items — bins are destinations you walk at,
-      // and cutting the prompt at 4m made them feel unresponsive on approach.
-      { entity: bin, opts: { button: InputAction.IA_POINTER, hoverText: style.hover, maxDistance: 6 } },
-      () => {
-        if (!known) return
-        const inStream = pos.type === 'general' ? carriedGeneral : carriedRecycle
-        if (inStream === 0) {
-          // Wrong bin (or empty hands): a soft "nope" — the markers + chip show
-          // where the load actually belongs.
-          if (getCarried() > 0) playMissSound()
-          return
-        }
-        // Deliberately NO click sound here: click.mp3 also opens every rubbish
-        // pickup, and layering it made deposits sound like collects. The deposit
-        // thunk alone keeps the two actions audibly distinct.
-        playDepositSound()
-        playSparkle({ x: pos.x, y: pos.y + 1.2, z: pos.z })
-        room.send('depositRubbish', { binType: pos.type })
+    requestSetup({
+      isReady: () => findGltfEntity(entity) !== undefined,
+      run: () => {
+        const gltfEnt = findGltfEntity(entity)
+        if (!gltfEnt) return
+        // addBox=false: the paired bins share an origin, so origin-centred boxes
+        // would overlap — the visible meshes themselves are the click targets
+        // (and give the hover outline on the exact bin being aimed at).
+        const clickEnt = setupClickProxy(gltfEnt, false)
+        pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
+        pointerEventsSystem.onPointerDown(
+          // Slightly longer reach than items — bins are destinations you walk
+          // at, and cutting the prompt at 4m felt unresponsive on approach.
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: POINTER_MAX_DIST } },
+          () => {
+            if (!known) return
+            const inStream = type === 'general' ? carriedGeneral : carriedRecycle
+            if (inStream === 0) {
+              // Wrong bin (or empty hands): a soft "nope" — the chip's colours
+              // show where the load actually belongs.
+              if (getCarried() > 0) playMissSound()
+              return
+            }
+            playDepositSound(type)
+            const p = Transform.getOrNull(entity)?.position
+            if (p) playSparkle({ x: p.x, y: p.y + 1.2, z: p.z })
+            recordDeposit(inStream)
+            room.send('depositRubbish', { binType: type })
+          },
+        )
       },
-    )
+    })
   }
-  console.log(`[CARRY] spawned ${BIN_POSITIONS.length} placeholder deposit bins (sorted streams)`)
+  console.log(`[CARRY] wired ${found} bin models across ${stationMarkers.length} stations`)
 }

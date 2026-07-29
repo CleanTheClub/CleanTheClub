@@ -244,7 +244,11 @@ export function initLeaderboardSystem(): void {
   // server.ts) — the message channel is the only player-presence signal that
   // reliably reaches the server runtime. A dt-accumulator system rather than
   // setInterval, so the heartbeat can never outlive the scene context.
-  const PING_INTERVAL_S = 5
+  // 12s, not 5: pings are the scene's largest steady message source (they run
+  // forever, even idle), and the Foundation flagged excessive server calls. The
+  // presence timeout scales with this (see PRESENCE_TIMEOUT_MS) — and players
+  // who are actually cleaning refresh their presence through cleanItem anyway.
+  const PING_INTERVAL_S = 12
   let pingAcc = 0
   engine.addSystem((dt: number) => {
     pingAcc += dt

@@ -8,13 +8,14 @@ import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playClickSound, playCleanSound, playMissSound } from './soundManager'
+import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, withinReach, MAX_REACH_M, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
 import { isCarryFull } from './carrySystem'
+import { registerSpreeHit } from './spreeSystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
 const pendingCleans     = new Set<string>()
@@ -116,9 +117,9 @@ function enableClick(itemId: string) {
       opts: {
         button: InputAction.IA_POINTER,
         hoverText: rubbishTypes.get(itemId) === 'recycle' ? 'Clean (Recycling)' : 'Clean (General)',
-        // Matches the reach gate, so the explorer never offers (or red-outlines)
-        // an item the click would refuse anyway.
-        maxDistance: MAX_REACH_M,
+        // Camera-based prompt range; the player-based withinReach gate on click
+        // is the true accept distance.
+        maxDistance: POINTER_MAX_DIST,
       },
     },
     () => {
@@ -128,8 +129,8 @@ function enableClick(itemId: string) {
       const pos = Transform.getOrNull(containerEntity)?.position
       if (!withinReach(pos)) { maybeShowTooFarToast(); return }
       pendingCleans.add(itemId)
+      registerSpreeHit()
       disableClick(itemId)
-      playClickSound()
       playCleanSound()
       if (pos) playPickupEmote(pos)
       room.send('cleanItem', { itemId })

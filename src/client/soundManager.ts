@@ -17,6 +17,9 @@ const SND_DEPOSIT       = 'assets/scene/Sounds/depositSound.mp3'
 // Error buzz for blocked actions (hands full / too far / skill-check miss) —
 // file pending. Short dull "uh-uh", ~0.3s, clearly distinct from the toast ding.
 const SND_ERROR         = 'assets/scene/Sounds/errorSound.mp3'
+// Crowd cheer sting for cleanliness milestones (25/50/75%) — file pending.
+// A short "small crowd woo", ~1.5s.
+const SND_CROWD         = 'assets/scene/Sounds/crowdCheer.mp3'
 
 const VOL_HOVER   = 0.7
 const VOL_CLICK   = 0.9
@@ -52,6 +55,7 @@ let moneyEntity:        Entity
 let promotionEntity:    Entity
 let depositEntity:      Entity
 let errorEntity:        Entity
+let crowdEntity:        Entity
 
 // Pool of 3 clean-sound entities, round-robined on each play call.
 // A single entity can't retrigger while playing=true — the false→true toggle
@@ -112,6 +116,10 @@ export function initSoundManager() {
   errorEntity = engine.addEntity()
   Transform.create(errorEntity, { position: INIT_POS })
   AudioSource.create(errorEntity, { audioClipUrl: SND_ERROR, playing: false, loop: false, volume: 0.8 })
+
+  crowdEntity = engine.addEntity()
+  Transform.create(crowdEntity, { position: INIT_POS })
+  AudioSource.create(crowdEntity, { audioClipUrl: SND_CROWD, playing: false, loop: false, volume: 0.9 })
 }
 
 export function playSquelchSound() { playAt(squelchEntity) }
@@ -122,7 +130,11 @@ export function stopStickySound() { AudioSource.getMutable(stickyEntity).playing
 export function playCleanSound()  {
   // Grab the next entity in the pool — guaranteed to not be mid-play from a
   // recent call, so the false→true retrigger always fires correctly.
-  playAt(cleanPool[cleanIdx % CLEAN_POOL_SIZE])
+  const e = cleanPool[cleanIdx % CLEAN_POOL_SIZE]
+  // Random ±9% pitch per play. The identical sample dozens of times per round
+  // read as grating; small variance makes repetition feel organic instead.
+  AudioSource.getMutable(e).pitch = 0.91 + Math.random() * 0.18
+  playAt(e)
   cleanIdx++
 }
 
@@ -145,8 +157,30 @@ export function playPerfectSound(streak: number) {
  */
 export function playMissSound() { playAt(errorEntity) }
 
-/** Rubbish deposited in a bin. Silent until Sounds/depositSound.mp3 is added. */
-export function playDepositSound()   { playAt(depositEntity) }
+/**
+ * Rubbish deposited in a bin. Pitch distinguishes the streams by ear —
+ * general lands low, recycling rings brighter — so a deposit confirms WHICH
+ * pouch emptied without looking at the chip. No arg (portable bin) = neutral.
+ */
+export function playDepositSound(stream?: 'general' | 'recycle') {
+  const src = AudioSource.getMutable(depositEntity)
+  src.pitch = stream === 'general' ? 0.85 : stream === 'recycle' ? 1.18 : 1.0
+  playAt(depositEntity)
+}
+
+/** Crowd cheer at cleanliness milestones. Silent until Sounds/crowdCheer.mp3 exists. */
+export function playCrowdSound()     { playAt(crowdEntity) }
+
+/**
+ * Cleaning-spree chime — the notification ding climbing in pitch with the
+ * combo, quieter than real notifications so a spree hums rather than shouts.
+ */
+export function playSpreeSound(combo: number) {
+  const src = AudioSource.getMutable(notificationEntity)
+  src.pitch  = 1.0 + 0.05 * Math.min(combo, 14)
+  src.volume = 0.45
+  playAt(notificationEntity)
+}
 
 /** Wage paid at shift end. Silent until Sounds/moneySound.mp3 is added. */
 export function playMoneySound()     { playAt(moneyEntity) }

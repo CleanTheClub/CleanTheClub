@@ -199,16 +199,23 @@ export const UPGRADES: UpgradeDef[] = [
     implemented: true,
   },
   {
+    // Named STRENGTH in the shop (playtest: "carry capacity… not intuitive as
+    // represented") — a bicep needs no manual. The id stays carryCapacity:
+    // it's the persistence key in every stored upgrade record.
     id: 'carryCapacity',
-    name: 'Carry Capacity',
-    description: 'Hold more rubbish before emptying.',
+    name: 'Strength',
+    description: 'Carry more mess before a bin trip.',
     // Total pieces held across both streams before a bin trip. Round numbers on
     // purpose — "8" read as arbitrary in playtests; a 10-…-30 ladder in steps of
     // 5 is legible at a glance and starts a touch easier (glasses/bottles count
     // toward the load since they joined the carry loop).
     levelValues: [10, 15, 20, 25, 30],
-    costs:       [300, 650, 1_300, 2_400],
-    minRank:     2,   // Cleaner
+    // Deliberately UNGATED, and the cheapest first level in the shop. Carrying
+    // to bins is V2's new friction and the reason the early game plays harder
+    // than V1 — locking its antidote behind rank 2 (~5 shifts) meant the grind
+    // was worst exactly when players had no way to relieve it. Now the first
+    // purchase most players can afford is the one that helps them most.
+    costs:       [200, 650, 1_300, 2_400],
     implemented: true,
   },
   {

@@ -57,14 +57,15 @@
   ],
   "featureToggles": {
     "voiceChat": "enabled",
-    "portableExperiences": "enabled"
+    "portableExperiences": "enabled",
+    "nearbyVoiceChat": "enabled"
   },
   "skyboxConfig": {
     "fixedTime": 43200
   },
   "source": {
     "origin": "creator-hub",
-    "projectId": "c234e010-bf2f-4a35-9404-b57f360b3964"
+    "projectId": "82db1069-0c7d-48b7-9756-9a492171dec1"
   },
   "rating": "T",
   "logsPermissions": [
