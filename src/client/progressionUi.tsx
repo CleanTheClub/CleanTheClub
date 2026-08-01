@@ -444,11 +444,17 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
  */
 function CloseX({ Z }: { Z: number }) {
   const size = Math.round(52 * Z)
+  // Anchored to the SAFE AREA, not the screen corner. The raw top-right corner
+  // is where the explorer parks its own chrome — the profile cluster on mobile,
+  // minimap and menu on desktop — so a button pinned there was landing under
+  // someone else's UI on both platforms. getSafeArea() reports the region the
+  // explorer leaves free, and it updates live (e.g. when chat opens).
+  const sa = getSafeArea()
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute',
-        position: { top: Math.round(14 * Z), right: Math.round(14 * Z) },
+        position: { top: pct(sa.top + 0.03), right: pct(sa.right + 0.02) },
         width: size,
         height: size,
         justifyContent: 'center',

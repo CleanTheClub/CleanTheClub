@@ -592,7 +592,7 @@ const ui = () => {
     : { r: 1, g: 0.35, b: 0.3,  a: perfectAlpha }
 
   // Deposit flash — reads carrySystem's last-deposit state (no setter import,
-  // which would cycle). "+N BINNED!" pops mid-screen right after a bin empty.
+  // which would cycle). "+N BINNED/RECYCLED!" pops right after a bin empty.
   const dep        = getLastDeposit()
   const depElapsed = dep.ms >= 0 ? Date.now() - dep.ms : Infinity
   const depEase    = 1 - Math.pow(1 - Math.min(1, depElapsed / 250), 3)
@@ -941,7 +941,7 @@ const ui = () => {
           }}
         >
           <UiEntity
-            uiTransform={{ width: hudBgWidth, height: hudBgHeight }}
+            uiTransform={{ width: hudBgWidth, height: hudBgHeight, borderRadius: Math.round(18 * S) }}
             uiBackground={{ color: HUD_BG_COLOR }}
           />
         </UiEntity>
@@ -958,7 +958,9 @@ const ui = () => {
         }}
       >
         <UiEntity
-          uiTransform={{ width: instrW, height: instrH }}
+          // Rounded to match the rest of the HUD — borderRadius masks the
+          // texture, so the banner PNG's square corners are clipped away.
+          uiTransform={{ width: instrW, height: instrH, borderRadius: Math.round(16 * S) }}
           uiBackground={{
             texture:     { src: topImageSrc },
             textureMode: 'stretch',
@@ -1200,7 +1202,7 @@ const ui = () => {
         </UiEntity>
       )}
 
-      {/* ── Deposit flash — "+N BINNED!" pops after emptying into a bin. ───────── */}
+      {/* ── Deposit flash — names the stream, so the sort is reinforced. ─────── */}
       {depElapsed < PERFECT_FLASH_MS && (
         <UiEntity
           uiTransform={{
@@ -1212,7 +1214,7 @@ const ui = () => {
           }}
         >
           <Label
-            value={`+${dep.count} BINNED!`}
+            value={`+${dep.count} ${dep.type === 'recycle' ? 'RECYCLED' : 'BINNED'}!`}
             fontSize={depFont}
             color={{ r: 1, g: 0.82, b: 0.25, a: depAlpha }}
           />

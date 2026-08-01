@@ -91,11 +91,10 @@ function buildPlate(address: string, avatar: Entity): Plate {
 
   const carrier = engine.addEntity()
   Transform.create(carrier, { parent: root, position: { x: 0, y: PLATE_Y, z: 0 } })
-  // Y-AXIS ONLY. The default (BM_ALL) matches camera pitch and roll, so the
-  // plate tilted diagonally whenever the mobile camera looked down at the
-  // avatar — text hanging at ~25°. Real nametags stay upright and turn only
-  // horizontally, which is exactly BM_Y (yaw only).
-  Billboard.create(carrier, { billboardMode: BillboardMode.BM_Y })
+  // Full billboard — always square to the camera. BM_Y (yaw only) keeps the
+  // plate upright but makes it skew away as the camera pitches, which read
+  // worse than the tilt it was meant to fix.
+  Billboard.create(carrier, { billboardMode: BillboardMode.BM_ALL })
 
   const pill = engine.addEntity()
   Transform.create(pill, { parent: carrier })

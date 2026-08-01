@@ -8,6 +8,13 @@
 
 import {
   engine,
+  MeshRenderer,
+  MeshCollider,
+  ColliderLayer,
+  Material,
+  MaterialTransparencyMode,
+  pointerEventsSystem,
+  InputAction,
   Entity,
   Transform,
   TextShape,
@@ -15,7 +22,8 @@ import {
   executeTask,
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
-import { Quaternion } from '@dcl/sdk/math'
+import { Quaternion, Color4 } from '@dcl/sdk/math'
+import { playHoverSound, playClickSound } from './soundManager'
 import { getUserData } from '~system/UserIdentity'
 import { room } from '../shared/messages'
 
@@ -151,6 +159,57 @@ export function setupLeaderboardBoard(): void {
     leaderboardLabels.push(nameLabel, scoreLabel)
   }
 
+  // ── Category arrows ──────────────────────────────────────────
+  // Flat quads with a pointer collider, parented to the board so they inherit
+  // its position and rotation. Text glyphs sit slightly proud of each quad.
+  const makeArrow = (glyph: string, y: number, step: number, hover: string) => {
+    const btn = engine.addEntity()
+    Transform.create(btn, {
+      position: { x: LB_ARROW_X, y, z: LB_DEPTH },
+      scale:    { x: LB_ARROW_SIZE, y: LB_ARROW_SIZE, z: LB_ARROW_SIZE },
+      parent:   board,
+    })
+    MeshRenderer.setPlane(btn)
+    MeshCollider.setPlane(btn, ColliderLayer.CL_POINTER)
+    Material.setPbrMaterial(btn, {
+      albedoColor:      Color4.create(0, 0, 0, 0.55),
+      transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
+      specularIntensity: 0,
+      metallic: 0,
+      roughness: 1,
+    })
+
+    const glyphEnt = engine.addEntity()
+    // NOT mirrored: the board's other labels are parented the same way and read
+    // correctly, and mirroring an arrow glyph flips which way it points.
+    Transform.create(glyphEnt, {
+      position: { x: 0, y: 0, z: -0.02 },
+      parent:   btn,
+    })
+    TextShape.create(glyphEnt, { text: glyph, fontSize: 3, textColor: LB_COLOR_HEADER })
+
+    const state: ArrowState = { entity: btn, pressedAt: -1, restZ: LB_DEPTH }
+    arrowStates.push(state)
+
+    pointerEventsSystem.onPointerHoverEnter({ entity: btn }, () => playHoverSound())
+    pointerEventsSystem.onPointerDown(
+      { entity: btn, opts: { button: InputAction.IA_POINTER, hoverText: hover, maxDistance: 8 } },
+      () => {
+        if (categories.length === 0) return
+        state.pressedAt = Date.now()
+        playClickSound()
+        manualUntilMs = Date.now() + LB_MANUAL_HOLD_S * 1000
+        categoryIndex = (categoryIndex + step + categories.length) % categories.length
+        renderCategory(categories[categoryIndex])
+      },
+    )
+    return btn
+  }
+
+  const arrowY = LB_START_Y + LB_HEADER_GAP
+  makeArrow('<', arrowY, -1, 'Previous board')
+  makeArrow('>', arrowY - LB_STEP_Y, +1, 'Next board')
+
   // Show mock data immediately so the board looks populated before
   // the server sends its first leaderboardUpdate message
   updateLeaderboardDisplay(LB_MOCK_DATA)
@@ -162,6 +221,31 @@ export function setupLeaderboardBoard(): void {
 // single board cycles through the categories the server sends, retitling itself
 // each time. One board stays readable and needs no new art.
 const LB_CYCLE_SECONDS = 10
+
+// ── Player control ────────────────────────────────────────────
+// The board is rendered CLIENT-SIDE from the broadcast payload, so each player
+// can look at a different category without affecting anyone else's view — no
+// server round-trip, no shared state to fight over.
+//
+// Touching an arrow takes manual control and pauses the auto-cycle. Rather than
+// stranding a board on whatever someone last picked, control lapses back to
+// cycling after a period of no input — so an abandoned board resumes advertising
+// every category to the next person who walks up.
+const LB_ARROW_X       = 4.4    // local X of the arrow pair (right of the score column)
+const LB_ARROW_SIZE    = 0.55
+const LB_MANUAL_HOLD_S = 30     // no input for this long → auto-cycle resumes
+
+let manualUntilMs = 0
+const isManual = (): boolean => Date.now() < manualUntilMs
+
+// Press feedback. The reference implementation (stom66/dcl-sky-chaser) uses an
+// animated lever GLB so switching boards is a physical act rather than a click
+// on a flat panel. Without a bespoke model we get the same read by dipping the
+// button into the board for a moment on press.
+const LB_PRESS_MS    = 160
+const LB_PRESS_DEPTH = 0.06
+type ArrowState = { entity: Entity; pressedAt: number; restZ: number }
+const arrowStates: ArrowState[] = []
 
 type LbCategory = {
   key:         string
@@ -215,9 +299,28 @@ export function updateLeaderboardDisplay(payload: unknown): void {
 }
 
 /** Advances the board on a timer. Started once from initLeaderboardSystem. */
+/** Eases each pressed arrow back out of the board. */
+function arrowPressSystem(): void {
+  for (const a of arrowStates) {
+    if (a.pressedAt < 0) continue
+    const t = (Date.now() - a.pressedAt) / LB_PRESS_MS
+    const tf = Transform.getMutableOrNull(a.entity)
+    if (!tf) continue
+    if (t >= 1) {
+      tf.position = { ...tf.position, z: a.restZ }
+      a.pressedAt = -1
+      continue
+    }
+    // In fast, out slow — a button being pushed and springing back.
+    const dip = Math.sin(Math.min(1, t) * Math.PI) * LB_PRESS_DEPTH
+    tf.position = { ...tf.position, z: a.restZ + dip }
+  }
+}
+
 function startCategoryCycle(): void {
   engine.addSystem((dt: number) => {
     if (categories.length <= 1) return   // nothing to cycle between
+    if (isManual()) { cycleAcc = 0; return }   // a player is driving
     cycleAcc += dt
     if (cycleAcc < LB_CYCLE_SECONDS) return
     cycleAcc = 0
@@ -233,6 +336,7 @@ function startCategoryCycle(): void {
 export function initLeaderboardSystem(): void {
   setupLeaderboardBoard()
   startCategoryCycle()
+  engine.addSystem(arrowPressSystem)
 
   // Wake the server immediately — sent synchronously before any async getUserData call.
   // The server shuts down when the scene is empty; this message ensures it starts up

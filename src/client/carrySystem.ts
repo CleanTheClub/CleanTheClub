@@ -9,7 +9,7 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
@@ -18,6 +18,8 @@ import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
+import { getCareerOrEmpty } from './progressionStore'
+import { playPickupEmote } from './emoteManager'
 import { promotionBurst } from './confettiSystem'
 
 // REAL bin models, discovered by name prefix — the placeholder cubes are gone.
@@ -39,38 +41,111 @@ const BIN_HOVER: Record<RubbishType, string> = {
   recycle: 'Empty recycling',
 }
 
-// ONE floating marker per station (the two bins share an origin, so per-type
-// markers would overlap in mid-air). Its job is findability, not type teaching:
-// shown while the player carries anything at all.
-const stationMarkers: Entity[] = []
-const stationKeys = new Set<string>()   // rounded position → already has a marker
+// ── Bin locations ─────────────────────────────────────────────────────────────
+// Recorded at discovery so the first-pickup nudge can point at the nearest one.
+const binPositions: Array<{ x: number; y: number; z: number }> = []
 
-function ensureStationMarker(pos: { x: number; y: number; z: number }): void {
-  const key = `${Math.round(pos.x)}|${Math.round(pos.y)}|${Math.round(pos.z)}`
-  if (stationKeys.has(key)) return
-  stationKeys.add(key)
+// ── First-pickup nudge ────────────────────────────────────────────────────────
+// The permanent "EMPTY BINS" text over every station is gone: it was scaffolding
+// from when bins were placeholder cubes, and floating text over real, labelled,
+// colour-coded props reads as debug UI.
+//
+// What a new player genuinely cannot guess is that rubbish FILLS YOUR HANDS and
+// needs a trip. So the signpost is now a single teaching moment: on a brand-new
+// player's first pickup, one marker appears over the nearest bin, then fades.
+// Never shown again — a veteran's screen stays clean.
+const NUDGE_SECONDS = 9
+let nudgeEntity: Entity | null = null
+let nudgeUntilMs = 0
+let nudgeDone    = false
 
-  const marker = engine.addEntity()
-  Transform.create(marker, {
-    position: { x: pos.x, y: pos.y + 2.4, z: pos.z },
-    scale: { x: 0, y: 0, z: 0 },   // hidden until the first carriedUpdate says otherwise
-  })
-  TextShape.create(marker, {
-    text: 'EMPTY BINS',
-    fontSize: 3,
+/** True only for a player who has never completed a shift, once per session. */
+export function shouldNudgeToBin(): boolean {
+  return !nudgeDone && getCareerOrEmpty().shifts === 0 && binPositions.length > 0
+}
+
+/** Spawns the one-time marker over whichever bin is closest to the player. */
+export function triggerBinNudge(): void {
+  if (!shouldNudgeToBin()) return
+  nudgeDone = true
+
+  const p = Transform.getOrNull(engine.PlayerEntity)?.position
+  let best = binPositions[0]
+  if (p) {
+    let bestD = Infinity
+    for (const b of binPositions) {
+      const dx = b.x - p.x, dy = b.y - p.y, dz = b.z - p.z
+      const d = dx * dx + dy * dy + dz * dz
+      if (d < bestD) { bestD = d; best = b }
+    }
+  }
+
+  nudgeEntity = engine.addEntity()
+  Transform.create(nudgeEntity, { position: { x: best.x, y: best.y + 2.4, z: best.z } })
+  TextShape.create(nudgeEntity, {
+    text: 'EMPTY HERE',
+    fontSize: 4,
     textColor: Color4.create(1, 0.82, 0.25, 1),
     outlineColor: Color4.Black(),
-    outlineWidth: 0.15,
+    outlineWidth: 0.2,
   })
-  Billboard.create(marker, {})
-  stationMarkers.push(marker)
+  Billboard.create(nudgeEntity, {})
+  nudgeUntilMs = Date.now() + NUDGE_SECONDS * 1000
+}
+
+function nudgeSystem(): void {
+  if (!nudgeEntity) return
+  const left = nudgeUntilMs - Date.now()
+  if (left <= 0) {
+    engine.removeEntity(nudgeEntity)
+    nudgeEntity = null
+    return
+  }
+  // Fade out over the final second rather than vanishing.
+  if (left < 1000) {
+    const ts = TextShape.getMutableOrNull(nudgeEntity)
+    if (ts) {
+      const a = left / 1000
+      ts.textColor    = Color4.create(1, 0.82, 0.25, a)
+      ts.outlineColor = Color4.create(0, 0, 0, a)
+    }
+  }
+}
+
+// ── Carried bag (visible in hand) ─────────────────────────────────────────────
+// A real bag hangs off the player's hand while carrying, growing with the load.
+// LOCAL ONLY: other players don't see it, because carry counts are sent
+// point-to-point and broadcasting them per pickup would undo the request diet.
+// Tune these if the bag clips the avatar.
+const BAG_MODEL  = 'assets/scene/Models/bigRubbishBag/bigRubbishBag.glb'
+const BAG_MIN    = 0.10
+const BAG_MAX    = 0.22
+const BAG_OFFSET = { x: 0, y: -0.05, z: 0 }
+let bagEntity: Entity | null = null
+
+function refreshCarriedBag(): void {
+  const total = carriedGeneral + carriedRecycle
+  if (total <= 0) {
+    if (bagEntity) { engine.removeEntity(bagEntity); bagEntity = null }
+    return
+  }
+  if (!bagEntity) {
+    bagEntity = engine.addEntity()
+    AvatarAttach.create(bagEntity, { anchorPointId: AvatarAnchorPointType.AAPT_RIGHT_HAND })
+    GltfContainer.create(bagEntity, { src: BAG_MODEL })
+  }
+  // Scale with how full the hands are — a nearly-full load looks heavier.
+  const frac = Math.min(1, total / Math.max(1, capacity))
+  const size = BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  const tf = Transform.getMutableOrNull(bagEntity)
+  if (tf) {
+    tf.position = BAG_OFFSET
+    tf.scale    = { x: size, y: size, z: size }
+  }
 }
 
 function refreshMarkers(): void {
-  const s = carriedGeneral + carriedRecycle > 0 ? 1 : 0
-  for (const m of stationMarkers) {
-    Transform.getMutable(m).scale = { x: s, y: s, z: s }
-  }
+  refreshCarriedBag()
 }
 
 let carriedGeneral = 0
@@ -83,15 +158,17 @@ let known        = false  // no carriedUpdate yet — hide the chip rather than 
 // getter rather than a ui import, which would cycle.
 let lastDepositMs    = -1
 let lastDepositCount = 0
-export const getLastDeposit = () => ({ ms: lastDepositMs, count: lastDepositCount })
+let lastDepositType: RubbishType = 'general'
+export const getLastDeposit = () => ({ ms: lastDepositMs, count: lastDepositCount, type: lastDepositType })
 
 // Big loads earn a confetti pop on top of the sparkle — daring a fuller bag
 // should feel better than trickling deposits.
 const BIG_DEPOSIT = 8
 
-function recordDeposit(count: number): void {
+function recordDeposit(count: number, type: RubbishType = 'general'): void {
   lastDepositMs    = Date.now()
   lastDepositCount = count
+  lastDepositType  = type
   if (count >= BIG_DEPOSIT) promotionBurst()
 }
 
@@ -131,7 +208,7 @@ export function initCarrySystem(): void {
     found++
     const type = def.type
     const stationPos = Transform.getOrNull(entity)?.position
-    if (stationPos) ensureStationMarker(stationPos)
+    if (stationPos) binPositions.push({ x: stationPos.x, y: stationPos.y, z: stationPos.z })
 
     requestSetup({
       isReady: () => findGltfEntity(entity) !== undefined,
@@ -159,12 +236,13 @@ export function initCarrySystem(): void {
             playDepositSound(type)
             const p = Transform.getOrNull(entity)?.position
             if (p) playSparkle({ x: p.x, y: p.y + 1.2, z: p.z })
-            recordDeposit(inStream)
+            recordDeposit(inStream, type)
             room.send('depositRubbish', { binType: type })
           },
         )
       },
     })
   }
-  console.log(`[CARRY] wired ${found} bin models across ${stationMarkers.length} stations`)
+  engine.addSystem(nudgeSystem)
+  console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
 }

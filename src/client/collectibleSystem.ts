@@ -10,7 +10,7 @@ import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
-import { isCarryFull } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
@@ -135,6 +135,13 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         if (!withinReach(pos)) { maybeShowTooFarToast(); return }
         pendingCleans.add(itemId)
         registerSpreeHit()
+        // First pickup of a brand-new career: point at the nearest bin once, so
+        // "my hands fill up and I have to walk somewhere" is taught rather than
+        // discovered by hitting the capacity wall.
+        if (shouldNudgeToBin()) {
+          triggerBinNudge()
+          showNarrativeToast('Hands fill up — empty them at a bin!')
+        }
         disableClick(itemId)
         playCleanSound()
         if (pos) playPickupEmote(pos)
