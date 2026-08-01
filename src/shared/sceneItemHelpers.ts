@@ -30,6 +30,23 @@ import { isMobile } from '@dcl/sdk/platform'
 // raising this value.
 const MOBILE_TAP_SCALE = 1.4
 
+// ── Tap proxy vs hover outline ────────────────────────────────────────────────
+// The explorer highlights whatever the pointer ray hits — including under the
+// MOBILE reticle, not just a desktop mouse. A proxy box has no renderable, so
+// when it wins the ray there is nothing to outline: that is why the bins (mesh
+// takes the ray) glowed on mobile while rubbish and cushions did not.
+//
+// The proxy was added for the iOS "dance floor items can't always be clicked"
+// reports — but two later fixes addressed the actual causes of those misses:
+// pointer maxDistance was refusing interactions from the third-person camera
+// distance, and the reach gate was measuring from the wrong entity. So the
+// proxy is now OFF, every platform aims at the visible mesh, and every
+// interactive item highlights.
+//
+// FALLBACK: if small items become fiddly to tap on a phone again, set this back
+// to true — outlines on mobile are traded away, nothing else changes.
+const USE_MOBILE_TAP_PROXY = false
+
 // Returns the entity that holds the GltfContainer for a scene item.
 // In our scenes, every interactable's "container" entity IS the GltfContainer entity
 // (Creator Hub places assets flat, not nested). Returns undefined if the entity
@@ -74,16 +91,12 @@ function createMobileTapTarget(gltfEnt: Entity): Entity {
 //    If the GltfContainer hasn't loaded yet a one-shot system retries until it
 //    has, so an item is never left un-clickable due to a late-arriving component
 //    (this was the cause of the occasional un-clickable sofa cushion on round 1).
-// 2. MeshCollider.setBox — guarantees a hittable collider regardless of whether
-//    the GLB's visible mesh geometry registers pointer raycasts reliably.
-//    Size = entity Transform scale, so tune click feel via Creator Hub scale.
+// 2. On MOBILE ONLY, an enlarged child box as the tap target (see addBox).
 //
-// addBox defaults to true (every tall item relies on it for clicks). Pass false
-// for flat floor items (sticky patches): the box is centered at the entity origin
-// and sits ABOVE a flat mesh, so the ray hits the box (invisible, no renderable)
-// instead of the mesh — which makes them clickable but suppresses the hover
-// outline. With addBox=false the visible mesh itself is the pointer collider, so
-// the engine has a renderable to highlight on hover.
+// addBox now means "use an enlarged tap proxy on mobile" — desktop is always
+// mesh-only so the hover outline is never suppressed (see the note in the body).
+// Pass false for items whose GLB origin is offset from the visible mesh, where a
+// child box at the entity origin would float away from what the player sees.
 //
 // RETURN VALUE: the entity pointer events must be bound to. On desktop that is
 // gltfEnt itself; on mobile it is the enlarged tap-target child. Callers MUST use
@@ -95,7 +108,7 @@ export function setupClickProxy(gltfEnt: Entity, addBox = true): Entity {
   // what addBox encodes. Items that opt out (baked GLB offsets, e.g. the bar
   // stools) would get a tap target floating away from the mesh, so they keep the
   // visible-mesh collider on mobile too.
-  const useMobileProxy = isMobile() && addBox
+  const useMobileProxy = USE_MOBILE_TAP_PROXY && isMobile() && addBox
 
   if (!applyPointerMask(gltfEnt, useMobileProxy)) {
     const waitForGltf = () => {
@@ -104,6 +117,10 @@ export function setupClickProxy(gltfEnt: Entity, addBox = true): Entity {
     engine.addSystem(waitForGltf)
   }
   if (useMobileProxy) return createMobileTapTarget(gltfEnt)
-  if (addBox) MeshCollider.setBox(gltfEnt, ColliderLayer.CL_POINTER)
+
+  // Mesh only — never a box (see USE_MOBILE_TAP_PROXY above). The box's other
+  // job, being hittable before the mesh finishes streaming, is already covered:
+  // every caller registers through requestSetup, which waits for the
+  // GltfContainer, and items pop in via the spawn director.
   return gltfEnt
 }

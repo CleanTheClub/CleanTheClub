@@ -17,7 +17,12 @@ import { isActive, isKnown } from './participation'
 // (no CL_POINTER layer), so items were cleanable from the other side of a wall
 // or the floor below — worst on mobile, whose enlarged tap targets stick out of
 // thin geometry. True 3D distance (y included) blocks the cross-floor case.
-export const MAX_REACH_M = 4
+// Horizontal reach is generous — players can't see an invisible limit, and on
+// mobile a tight radius reads as "the game ignored my tap". VERTICAL stays tight,
+// which is what actually prevents cleaning through a floor (the club's storeys
+// are ~7.3m apart), so the through-geometry protection survives the loosening.
+export const MAX_REACH_M      = 6
+export const MAX_REACH_VERT_M = 3
 
 // Pointer-event maxDistance is measured from the CAMERA, not the player — and
 // the mobile third-person camera floats 3-5m behind the avatar, so a 4m cutoff
@@ -31,7 +36,8 @@ export function withinReach(pos: { x: number; y: number; z: number } | undefined
   const p = Transform.getOrNull(engine.PlayerEntity)?.position
   if (!p) return true
   const dx = p.x - pos.x, dy = p.y - pos.y, dz = p.z - pos.z
-  return dx * dx + dy * dy + dz * dz <= MAX_REACH_M * MAX_REACH_M
+  if (Math.abs(dy) > MAX_REACH_VERT_M) return false
+  return dx * dx + dz * dz <= MAX_REACH_M * MAX_REACH_M
 }
 
 // Authoritative ClutterSync watchers reconcile server state at this cadence rather

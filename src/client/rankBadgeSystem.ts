@@ -14,7 +14,7 @@
 
 import {
   engine, Entity, Transform, MeshRenderer, Material, MaterialTransparencyMode,
-  TextShape, Font, AvatarAttach, AvatarAnchorPointType, Billboard, PlayerIdentityData,
+  TextShape, AvatarAttach, AvatarAnchorPointType, Billboard, BillboardMode, PlayerIdentityData,
   AvatarModifierArea, AvatarModifierType,
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
@@ -91,7 +91,11 @@ function buildPlate(address: string, avatar: Entity): Plate {
 
   const carrier = engine.addEntity()
   Transform.create(carrier, { parent: root, position: { x: 0, y: PLATE_Y, z: 0 } })
-  Billboard.create(carrier, {})
+  // Y-AXIS ONLY. The default (BM_ALL) matches camera pitch and roll, so the
+  // plate tilted diagonally whenever the mobile camera looked down at the
+  // avatar — text hanging at ~25°. Real nametags stay upright and turn only
+  // horizontally, which is exactly BM_Y (yaw only).
+  Billboard.create(carrier, { billboardMode: BillboardMode.BM_Y })
 
   const pill = engine.addEntity()
   Transform.create(pill, { parent: carrier })
@@ -106,12 +110,10 @@ function buildPlate(address: string, avatar: Entity): Plate {
 
   const titleT = engine.addEntity()
   Transform.create(titleT, { parent: carrier, position: { x: 0, y: -0.075, z: -0.012 } })
-  // Serif + caps (applied in renderPlate) styles the rank as an engraved plaque
-  // line under the sans name — the only typographic contrast TextShape offers
-  // (three built-in families, no weights). Revert = drop `font` and the
-  // toUpperCase().
+  // Same sans family as the name (serif read as too formal for the club); the
+  // rank is distinguished by caps, size and tier colour instead.
   TextShape.create(titleT, {
-    text: '', fontSize: TITLE_FONT, font: Font.F_SERIF, textColor: Color4.White(),
+    text: '', fontSize: TITLE_FONT, textColor: Color4.White(),
     outlineColor: Color4.Black(), outlineWidth: 0.12,
   })
 

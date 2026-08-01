@@ -307,6 +307,22 @@ export function purchaseUpgrade(
  * Persists all non-guest records. Call at shift end (a checkpoint), never per clean.
  * No-ops when nothing changed, so an idle server makes no requests.
  */
+/**
+ * Whether a record is worth persisting.
+ *
+ * Deliberately conservative: a career is a player's investment, and there is no
+ * undo for deleting one. So this only drops records that represent NO earned
+ * progress at all — someone who arrived, got a row created by getProgress (which
+ * creates on read), and never completed a shift or bought anything. Everyone who
+ * has actually played is kept forever, however long ago.
+ *
+ * That keeps the document proportional to real players rather than to every
+ * address that has ever loaded the scene.
+ */
+function isWorthKeeping(rec: ProgressRecord): boolean {
+  return rec.shifts > 0 || rec.xp > 0 || rec.money > 0 || rec.lifetimeItems > 0
+}
+
 export async function saveProgress(): Promise<void> {
   if (!dirty) return
   if (!loadStarted) {
@@ -314,10 +330,13 @@ export async function saveProgress(): Promise<void> {
     return
   }
   const players: Record<string, ProgressRecord> = {}
+  let pruned = 0
   for (const [address, rec] of records) {
     if (guests.has(address)) continue   // session-only, never written
+    if (!isWorthKeeping(rec)) { pruned++; continue }
     players[address] = rec
   }
+  if (pruned > 0) console.log(`[PROGRESS] skipped ${pruned} empty record(s)`)
   if (Object.keys(players).length === 0) return   // nothing persistable (all guests)
 
   dirty = false

@@ -50,6 +50,9 @@ const shopZoom = (): number => (isMobile() ? SHOP_ZOOM_MOBILE : SHOP_ZOOM_DESKTO
 // rows with the contracts/streaks work, so it keeps its own (larger) zoom.
 const PAYOUT_ZOOM = 1.5
 
+// Shifts for which onboarding hints still show on the payout card.
+const HINT_SHIFTS = 5
+
 // ── Shop open/closed ──────────────────────────────────────────────────────────
 // Module state rather than React state: the renderer re-runs ui() continuously, so
 // a plain flag is enough and avoids threading state through ui.tsx.
@@ -263,26 +266,31 @@ export function ShiftPayoutPanel(
             jsxFactory has no fragment support. */}
         {shift.passed ? (
           <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-            <Label value="Shift Complete" fontSize={font} color={WHITE} />
+            {/* No "Shift Complete" heading — the outcome art above already says
+                it, and on a phone every redundant row costs real estate. */}
             {row('Items cleaned', String(shift.items), WHITE)}
             {row('Earned',        money(shift.money), GOLD)}
             {row('XP',            `+${shift.xp}`,     XP_FILL)}
           </UiEntity>
         ) : (
           <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-            <Label value="Shift Below Standard" fontSize={font} color={theme.bar.low} />
             {/* Docked pay is still pay — show exactly what was earned so a
                 below-standard shift never reads as "you got nothing" (playtest:
                 zero payout looked like a bug). */}
             {row('Items cleaned', String(shift.items), WHITE)}
             {row('Partial pay',   money(shift.money), GOLD)}
             {row('XP',            `+${shift.xp}`,     XP_FILL)}
-            <Label
-              value={`Reach ${Math.round(OUTCOME_ADEQUATE * 100)}% cleanliness for full wages!`}
-              fontSize={small}
-              color={SUBTLE}
-              uiTransform={{ margin: { top: Math.round(6 * Z) } }}
-            />
+            {/* Teaching line, not a permanent fixture: genuinely useful while
+                learning the standard, pure clutter by shift 20. `shifts` counts
+                the shifts BEFORE this one, so a first-timer sees it at 0. */}
+            {c.shifts < HINT_SHIFTS && (
+              <Label
+                value={`Reach ${Math.round(OUTCOME_ADEQUATE * 100)}% cleanliness for full wages!`}
+                fontSize={small}
+                color={SUBTLE}
+                uiTransform={{ margin: { top: Math.round(6 * Z) } }}
+              />
+            )}
           </UiEntity>
         )}
 

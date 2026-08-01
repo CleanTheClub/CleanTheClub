@@ -141,6 +141,26 @@ function showCleanInstant(s: ItemState, spark = true) {
   }
 }
 
+// Mobile tap target: a box collider placed at the prop's AUTHORED WORLD
+// position rather than derived from the GLB.
+//
+// These props all share an entity origin at (16,0,16) with the visible mesh
+// baked elsewhere in the GLB, so an origin-parented proxy box lands metres away
+// from what the player sees — and the fallback (visible-mesh collider only) is a
+// small, fiddly target on a phone. The authored coordinates in CLUTTER_DEFS are
+// exactly where the mesh actually sits, so a box there is always both correct
+// and generous. Desktop keeps the mesh collider, which is precise enough with a
+// mouse and preserves the hover outline.
+function makeClickTarget(s: ItemState): Entity {
+  const dirty = s.dirtyEnt!
+  // Mesh only, both platforms — a world-positioned box would be a reliable tap
+  // target but has no renderable, so these props would be the only interactive
+  // items in the club without a highlight. If cushions turn out to still be
+  // unhittable on a phone AFTER the pointer-distance fixes, restore the box
+  // here (see git history) and accept no outline on them specifically.
+  return setupClickProxy(dirty, s.def.addBox ?? false)
+}
+
 // ── Click registration ───────────────────────────────────────────────────────
 function enableClick(s: ItemState) {
   if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
@@ -259,7 +279,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
         // that's the round-1 un-clickable bug for slow-loading assets.
         // Items with baked GLB offsets (stools) keep addBox=false; a box at their
         // entity origin would land at the wrong world position.
-        s.clickEnt = setupClickProxy(s.dirtyEnt, s.def.addBox ?? false)
+        s.clickEnt = makeClickTarget(s)
         Animator.createOrReplace(s.animEnt, {
           states: [{ clip: s.def.animClip, playing: false, loop: false }],
         })

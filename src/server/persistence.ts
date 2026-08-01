@@ -28,6 +28,11 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const READ_RETRY_MS  = 4_000    // gap between read attempts
 const READ_WINDOW_MS = 30_000   // total time to keep trying before giving up
 
+// Log a warning once a stored document passes this size. Not a hard limit —
+// just an early signal that the playerbase has outgrown "one document holds
+// everyone", well before an external store starts rejecting the write.
+const SIZE_WARN_BYTES = 100 * 1024
+
 export type PersistedDoc<T> = {
   /** Loads once; concurrent callers share the same in-flight promise. */
   ensureLoaded(): Promise<T | null>
@@ -148,8 +153,18 @@ export function createPersistedDoc<T>(
         return
       }
       try {
+        const body = JSON.stringify(value)
+        // Size watch. These documents hold one record per player forever, so they
+        // grow with the playerbase rather than with activity — fine at hundreds,
+        // a problem at thousands (external stores cap request size, and every
+        // shift end rewrites the WHOLE document). Warn early enough to act
+        // before a write starts failing in production.
+        if (body.length >= SIZE_WARN_BYTES) {
+          console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
+            `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
+        }
         await write(value)
-        console.log(`[STORE:${key}] saved OK`)
+        console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
       } catch (e) {
         console.log(`[STORE:${key}] ERROR: save failed:`, e)
       }

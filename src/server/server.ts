@@ -149,7 +149,17 @@ async function saveLeaderboard(): Promise<void> {
     console.log('[SERVER] Skipping save — leaderboard is empty (guarding against wipe)')
     return
   }
-  const records = [...leaderboard.entries()].map(([address, e]) => ({ address, ...e }))
+  // Drop scoreless rows — registerPlayer creates an entry with total 0 for
+  // everyone who walks in, so without this the document accumulates a record
+  // per visitor rather than per player. Anyone who has cleaned even one item is
+  // kept permanently; this only sheds rows that carry no information.
+  const records = [...leaderboard.entries()]
+    .filter(([, e]) => e.total > 0)
+    .map(([address, e]) => ({ address, ...e }))
+  if (records.length === 0) {
+    console.log('[SERVER] Skipping save — no scoring players yet')
+    return
+  }
   console.log(`[SERVER] Saving leaderboard: ${records.length} players`)
   try {
     await saveRecords(records)
