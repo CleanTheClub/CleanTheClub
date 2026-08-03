@@ -67,10 +67,12 @@ let   cleanIdx  = 0
 
 // Moves the sound entity to the player's current position then retriggers playback.
 // The false→true toggle via setTimeout is the standard DCL retrigger pattern.
-function playAt(entity: Entity) {
+function playAt(entity: Entity, pitch?: number) {
   const pos = Transform.getOrNull(engine.PlayerEntity)?.position ?? INIT_POS
   Transform.getMutable(entity).position = pos
-  AudioSource.getMutable(entity).playing = false
+  const src = AudioSource.getMutable(entity)
+  if (pitch !== undefined) src.pitch = pitch
+  src.playing = false
   timers.setTimeout(() => { AudioSource.getMutable(entity).playing = true }, 0)
 }
 
@@ -169,8 +171,10 @@ export function playDepositSound(stream?: 'general' | 'recycle') {
   playAt(depositEntity)
 }
 
-/** Crowd cheer at cleanliness milestones. Silent until Sounds/crowdCheer.mp3 exists. */
-export function playCrowdSound()     { playAt(crowdEntity) }
+/** Crowd cheer at cleanliness milestones. Silent until Sounds/crowdCheer.mp3 exists.
+ *  Random pitch so a party that cheers many times a night never sounds like a
+ *  looped sample — same trick as the clean sound. */
+export function playCrowdSound()     { playAt(crowdEntity, 0.88 + Math.random() * 0.24) }
 
 /**
  * Cleaning-spree chime — the notification ding climbing in pitch with the

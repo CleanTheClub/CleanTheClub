@@ -4,6 +4,7 @@ import {
   CLUTTER_DEFS,
   ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS, MILESTONE_EVERY,
   CLUTTER_RESPAWN_MS, FAST_RESPAWN_MS, RESPAWN_SCALE_FACTORS, RESPAWN_CUTOFF_FRACTION,
+  DEMAND_FACTORS,
   OUTCOME_OPTIMAL, OUTCOME_ADEQUATE,
 } from '../shared/config'
 
@@ -92,6 +93,12 @@ function openDisplayMs(): number {
   return isFinale ? FINALE_DISPLAY_MS : OPEN_DISPLAY_MS
 }
 
+// How many cleaned items count as "the whole job" for the current headcount.
+function demandedTotal(): number {
+  const idx = Math.min(Math.max(playerCount - 1, 0), DEMAND_FACTORS.length - 1)
+  return Math.max(1, Math.round(itemEntities.size * DEMAND_FACTORS[idx]))
+}
+
 function countCleaned(): number {
   let n = 0
   for (const [, e] of itemEntities) if (ClutterSync.get(e).isCleaned) n++
@@ -109,8 +116,12 @@ function syncGameState() {
   const now = Date.now()
   const gs  = GameState.getMutable(gameStateEntity)
   gs.phase        = phase
-  gs.cleanedCount = countCleaned()
-  gs.totalCount   = itemEntities.size
+  // Demand-scaled: clients render cleaned/total directly, so shipping the
+  // scaled total here tunes every display and consequence at once. Cleaned is
+  // capped so the bar can't read past 100% on an over-delivering solo shift.
+  const demanded  = demandedTotal()
+  gs.cleanedCount = Math.min(countCleaned(), demanded)
+  gs.totalCount   = demanded
   gs.secondsLeft  = phase === 'playing'
     ? roundStartMs === 0
       ? Math.ceil(getRoundDurationMs() / 1000)   // timer not yet started — show full duration
@@ -149,8 +160,7 @@ function triggerOpen() {
   clearAllRespawns()
   nextRoundTriggered = false
 
-  const total = itemEntities.size
-  const pct = total > 0 ? countCleaned() / total : 0
+  const pct = Math.min(1, countCleaned() / demandedTotal())
   currentOutcome = computeOutcome(pct)
   isFinale    = isMilestoneRound(roundNumber)   // milestone reached → celebration hold
   phase       = 'open'

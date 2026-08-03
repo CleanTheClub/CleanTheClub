@@ -1,7 +1,7 @@
 // Generic system for scene-item groups that are collected (hidden) on click.
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
-import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
@@ -10,7 +10,7 @@ import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
@@ -134,6 +134,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         const pos = Transform.getOrNull(containerEntity)?.position
         if (!withinReach(pos)) { maybeShowTooFarToast(); return }
         pendingCleans.add(itemId)
+        noteCarriedModel(GltfContainer.getOrNull(containerEntity)?.src)
         registerSpreeHit()
         // First pickup of a brand-new career: point at the nearest bin once, so
         // "my hands fill up and I have to walk somewhere" is taught rather than

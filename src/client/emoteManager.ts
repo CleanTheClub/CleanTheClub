@@ -6,6 +6,18 @@ import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
 const MOPPING_EMOTE_SRC = 'assets/scene/Emotes/Mopping_emote.glb'
 const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
+
+// ── Carry pose (upper-body masked, survives locomotion) ───────────────────────
+// triggerSceneEmote accepts mask: AvatarMask.AM_UPPER_BODY — animation LAYERING:
+// the emote drives arms/torso while locomotion keeps the legs, so a masked loop
+// is the long-sought "bent arms while walking". AvatarMask isn't re-exported on
+// the public SDK surface yet (const enum in generated pb typings), hence the
+// literal below.
+// PLACEHOLDER ASSET: the phone-holding emote stands in until a real Carry_Idle
+// clip is exported (arms bent 90°, palms up). Swap the src, nothing else.
+const AM_UPPER_BODY   = 0
+const CARRY_POSE_SRC  = PARTY_EMOTE_SRC
+let carryPoseWanted = false
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
 const EMOTE_TRIGGER_MS  = 200   // ms — delay after movePlayerTo before emote fires
@@ -30,6 +42,26 @@ function stopPickupEmote() {
   if (!emoteActive) return
   emoteActive = false
   triggerSceneEmote({ src: '', loop: false })
+  // A one-shot emote cancels everything, including the masked carry loop —
+  // put the loop back the moment the one-shot ends.
+  reassertCarryPose()
+}
+
+/**
+ * Hold or release the carry pose. Driven by the carry system: hands full → on,
+ * hands empty → off. The masked loop persists through walking; one-shot emotes
+ * (pickup, mop, party) temporarily replace it and stopPickupEmote re-asserts it.
+ */
+export function setCarryPose(active: boolean) {
+  if (carryPoseWanted === active) return
+  carryPoseWanted = active
+  if (active) reassertCarryPose()
+  else if (!emoteActive) triggerSceneEmote({ src: '', loop: false })
+}
+
+function reassertCarryPose() {
+  if (!carryPoseWanted || emoteActive) return
+  triggerSceneEmote({ src: CARRY_POSE_SRC, loop: true, mask: AM_UPPER_BODY })
 }
 
 // Public cancel — stops whatever scene emote is playing (e.g. when a hold-to-clean
@@ -115,6 +147,7 @@ function playStepEmote(
   //    the avatar toward those spots can drop it inside geometry — the physics
   //    resolver then ejects it, reported as "often teleported outside the club".
   // Mobile simply plays the emote where the player stands.
+  let stepped = false
   const playerPos = Transform.getOrNull(engine.PlayerEntity)?.position
   if (playerPos && !isMobile()) {
     const dx  = playerPos.x - targetPos.x
@@ -134,6 +167,7 @@ function playStepEmote(
       // avatarTarget turn-to-face is fine here: desktop mouse-look is decoupled
       // from avatar facing, so the camera stays under the player's control.
       movePlayerTo({ newRelativePosition, avatarTarget: targetPos })
+      stepped = true
     }
   }
 
@@ -144,8 +178,12 @@ function playStepEmote(
     triggerSceneEmote({ src, loop: false })
     timers.setTimeout(() => stopPickupEmote(), durationMs)
   }
-  if (triggerDelayMs <= 0) fire()
-  else timers.setTimeout(fire, triggerDelayMs)
+  // The delay exists solely to let a movePlayerTo step land before the arms
+  // move — when no step happened (mobile always; desktop already-in-range,
+  // the common case), it was 200ms of pure lag. Fire instantly instead.
+  const delay = stepped ? triggerDelayMs : 0
+  if (delay <= 0) fire()
+  else timers.setTimeout(fire, delay)
 }
 
 // Fires the pickup emote — quick-clean items (rubbish, bottles, glasses, clutter).

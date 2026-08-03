@@ -417,11 +417,31 @@ const WHITE = theme.colors.white
 // the safe-area inset keeps it above any explorer chrome along the bottom edge.
 function CarryChip({ S }: { S: number }) {
   if (!isCarryKnown()) return null   // no server answer yet — render nothing
+
+  const gen  = getCarriedGeneral()
+  const rec  = getCarriedRecycle()
+  const cap  = Math.max(1, getCarryCapacity())
   const full = isCarryFull()
-  const icon = Math.round(52 * S)
-  const font = Math.round(28 * S)
-  const pad  = Math.round(8 * S)
-  const sa   = getSafeArea()
+
+  const icon    = Math.round(44 * S)
+  const font    = Math.round(26 * S)
+  const pad     = Math.round(8 * S)
+  const trackW  = Math.round(180 * S)
+  const trackH  = Math.round(18 * S)
+  const sa      = getSafeArea()
+
+  // A FILL BAR, not an equation. "0 + 0 / 10" asked the player to parse three
+  // numbers and infer which was which; the question they actually have is "how
+  // full am I, and what's in there?". A bar answers the first at a glance, and
+  // colouring its segments (gold = general, blue = recycling, matching the bins)
+  // answers the second without a legend.
+  const GOLD = { r: 1, g: 0.82, b: 0.25, a: 1 }
+  const BLUE = { r: 0.45, g: 0.68, b: 1, a: 1 }
+  const genW = Math.round(trackW * Math.min(1, gen / cap))
+  const recW = Math.round(trackW * Math.min(1, rec / cap))
+  // Pulse the whole chip when full, so "go empty this" is impossible to miss.
+  const pulse = full ? 0.75 + 0.25 * Math.sin(Date.now() / 140) : 1
+
   return (
     <UiEntity
       uiTransform={{
@@ -436,50 +456,52 @@ function CarryChip({ S }: { S: number }) {
         uiTransform={{
           flexDirection: 'row',
           alignItems: 'center',
-          padding: { top: pad, bottom: pad, left: pad, right: Math.round(pad * 1.8) },
-          borderRadius: Math.round(22 * S),   // pill, echoing the nametag plate
+          padding: { top: pad, bottom: pad, left: pad, right: Math.round(pad * 1.6) },
+          borderRadius: Math.round(22 * S),
         }}
         uiBackground={{ color: theme.hud.bg }}
       >
         <UiEntity
-          uiTransform={{ width: icon, height: icon, margin: { right: Math.round(8 * S) } }}
-          // The BAG, not the Strength bicep: the chip shows what you're
-          // carrying; the upgrade tile shows what makes you carry more.
+          uiTransform={{ width: icon, height: icon, margin: { right: Math.round(10 * S) } }}
           uiBackground={{ texture: { src: 'assets/scene/UI/carry_bag_chip.png' }, textureMode: 'stretch', color: WHITE }}
         />
-        {/* Sorted streams: gold = general waste, blue = recycling, then the
-            shared capacity. Colours match the bins so the mapping is learnable
-            without a legend — and amber/blue stays readable for colourblind
-            players where the old gold/green did not. */}
+
+        {/* Capacity track — segments sit side by side and grow left to right. */}
+        <UiEntity
+          uiTransform={{
+            width: trackW, height: trackH,
+            flexDirection: 'row',
+            borderRadius: Math.round(trackH / 2),
+            margin: { right: Math.round(10 * S) },
+          }}
+          uiBackground={{ color: { r: 1, g: 1, b: 1, a: 0.14 } }}
+        >
+          <UiEntity uiTransform={{ width: genW, height: trackH }}
+            uiBackground={{ color: { ...GOLD, a: pulse } }} />
+          <UiEntity uiTransform={{ width: recW, height: trackH }}
+            uiBackground={{ color: { ...BLUE, a: pulse } }} />
+        </UiEntity>
+
         <Label
-          value={`${getCarriedGeneral()}`}
-          fontSize={font}
-          color={{ r: 1, g: 0.82, b: 0.25, a: 1 }}
-        />
-        <Label value=" + " fontSize={Math.round(font * 0.8)} color={COLOR_SUBTLE} />
-        <Label
-          value={`${getCarriedRecycle()}`}
-          fontSize={font}
-          color={{ r: 0.45, g: 0.68, b: 1, a: 1 }}
-        />
-        <Label
-          value={`  /  ${getCarryCapacity()}`}
+          value={`${gen + rec}/${cap}`}
           fontSize={font}
           color={full ? theme.colors.warning : WHITE}
         />
+
         {full && (
           <Label
-            value="  FULL — empty at a big bag!"
-            fontSize={Math.round(20 * S)}
-            color={theme.colors.warning}
+            value="  FULL"
+            fontSize={Math.round(22 * S)}
+            color={{ r: 1, g: 0.55, b: 0.2, a: pulse }}
           />
         )}
+
         {/* Portable Bin: empty on the spot, uses remaining in the label. Greyed
             (secondary) with empty hands — the server re-validates regardless. */}
         {getPortableLeft() > 0 && (
           <Button
             value={`EMPTY (${getPortableLeft()})`}
-            variant={getCarried() > 0 ? 'primary' : 'secondary'}
+            variant={gen + rec > 0 ? 'primary' : 'secondary'}
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(150 * S), height: Math.round(44 * S), margin: { left: Math.round(12 * S) } }}
             onMouseDown={() => requestPortableEmpty()}
@@ -553,7 +575,12 @@ const ui = () => {
     return <CareerIntroOverlay S={S} />
   }
 
-  const shopAsPanel = isShopOpen() && isOpen && !waiting && !mobile
+  // Side panel whenever the club is visible behind it (playing OR intermission)
+  // on desktop: a full-screen modal mid-shift would black out the timer and the
+  // room while the clock runs. Lobby and spectate have nothing worth preserving
+  // behind them, and a phone has no room for a side panel, so those get the
+  // modal (which is also the only path that renders in those screens).
+  const shopAsPanel = isShopOpen() && !mobile && !isLobby && !waiting
   if (isShopOpen() && !shopAsPanel) {
     return <UpgradeShopOverlay S={S} />
   }
@@ -893,7 +920,7 @@ const ui = () => {
            (outcome image, % figure, countdown) so it can never collide with them —
            the failure mode that produced the narrative/speech-bubble overlap. It
            renders only during the intermission, and only once a payout has arrived. */}
-      <CareerBar S={S} />
+      <CareerBar S={S} withShopButton={mobile && !isShopOpen()} />
       {/* The whole intermission in one centred card — outcome art, grade, score,
           payout and countdown. Self-centring, so it can't overflow. */}
       {isOpen && <ShiftPayoutPanel S={S} imageSrc={topImageSrc} pct={pct} seconds={seconds} />}
@@ -902,16 +929,24 @@ const ui = () => {
           when there is nothing in hand to track (round start resets it anyway). */}
       {!isOpen && <CarryChip S={S} />}
 
-      {/* Shop access during the intermission — the natural moment to spend a wage
-          that was just paid. Bottom-RIGHT so it clears the career HUD (bottom-left)
-          and the payout panel (centre), and only while cleaning is paused, so it
-          can never pull focus mid-shift. Hidden while the panel itself is open,
-          which occupies that side of the screen. */}
-      {isOpen && !shopAsPanel && (
+      {/* Shop access — available at ANY time, not just between shifts.
+          Upgrades apply the moment they are bought, so buying Movement Speed or
+          Strength mid-shift is a "feel it immediately" moment; gating it to the
+          intermission only added a wait. The round keeps running while the shop
+          is open, which makes it a real trade-off rather than a free pause.
+          DESKTOP ONLY: on mobile the bottom-right corner is the explorer's jump
+          cluster and even safe-area anchoring landed on it (device-verified), so
+          there the button docks under the career bar instead — see CareerBar's
+          withShopButton. Hidden while the side panel is open, which occupies
+          that side. */}
+      {!mobile && !shopAsPanel && !isShopOpen() && (
         <UiEntity
           uiTransform={{
             positionType: 'absolute',
-            position: { bottom: Math.round(18 * S), right: Math.round(18 * S) },
+            position: {
+              bottom: saPct(getSafeArea().bottom + 0.03),
+              right:  saPct(getSafeArea().right + 0.02),
+            },
           }}
         >
           <ShopButton S={S} />

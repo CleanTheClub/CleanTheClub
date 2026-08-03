@@ -1,6 +1,6 @@
 // Quick-click-to-clean system for the Rubbish group.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { ClutterSync, GameState } from '../shared/schemas'
@@ -14,7 +14,7 @@ import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
@@ -129,6 +129,7 @@ function enableClick(itemId: string) {
       const pos = Transform.getOrNull(containerEntity)?.position
       if (!withinReach(pos)) { maybeShowTooFarToast(); return }
       pendingCleans.add(itemId)
+      noteCarriedModel(GltfContainer.getOrNull(containerEntity)?.src)
       registerSpreeHit()
       // First pickup of a brand-new career: point at the nearest bin once, so
       // "my hands fill up and I have to walk somewhere" is taught rather than

@@ -1,4 +1,9 @@
-import { engine, Entity, Transform, GltfContainer, MeshCollider, ColliderLayer } from '@dcl/sdk/ecs'
+import {
+  engine, Entity, Transform, GltfContainer, GltfContainerLoadingState,
+  LoadingState, Name, MeshCollider, MeshRenderer,
+  ColliderLayer, Material, MaterialTransparencyMode, pointerEventsSystem,
+} from '@dcl/sdk/ecs'
+import { Color3, Color4, Quaternion } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 
 // ── Mobile tap targets ────────────────────────────────────────────────────────
@@ -43,9 +48,89 @@ const MOBILE_TAP_SCALE = 1.4
 // proxy is now OFF, every platform aims at the visible mesh, and every
 // interactive item highlights.
 //
-// FALLBACK: if small items become fiddly to tap on a phone again, set this back
-// to true — outlines on mobile are traded away, nothing else changes.
-const USE_MOBILE_TAP_PROXY = false
+// DECISION (2026-08-03 device test): proxies are BACK ON for mobile. Even with
+// the reach and maxDistance fixes, small items proved hard to tap AND hard to
+// see on a phone. The native outline still cannot survive a proxy (the ray must
+// hit the visible mesh, and GltfNodeModifiers — which would let us fake the
+// outline by overriding the GLB material — does not exist in SDK 7.25.1), so
+// mobile gets a MANUAL substitute instead: a glow disc under each proxied item
+// (see createMobileTapTarget) that brightens while the reticle hovers it.
+// Desktop is untouched and keeps the true toon outline everywhere.
+const USE_MOBILE_TAP_PROXY = true
+
+// ── Blender-baked placements ──────────────────────────────────────────────────
+// 20 of the scene's GLBs (MainStructure, Elevator, the cushions, stools, chaise,
+// graffiti…) share one Transform position — the scene anchor — with their real
+// placement baked into the mesh inside the GLB. For those entities the local
+// origin is NOT under the visible mesh, so anything we attach at the origin
+// (tap proxy, glow disc) would render at the middle of the dance floor: the
+// "stray point lights" cluster, plus tap targets that clean a cushion from
+// across the room. There is no runtime API for mesh bounds, so these items are
+// forced onto the mesh-only path — which also gives them the native outline.
+// The real fix is re-exporting those GLBs with origins under their meshes;
+// this guard then becomes a no-op.
+const BAKE_ANCHOR   = { x: 16, y: 0, z: 16 }
+const BAKE_EPSILON  = 0.25
+
+function hasBakedOffset(ent: Entity): boolean {
+  const p = Transform.getOrNull(ent)?.position
+  if (!p) return false
+  return Math.abs(p.x - BAKE_ANCHOR.x) < BAKE_EPSILON &&
+         Math.abs(p.y - BAKE_ANCHOR.y) < BAKE_EPSILON &&
+         Math.abs(p.z - BAKE_ANCHOR.z) < BAKE_EPSILON
+}
+
+// ── GLB load watchdog (all interactive items) ─────────────────────────────────
+// Field reports: a bin, then the ground-floor keys — invisible but (on mobile)
+// still clickable, because the tap proxy is an independent collider that
+// outlives a failed mesh load. A GLB whose fetch fails once stays failed: the
+// explorer never retries. So every item routed through setupClickProxy gets
+// watched: on FINISHED_WITH_ERROR / NOT_FOUND the GltfContainer is removed and
+// re-added, forcing a re-fetch. Capped per entity so a truly broken asset
+// can't reload-loop. Every state change is logged with the entity Name so the
+// next field report comes with its own diagnosis attached.
+const GLB_WATCH_INTERVAL_S = 5
+const GLB_RELOAD_LIMIT     = 3
+const GLB_STATE_NAME: Record<number, string> = {
+  0: 'UNKNOWN', 1: 'LOADING', 2: 'NOT_FOUND', 3: 'FINISHED_WITH_ERROR', 4: 'FINISHED',
+}
+type GlbWatch = { entity: Entity; lastState: number; reloads: number }
+const glbWatch: GlbWatch[] = []
+const glbWatched = new Set<Entity>()
+let glbWatchAcc = 0
+let glbWatchSystemAdded = false
+
+function watchGlb(entity: Entity): void {
+  if (glbWatched.has(entity)) return
+  glbWatched.add(entity)
+  glbWatch.push({ entity, lastState: -1, reloads: 0 })
+  if (!glbWatchSystemAdded) {
+    glbWatchSystemAdded = true
+    engine.addSystem(glbWatchdogSystem)
+  }
+}
+
+function glbWatchdogSystem(dt: number): void {
+  glbWatchAcc += dt
+  if (glbWatchAcc < GLB_WATCH_INTERVAL_S) return
+  glbWatchAcc = 0
+  for (const w of glbWatch) {
+    const st = GltfContainerLoadingState.getOrNull(w.entity)?.currentState
+    if (st === undefined || st === w.lastState) continue
+    const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
+    console.log(`[GLB] '${label}' load state → ${GLB_STATE_NAME[st] ?? st}`)
+    w.lastState = st
+    const failed = st === LoadingState.FINISHED_WITH_ERROR || st === LoadingState.NOT_FOUND
+    if (failed && w.reloads < GLB_RELOAD_LIMIT) {
+      w.reloads++
+      const src = GltfContainer.getOrNull(w.entity)?.src
+      if (!src) continue
+      console.log(`[GLB] '${label}' failed to load — forcing reload ${w.reloads}/${GLB_RELOAD_LIMIT}`)
+      GltfContainer.deleteFrom(w.entity)
+      GltfContainer.create(w.entity, { src })
+    }
+  }
+}
 
 // Returns the entity that holds the GltfContainer for a scene item.
 // In our scenes, every interactable's "container" entity IS the GltfContainer entity
@@ -72,9 +157,18 @@ function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
   return true
 }
 
+// The glow disc doubles as visibility aid and hover highlight on mobile:
+// resting it makes small items readable across a dark dance floor; on reticle
+// hover it brightens, standing in for the toon outline the proxy suppresses.
+// Alpha values only — the disc entity itself is local, never synced.
+const DISC_WORLD_SIZE  = 0.55   // metres, before compensating for item scale
+const DISC_ALPHA_REST  = 0.10
+const DISC_ALPHA_HOVER = 0.42
+
 // Creates the invisible, enlarged mobile tap target as a child of the item, so it
 // inherits the item's position and scale (including being scaled away to nothing
-// when the item is hidden — a cleaned item must not stay tappable).
+// when the item is hidden — a cleaned item must not stay tappable). Also drops
+// the glow disc under the item (same parent, so it hides with it).
 function createMobileTapTarget(gltfEnt: Entity): Entity {
   const proxy = engine.addEntity()
   Transform.create(proxy, {
@@ -82,6 +176,40 @@ function createMobileTapTarget(gltfEnt: Entity): Entity {
     scale:  { x: MOBILE_TAP_SCALE, y: MOBILE_TAP_SCALE, z: MOBILE_TAP_SCALE },
   })
   MeshCollider.setBox(proxy, ColliderLayer.CL_POINTER)
+
+  // Child scale is multiplied by the item's own scale, so divide it out to keep
+  // the disc a consistent world size whether the item is scale 0.3 or 1.
+  const itemScale = Transform.getOrNull(gltfEnt)?.scale?.x ?? 1
+  const d = DISC_WORLD_SIZE / Math.max(0.05, itemScale)
+  const disc = engine.addEntity()
+  Transform.create(disc, {
+    parent:   gltfEnt,
+    position: { x: 0, y: 0.01, z: 0 },
+    rotation: Quaternion.fromEulerDegrees(90, 0, 0),   // plane flat on the floor
+    scale:    { x: d, y: d, z: 1 },
+  })
+  MeshRenderer.setPlane(disc)
+  const tex = Material.Texture.Common({ src: 'assets/scene/UI/glow_disc.png' })
+  const setDisc = (alpha: number) => Material.setPbrMaterial(disc, {
+    texture:           tex,
+    alphaTexture:      tex,
+    albedoColor:       Color4.create(1, 1, 1, alpha),
+    emissiveTexture:   tex,
+    emissiveColor:     Color3.White(),
+    emissiveIntensity: alpha * 2,
+    transparencyMode:  MaterialTransparencyMode.MTM_ALPHA_BLEND,
+    specularIntensity: 0,
+    metallic: 0,
+    roughness: 1,
+  })
+  setDisc(DISC_ALPHA_REST)
+
+  // The proxy is the pointer target, so hover fires on it even though the disc
+  // does the glowing. Callers attach their own onPointerDown to the proxy; the
+  // hover handlers here don't conflict with that.
+  pointerEventsSystem.onPointerHoverEnter({ entity: proxy }, () => setDisc(DISC_ALPHA_HOVER))
+  pointerEventsSystem.onPointerHoverLeave({ entity: proxy }, () => setDisc(DISC_ALPHA_REST))
+
   return proxy
 }
 
@@ -108,7 +236,9 @@ export function setupClickProxy(gltfEnt: Entity, addBox = true): Entity {
   // what addBox encodes. Items that opt out (baked GLB offsets, e.g. the bar
   // stools) would get a tap target floating away from the mesh, so they keep the
   // visible-mesh collider on mobile too.
-  const useMobileProxy = USE_MOBILE_TAP_PROXY && isMobile() && addBox
+  const useMobileProxy = USE_MOBILE_TAP_PROXY && isMobile() && addBox && !hasBakedOffset(gltfEnt)
+
+  watchGlb(gltfEnt)
 
   if (!applyPointerMask(gltfEnt, useMobileProxy)) {
     const waitForGltf = () => {

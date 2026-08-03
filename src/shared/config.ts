@@ -40,6 +40,19 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was
 //  5+ players → 1.80× ( 67 s /  33 s)
 export const RESPAWN_SCALE_FACTORS = [0.50, 0.95, 1.30, 1.60, 1.80]
 
+// ── Demand scaling — the boss expects less of a skeleton crew ────────────────
+// Respawn scaling softens how fast mess FIGHTS BACK, but the pass bar was still
+// cleaned/total-items: a solo cleaner was asked to cover the same club as a
+// full crew in the same 150s. Field-verified too hard. So the server scales the
+// DEMANDED total by headcount before syncing GameState: the club is unchanged,
+// but "100%" means "what this many cleaners can reasonably do". Every display
+// (HUD bar, grunge, narration) and every consequence (grade, wages) derives
+// from the same synced counts, so this one factor tunes the whole game.
+//  1 player  → 0.65×  (pass at 50% standard = ~33% of the club's items)
+//  2 players → 0.85×  (pass = ~43% of items)
+//  3+        → 1.00×  (unchanged)
+export const DEMAND_FACTORS = [0.65, 0.85, 1.0]
+
 // ── Closing window — let the club actually finish clean ───────────────────────
 // Playtest feedback: "when you finally finish cleaning a floor they respawn and the
 // game seems endless... the total percentage completed is difficult to guess until

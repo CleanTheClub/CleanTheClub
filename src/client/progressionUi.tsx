@@ -64,7 +64,7 @@ export const closeShop = (): void => { shopOpen = false }
 // ─────────────────────────────────────────────────────────────────────────────
 // Career HUD — always-visible title, promotion progress and balance.
 // ─────────────────────────────────────────────────────────────────────────────
-export function CareerBar({ S }: { S: number }) {
+export function CareerBar({ S, withShopButton = false }: { S: number; withShopButton?: boolean }) {
   const c = getCareer()
   if (!c) return null   // no progressUpdate yet — render nothing rather than zeros
 
@@ -167,6 +167,16 @@ export function CareerBar({ S }: { S: number }) {
           color={theme.colors.warning}
           uiTransform={{ margin: { top: Math.round(3 * Z) } }}
         />
+      )}
+      {/* UPGRADES docked under the bar on the mobile in-shift HUD. The floating
+          bottom-right button sat on the explorer's jump cluster there — screen
+          corners belong to the explorer on mobile (same lesson as the shop's
+          close button). This spot is already validated real estate, and it puts
+          the button next to the money it spends. */}
+      {withShopButton && (
+        <UiEntity uiTransform={{ margin: { top: Math.round(8 * Z) } }}>
+          <ShopButton S={S} />
+        </UiEntity>
       )}
     </UiEntity>
   )
@@ -444,17 +454,17 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
  */
 function CloseX({ Z }: { Z: number }) {
   const size = Math.round(52 * Z)
-  // Anchored to the SAFE AREA, not the screen corner. The raw top-right corner
-  // is where the explorer parks its own chrome — the profile cluster on mobile,
-  // minimap and menu on desktop — so a button pinned there was landing under
-  // someone else's UI on both platforms. getSafeArea() reports the region the
-  // explorer leaves free, and it updates live (e.g. when chat opens).
-  const sa = getSafeArea()
+  // Anchored to the shop CARD's top-right corner, not the screen's. Screen
+  // corners belong to the explorer (profile cluster on mobile, minimap on
+  // desktop), and even safe-area anchoring proved wrong on real devices — the
+  // reported inset didn't cover the mobile profile chip. The card is centred
+  // with margin on every device, so its own corner can never sit under chrome.
+  // Requires the PARENT to be the card wrapper (position: relative context).
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute',
-        position: { top: pct(sa.top + 0.03), right: pct(sa.right + 0.02) },
+        position: { top: Math.round(6 * Z), right: Math.round(6 * Z) },
         width: size,
         height: size,
         justifyContent: 'center',
@@ -485,9 +495,11 @@ export function UpgradeShopOverlay({ S }: { S: number }) {
       }}
       uiBackground={{ color: PANEL }}
     >
-      <ShopBody S={Z} rowWidth={Math.round(620 * Z)} titleSize={Math.round(38 * Z)} />
-      {/* Screen corner — the same place on every device, never clipped. */}
-      <CloseX Z={Z} />
+      {/* Wrapper = the card bounds; CloseX rides its top-right corner. */}
+      <UiEntity uiTransform={{ flexDirection: 'column' }}>
+        <ShopBody S={Z} rowWidth={Math.round(620 * Z)} titleSize={Math.round(38 * Z)} />
+        <CloseX Z={Z} />
+      </UiEntity>
     </UiEntity>
   )
 }
@@ -517,8 +529,10 @@ export function UpgradeShopPanel({ S }: { S: number }) {
       // confetti-filled scene without hiding it.
       uiBackground={{ color: Color4.create(0, 0, 0, 0.72) }}
     >
-      <ShopBody S={Z} rowWidth={Math.round(500 * Z)} titleSize={Math.round(30 * Z)} />
-      <CloseX Z={Z} />
+      <UiEntity uiTransform={{ flexDirection: 'column' }}>
+        <ShopBody S={Z} rowWidth={Math.round(500 * Z)} titleSize={Math.round(30 * Z)} />
+        <CloseX Z={Z} />
+      </UiEntity>
     </UiEntity>
   )
 }
