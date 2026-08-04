@@ -186,7 +186,7 @@ const BAG_MAX    = 1.1
 // authored (scripts: compose chain at t=0, conjugate, normalise).
 // In the countered frame, BAG_OFFSET is avatar-intuitive again:
 // x = left/right, y = up, z = forward (palm sits ~6cm beyond the wrist bone).
-const BAG_OFFSET      = { x: 0, y: 0.06, z: 0.06 }
+const BAG_OFFSET      = { x: 0, y: 0.10, z: 0.06 }
 
 // ── Full-container cue ────────────────────────────────────────────────────────
 // When the hands hit capacity the box itself says so: a translucent amber
