@@ -206,16 +206,16 @@ const RIG_COUNTER_ROT = { x: 0.5328, y: -0.5063, z: -0.3442, w: -0.5843 }
 const RIG_FINE_TUNE_DEG = { x: -30, y: 0, z: 210 }
 
 const MAX_VISIBLE_ITEMS = 6
-const ITEM_MINI_SCALE   = 0.16
+const ITEM_MINI_SCALE   = 0.21
 // Fixed jumble — offsets climb up out of the bag, rotations vary per slot so
 // the pile reads as a pile rather than a printed stack.
 const ITEM_SLOTS = [
-  { pos: { x:  0.04, y: 0.04, z:  0.02 }, rot: { x: 10, y:   0, z:  15 } },
-  { pos: { x: -0.05, y: 0.08, z: -0.03 }, rot: { x: -8, y:  60, z: -20 } },
-  { pos: { x:  0.02, y: 0.13, z: -0.04 }, rot: { x: 20, y: 130, z:   5 } },
-  { pos: { x: -0.03, y: 0.17, z:  0.03 }, rot: { x: -15, y: 200, z: 25 } },
-  { pos: { x:  0.05, y: 0.21, z: -0.01 }, rot: { x:  5, y: 270, z: -12 } },
-  { pos: { x: -0.04, y: 0.25, z:  0.00 }, rot: { x: -20, y: 330, z: 18 } },
+  { pos: { x:  0.04, y: 0.16, z:  0.02 }, rot: { x: 10, y:   0, z:  15 } },
+  { pos: { x: -0.05, y: 0.19, z: -0.03 }, rot: { x: -8, y:  60, z: -20 } },
+  { pos: { x:  0.02, y: 0.22, z: -0.04 }, rot: { x: 20, y: 130, z:   5 } },
+  { pos: { x: -0.03, y: 0.25, z:  0.03 }, rot: { x: -15, y: 200, z: 25 } },
+  { pos: { x:  0.05, y: 0.28, z: -0.01 }, rot: { x:  5, y: 270, z: -12 } },
+  { pos: { x: -0.04, y: 0.31, z:  0.00 }, rot: { x: -20, y: 330, z: 18 } },
 ]
 
 let carryAnchor: Entity | null = null
@@ -318,7 +318,7 @@ function refreshCarriedBag(): void {
         const def = ITEM_SLOTS[i]
         Transform.create(slot, {
           parent:   carryRig ?? undefined,
-          position: def.pos,
+          position: { x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y, z: BAG_OFFSET.z + def.pos.z },
           rotation: Quaternion.fromEulerDegrees(def.rot.x, def.rot.y, def.rot.z),
           scale:    { x: ITEM_MINI_SCALE, y: ITEM_MINI_SCALE, z: ITEM_MINI_SCALE },
         })
