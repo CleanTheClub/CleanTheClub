@@ -14,7 +14,7 @@ import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
@@ -124,7 +124,7 @@ function enableClick(itemId: string) {
     },
     () => {
       if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
-      if (isCarryFull()) { maybeShowFullToast(); return }
+      if (isCarryFull()) { maybeShowFullToast(); pulseCarryBox(); return }
       if (pendingCleans.has(itemId)) return
       const pos = Transform.getOrNull(containerEntity)?.position
       if (!withinReach(pos)) { maybeShowTooFarToast(); return }

@@ -219,6 +219,33 @@ let carryAnchor: Entity | null = null
 let carryRig: Entity | null = null
 let bagEntity: Entity | null = null
 let fullStinkEntity: Entity | null = null
+
+// ── Refusal bounce ────────────────────────────────────────────────────────────
+// When a pickup is refused for full hands, the whole carried load does one
+// quick bulge — the box itself says "no room". Pulses the RIG, so the box and
+// the item pile jiggle together. One bump (sine half-wave), ~0.35s.
+const REFUSE_PULSE_S   = 0.35
+const REFUSE_PULSE_AMP = 0.22
+let refusePulseT = -1   // -1 = idle; else elapsed seconds
+
+/** Called by the pickup systems when a clean is pre-empted for full hands. */
+export function pulseCarryBox(): void {
+  if (carryRig) refusePulseT = 0
+}
+
+function refusePulseSystem(dt: number): void {
+  if (refusePulseT < 0) return
+  const tf = carryRig && Transform.getMutableOrNull(carryRig)
+  if (!tf) { refusePulseT = -1; return }
+  refusePulseT += dt
+  if (refusePulseT >= REFUSE_PULSE_S) {
+    tf.scale = { x: 1, y: 1, z: 1 }
+    refusePulseT = -1
+    return
+  }
+  const k = 1 + REFUSE_PULSE_AMP * Math.sin((refusePulseT / REFUSE_PULSE_S) * Math.PI)
+  tf.scale = { x: k, y: k, z: k }
+}
 const slotEntities: Entity[] = []
 const carriedModels: string[] = []
 
@@ -449,5 +476,6 @@ export function initCarrySystem(): void {
   }
   engine.addSystem(nudgeSystem)
   engine.addSystem(binWatchdogSystem)
+  engine.addSystem(refusePulseSystem)
   console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
 }

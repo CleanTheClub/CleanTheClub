@@ -10,7 +10,7 @@ import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
@@ -130,7 +130,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
       () => {
         if (pendingCleans.has(itemId)) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
-        if (isCarryFull()) { maybeShowFullToast(); return }
+        if (isCarryFull()) { maybeShowFullToast(); pulseCarryBox(); return }
         const pos = Transform.getOrNull(containerEntity)?.position
         if (!withinReach(pos)) { maybeShowTooFarToast(); return }
         pendingCleans.add(itemId)
