@@ -244,6 +244,10 @@ function goToLobby() {
 
 // Any player presses START in the lobby: run a short shared countdown, then begin
 // round 0.  Guarded so it only fires from the lobby, once, with players present.
+let startHold: (() => boolean) | undefined
+/** Server-installed predicate: while it returns true, the lobby will not auto-start. */
+export function setStartHold(fn: () => boolean) { startHold = fn }
+
 export function onStartMatch() {
   if (phase !== 'lobby' || starting || playerCount <= 0) return
   starting = true
@@ -395,7 +399,10 @@ export function initRoundManager(
     // else happening. Instead the lobby auto-starts the moment anyone is present,
     // so it's a brief "next shift starting" beat rather than a screen you can be
     // stranded on. The START button remains as a way to skip the wait.
-    if (phase === 'lobby' && !starting && playerCount > 0) onStartMatch()
+    // startHold lets the server delay the auto-start (e.g. while a brand-new
+    // player reads the career intro). START NOW still works — the hold only
+    // gates the AUTOMATIC start, never a deliberate one.
+    if (phase === 'lobby' && !starting && playerCount > 0 && !startHold?.()) onStartMatch()
 
     if (phase === 'playing' || phase === 'open' || phase === 'lobby') syncGameState()
   }, 1_000)

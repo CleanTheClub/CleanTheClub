@@ -24,8 +24,8 @@ const SND_CROWD         = 'assets/scene/Sounds/crowdCheer.mp3'
 const VOL_HOVER   = 0.7
 const VOL_CLICK   = 0.9
 const VOL_STICKY  = 0.9
-const VOL_CLEAN   = 0.55   // lowered: it fires dozens of times a round and
-                           // was drowning the bin-deposit thunk
+const VOL_CLEAN   = 0.42   // fires dozens of times a round — keep it well under
+                           // the deposit thunk (twice lowered on playtest feedback)
 const VOL_SQUELCH = 2.0
 
 const INIT_POS = { x: 8, y: 1, z: 8 }

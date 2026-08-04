@@ -2,6 +2,14 @@
 // Pool-limited: at most MAX_STINK_EMITTERS emitter entities are created.
 // Emitters live at independent world-space positions (NOT parented to scene
 // entities) so they are unaffected when items are hidden via scale = zero.
+//
+// HISTORY (2026-08-03/04): briefly ported to billboarded mesh planes when
+// particles vanished from a deployed build — but the Foundation confirmed the
+// component works, a minimal diagnostic emitter rendered fine locally, and the
+// mesh wisps rendered oversized/white next to the original. Restored to the
+// original ParticleSystem implementation; the deployed disappearance remains
+// unexplained (suspect: stale explorer build that day) — if it recurs, check a
+// minimal emitter FIRST before blaming this config.
 
 import {
   engine, Entity, Transform,
@@ -85,18 +93,38 @@ function createEmitter(pos: { x: number; y: number; z: number }): Entity {
 }
 
 // ── Emitter state helpers ─────────────────────────────────────────────────────
+// PS_STOPPED should clear existing particles per the docs, but the current
+// explorer keeps rendering them (field report: stink persisted after pickup).
+// So pausing ALSO drops the emitter 500m underground — particles simulate in
+// emitter-local space (PSS_LOCAL default), so they vanish with it, whatever
+// the playback state does. The paused-set keeps the shift idempotent: party
+// mode blanket-pauses every emitter, including ones already paused by cleans,
+// and without the guard those would sink twice and resume misplaced.
+const PAUSE_SINK_M = 500
+const pausedEmitters = new Set<Entity>()
+
 function pauseEmitter(e: Entity) {
+  if (pausedEmitters.has(e)) return
+  pausedEmitters.add(e)
   const ps = ParticleSystem.getMutableOrNull(e)
-  if (!ps) return
-  ps.active        = false
-  ps.playbackState = PS_STOPPED
+  if (ps) {
+    ps.active        = false
+    ps.playbackState = PS_STOPPED
+  }
+  const tf = Transform.getMutableOrNull(e)
+  if (tf) tf.position = { ...tf.position, y: tf.position.y - PAUSE_SINK_M }
 }
 
 function resumeEmitter(e: Entity) {
+  if (!pausedEmitters.has(e)) return
+  pausedEmitters.delete(e)
   const ps = ParticleSystem.getMutableOrNull(e)
-  if (!ps) return
-  ps.active        = true
-  ps.playbackState = PS_PLAYING
+  if (ps) {
+    ps.active        = true
+    ps.playbackState = PS_PLAYING
+  }
+  const tf = Transform.getMutableOrNull(e)
+  if (tf) tf.position = { ...tf.position, y: tf.position.y + PAUSE_SINK_M }
 }
 
 // ── Public registration — for sceneGlb items whose position is discovered at runtime ──

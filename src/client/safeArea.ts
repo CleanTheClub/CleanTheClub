@@ -15,6 +15,32 @@
 
 import { engine, UiCanvasInformation } from '@dcl/sdk/ecs'
 
+// ── Canvas info, resiliently ──────────────────────────────────────────────────
+// UiCanvasInformation classically lives on engine.RootEntity — but explorer
+// builds have shipped with it missing there (field report 2026-08-04: wide-
+// screen layout broke and "we used to be able to query ui canvas information";
+// a Foundation workaround exists but is undocumented). If the root read fails,
+// scan for the component on ANY entity before giving up, and log which path
+// worked once so field reports carry their own diagnosis.
+type CanvasInfo = { width: number; height: number; interactableArea?: { top: number; left: number; right: number; bottom: number } }
+let loggedSource = ''
+
+export function readCanvasInfo(): CanvasInfo | null {
+  const root = UiCanvasInformation.getOrNull(engine.RootEntity)
+  if (root && root.width > 0 && root.height > 0) {
+    if (loggedSource !== 'root') { loggedSource = 'root'; console.log('[UI] canvas info via RootEntity') }
+    return root as CanvasInfo
+  }
+  for (const [, info] of engine.getEntitiesWith(UiCanvasInformation)) {
+    if (info.width > 0 && info.height > 0) {
+      if (loggedSource !== 'scan') { loggedSource = 'scan'; console.log('[UI] canvas info via entity scan (NOT RootEntity — explorer moved it)') }
+      return info as CanvasInfo
+    }
+  }
+  if (loggedSource !== 'none') { loggedSource = 'none'; console.log('[UI] canvas info UNAVAILABLE — wide-screen aspect matching and live safe-area disabled (fallbacks active)') }
+  return null
+}
+
 export type SafeArea = {
   /** Fraction of screen height reserved at the top edge (0..1). */
   top: number
@@ -40,8 +66,8 @@ const FALLBACK: SafeArea = { top: 0.12, left: 0.26, right: 0.02, bottom: 0.12, k
  * built from this track the explorer UI live.
  */
 export function getSafeArea(): SafeArea {
-  const info = UiCanvasInformation.getOrNull(engine.RootEntity)
-  if (!info || info.width <= 0 || info.height <= 0 || !info.interactableArea) return FALLBACK
+  const info = readCanvasInfo()
+  if (!info || !info.interactableArea) return FALLBACK
 
   const a = info.interactableArea
   return {

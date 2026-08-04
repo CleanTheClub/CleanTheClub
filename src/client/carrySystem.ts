@@ -9,7 +9,7 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, GltfContainerLoadingState, LoadingState, AvatarAttach, AvatarAnchorPointType } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, GltfContainerLoadingState, LoadingState, AvatarAttach, AvatarAnchorPointType, MeshRenderer, Material, MaterialTransparencyMode } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
@@ -164,17 +164,46 @@ function nudgeSystem(): void {
 // anchor. The queue is trimmed to the SERVER's carried total on every update,
 // so a rejected clean (full hands, phase gate) self-corrects — the server
 // count is the truth, the srcs are just decoration on it.
-// Container OFF for now — you see just the items you grabbed. Bag+items read
-// as clutter ("why both?"), and the better container story is PROGRESSION:
-// when per-tier carrier models exist (basket → bag → trolley as Strength
-// levels), the container returns as a visible status/capacity signal — new
-// players immediately understand "I fill this thing", veterans wear their
-// upgrade. Flip to true to bring the bag back meanwhile.
-const SHOW_CARRY_CONTAINER = false
-const BAG_MODEL  = 'assets/scene/Models/bigRubbishBag/bigRubbishBag.glb'
-const BAG_MIN    = 0.10
-const BAG_MAX    = 0.22
-const BAG_OFFSET = { x: 0, y: -0.05, z: 0 }
+// Container ON — the user's Box_Wearable (torn cardboard tier-1 carrier).
+// Longer-term plan stands: per-Strength tier models (box → bag → trolley) as a
+// visible capacity/status signal.
+//
+// Model is PROP-AUTHORED: origin at the box's base, centred (min-y 0.000).
+const SHOW_CARRY_CONTAINER = true
+const BAG_MODEL  = 'assets/scene/Models/Box_Wearable/Box_Wearable.glb'
+// Box is 0.41m wide at scale 1 — carried size is right as authored.
+const BAG_MIN    = 0.85
+const BAG_MAX    = 1.1
+// LEFT-HAND AvatarAttach — the only zero-lag option (a scene-tick follower
+// reads the player transform a frame behind the renderer's smoothing, so the
+// box dragged ~10cm at walk speed; renderer-side attachment can't lag).
+//
+// COUNTER-ROTATION, computed not guessed: the Avatar_LeftHand world rotation
+// in the carry pose was composed from Carry_emote.glb itself (skeleton rest
+// transforms x first-keyframe animation rotations, root-to-hand). This
+// quaternion is its exact inverse — verified to map the box's up-axis to
+// world-up in that pose. Recompute if the carry emote's arm pose is re-
+// authored (scripts: compose chain at t=0, conjugate, normalise).
+// In the countered frame, BAG_OFFSET is avatar-intuitive again:
+// x = left/right, y = up, z = forward (palm sits ~6cm beyond the wrist bone).
+const BAG_OFFSET      = { x: 0, y: 0.06, z: 0.06 }
+
+// ── Full-container cue ────────────────────────────────────────────────────────
+// When the hands hit capacity the box itself says so: a translucent amber
+// shell breathes around it (~1.6Hz) and the box gains a subtle strain-pulse.
+// Amber matches the general-waste bin accent (colourblind-safe pairing), and
+// the 3D cue works even when the player isn't reading the HUD chip.
+const SHELL_DIMS      = { x: 0.44, y: 0.28, z: 0.41 }   // box dims + 8%
+const SHELL_PULSE_HZ  = 1.6
+const SHELL_ALPHA     = 0.22
+const RIG_COUNTER_ROT = { x: 0.5328, y: -0.5063, z: -0.3442, w: -0.5843 }
+// Residual fix: the runtime avatar skeleton's bone REST axes differ from the
+// emote GLB's (the explorer retargets), leaving one CONSTANT rotation after
+// the computed counter — screenshots show a ~90° roll. Tuned here, in the
+// countered (avatar-ish) frame.
+// Residual between the computed counter-rotation and the runtime skeleton's
+// bone rest axes — dialled in with the (since removed) live tuner, 2026-08-04.
+const RIG_FINE_TUNE_DEG = { x: -30, y: 0, z: 210 }
 
 const MAX_VISIBLE_ITEMS = 6
 const ITEM_MINI_SCALE   = 0.16
@@ -190,7 +219,11 @@ const ITEM_SLOTS = [
 ]
 
 let carryAnchor: Entity | null = null
+let carryRig: Entity | null = null
 let bagEntity: Entity | null = null
+let shellEntity: Entity | null = null
+let bagBaseSize = 1
+let pulseAcc = 0
 const slotEntities: Entity[] = []
 const carriedModels: string[] = []
 
@@ -209,7 +242,9 @@ function refreshCarriedBag(): void {
     if (carryAnchor) {
       engine.removeEntityWithChildren(carryAnchor)
       carryAnchor = null
+      carryRig = null
       bagEntity = null
+      shellEntity = null
       slotEntities.length = 0
     }
     carriedModels.length = 0
@@ -224,20 +259,54 @@ function refreshCarriedBag(): void {
     // grow without inflating the items riding on it.
     carryAnchor = engine.addEntity()
     Transform.create(carryAnchor, {})
-    AvatarAttach.create(carryAnchor, { anchorPointId: AvatarAnchorPointType.AAPT_RIGHT_HAND })
+    AvatarAttach.create(carryAnchor, { anchorPointId: AvatarAnchorPointType.AAPT_LEFT_HAND })
+
+    // Shared rig carries the counter-rotation so box + pile tip together.
+    carryRig = engine.addEntity()
+    Transform.create(carryRig, {
+      parent:   carryAnchor,
+      rotation: currentRigRotation(),
+    })
 
     if (SHOW_CARRY_CONTAINER) {
       bagEntity = engine.addEntity()
-      Transform.create(bagEntity, { parent: carryAnchor, position: BAG_OFFSET })
+      Transform.create(bagEntity, { parent: carryRig, position: BAG_OFFSET })
       GltfContainer.create(bagEntity, { src: BAG_MODEL })
     }
   }
 
-  // Bag scales with how full the hands are — a nearly-full load looks heavier.
+  // Container scales with how full the hands are — a full load looks heavier.
+  // Origin is at the box base on the vertical axis (prop-authored), so scaling
+  // grows it in place; the offset no longer needs to move with size.
   const frac = Math.min(1, total / Math.max(1, capacity))
   const size = BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
+  bagBaseSize = size
+
+  // Amber shell appears exactly at capacity, disappears the moment space frees.
+  const full = total >= capacity
+  if (full && !shellEntity && bagEntity) {
+    shellEntity = engine.addEntity()
+    Transform.create(shellEntity, {
+      parent:   bagEntity,
+      position: { x: 0, y: SHELL_DIMS.y / 2, z: 0 },   // box origin is its base
+      scale:    SHELL_DIMS,
+    })
+    MeshRenderer.setBox(shellEntity)
+    Material.setPbrMaterial(shellEntity, {
+      albedoColor:       Color4.create(1, 0.55, 0.15, SHELL_ALPHA),
+      emissiveColor:     { r: 1, g: 0.5, b: 0.1 },
+      emissiveIntensity: 1.4,
+      transparencyMode:  MaterialTransparencyMode.MTM_ALPHA_BLEND,
+      specularIntensity: 0,
+      metallic: 0,
+      roughness: 1,
+    })
+  } else if (!full && shellEntity) {
+    engine.removeEntity(shellEntity)
+    shellEntity = null
+  }
 
   // Newest items on top of the pile; slots are reused, never re-created.
   const visible = carriedModels.slice(-MAX_VISIBLE_ITEMS)
@@ -248,7 +317,7 @@ function refreshCarriedBag(): void {
         const slot = engine.addEntity()
         const def = ITEM_SLOTS[i]
         Transform.create(slot, {
-          parent:   carryAnchor,
+          parent:   carryRig ?? undefined,
           position: def.pos,
           rotation: Quaternion.fromEulerDegrees(def.rot.x, def.rot.y, def.rot.z),
           scale:    { x: ITEM_MINI_SCALE, y: ITEM_MINI_SCALE, z: ITEM_MINI_SCALE },
@@ -263,9 +332,34 @@ function refreshCarriedBag(): void {
   }
 }
 
+// Breathes the shell and strains the box while full. Transform-only writes.
+function fullPulseSystem(dt: number): void {
+  if (!shellEntity) return
+  pulseAcc += dt
+  const wave = 0.5 + 0.5 * Math.sin(pulseAcc * Math.PI * 2 * SHELL_PULSE_HZ)
+  const sTf = Transform.getMutableOrNull(shellEntity)
+  if (sTf) {
+    const k = 1 + 0.12 * wave
+    sTf.scale = { x: SHELL_DIMS.x * k, y: SHELL_DIMS.y * k, z: SHELL_DIMS.z * k }
+  }
+  const bTf = bagEntity && Transform.getMutableOrNull(bagEntity)
+  if (bTf) {
+    const b = bagBaseSize * (1 + 0.04 * wave)
+    bTf.scale = { x: b, y: b, z: b }
+  }
+}
+
+function currentRigRotation(): Quaternion {
+  return Quaternion.multiply(
+    RIG_COUNTER_ROT as Quaternion,
+    Quaternion.fromEulerDegrees(RIG_FINE_TUNE_DEG.x, RIG_FINE_TUNE_DEG.y, RIG_FINE_TUNE_DEG.z),
+  )
+}
+
 function refreshMarkers(): void {
   refreshCarriedBag()
 }
+
 
 let carriedGeneral = 0
 let carriedRecycle = 0
@@ -365,5 +459,6 @@ export function initCarrySystem(): void {
   }
   engine.addSystem(nudgeSystem)
   engine.addSystem(binWatchdogSystem)
+  engine.addSystem(fullPulseSystem)
   console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
 }

@@ -13,7 +13,7 @@ import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit } from './client/carrySystem'
-import { getSafeArea, pct as saPct } from './client/safeArea'
+import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
 
@@ -517,8 +517,8 @@ const ui = () => {
   // letterbox to skew centred content (see currentVirtualW above). Clamped so a
   // portrait or extreme aspect can't drive fixed-width elements off-canvas; the
   // >=8px guard avoids re-setting on sub-pixel jitter.
-  const canvasInfo = UiCanvasInformation.getOrNull(engine.RootEntity)
-  if (canvasInfo && canvasInfo.width > 0 && canvasInfo.height > 0) {
+  const canvasInfo = readCanvasInfo()
+  if (canvasInfo) {
     const desired = Math.max(720, Math.min(2400, Math.round(VIRTUAL_H * (canvasInfo.width / canvasInfo.height))))
     if (Math.abs(desired - currentVirtualW) >= 8) {
       currentVirtualW = desired

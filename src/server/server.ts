@@ -7,7 +7,7 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
@@ -346,6 +346,10 @@ const activePlayers = new Set<string>()   // cleaning in the current round
 const signedUp      = new Set<string>()   // queued for the next round
 // Everyone currently counted as in-scene. Module scope alongside the other
 // presence sets so helpers here (e.g. broadcastRanks) can read it.
+// Auto-start hold for first-time players reading the career intro.
+const INTRO_READ_HOLD_MS = 30_000
+let introHoldUntil = 0
+
 const activeSessions = new Set<string>()
 
 // ── Rubbish carrying (GDD: bin depositing + Carry Capacity upgrade) ───────────
@@ -595,6 +599,7 @@ export function initServer() {
   }
 
   initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales)
+  setStartHold(() => Date.now() < introHoldUntil)
 
   // Kick off the progression read early so records are in memory before the first
   // shift ends. Failure is non-fatal: play continues, saves stay blocked.
@@ -715,6 +720,18 @@ export function initServer() {
   function playerEntered(sessionId: string) {
     if (activeSessions.has(sessionId)) return
     activeSessions.add(sessionId)
+
+    // Client playtest feedback: "didn't get time to read the full narrative
+    // before the game started". A player on their FIRST-ever visit gets a
+    // reading window: the lobby's auto-start waits INTRO_READ_HOLD_MS from
+    // their arrival (veterans don't trigger it, START NOW bypasses it, and it
+    // can't stack beyond the newest first-timer's window).
+    try {
+      if (getProgress(sessionId).shifts === 0) {
+        introHoldUntil = Math.max(introHoldUntil, Date.now() + INTRO_READ_HOLD_MS)
+        console.log(`[ROUND] first-time player ${sessionId} — holding auto-start for intro`)
+      }
+    } catch { /* guests without records just don't extend the hold */ }
 
     // Reconnect grace — HERE, on the universal entry path, not in registerPlayer.
     // registerPlayer fires once per client session, but a mobile app-switch

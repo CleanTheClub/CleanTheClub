@@ -1,5 +1,5 @@
 import { engine, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
-import { movePlayerTo, triggerSceneEmote } from '~system/RestrictedActions'
+import { movePlayerTo, triggerSceneEmote, stopEmote } from '~system/RestrictedActions'
 import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 
@@ -13,10 +13,10 @@ const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
 // is the long-sought "bent arms while walking". AvatarMask isn't re-exported on
 // the public SDK surface yet (const enum in generated pb typings), hence the
 // literal below.
-// PLACEHOLDER ASSET: the phone-holding emote stands in until a real Carry_Idle
-// clip is exported (arms bent 90°, palms up). Swap the src, nothing else.
 const AM_UPPER_BODY   = 0
-const CARRY_POSE_SRC  = PARTY_EMOTE_SRC
+// Real carry clip (1s loop, left arm posed under the box to match the
+// left-hand attach; replaces the PartyPhone placeholder).
+const CARRY_POSE_SRC  = 'assets/scene/Emotes/Carry_emote.glb'
 let carryPoseWanted = false
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
@@ -41,10 +41,19 @@ const EMOTE_STOP_ACTIONS = [
 function stopPickupEmote() {
   if (!emoteActive) return
   emoteActive = false
-  triggerSceneEmote({ src: '', loop: false })
-  // A one-shot emote cancels everything, including the masked carry loop —
-  // put the loop back the moment the one-shot ends.
-  reassertCarryPose()
+  carryLoopLive = false
+  if (carryPoseWanted) {
+    // Do NOT stopEmote() first: both calls are async, and when the stop lands
+    // after the fresh trigger it kills the new loop — which the stillness
+    // keeper then restarts, reading as a visible double-trigger. Triggering
+    // the carry loop directly replaces the one-shot atomically.
+    reassertCarryPose()
+  } else {
+    // stopEmote(), not the old empty-src hack: an empty src does NOT cancel a
+    // masked LOOPING emote — the explorer keeps the loop registered and
+    // resumes it after a one-shot ends (field-verified).
+    stopEmote({})
+  }
 }
 
 /**
@@ -56,12 +65,49 @@ export function setCarryPose(active: boolean) {
   if (carryPoseWanted === active) return
   carryPoseWanted = active
   if (active) reassertCarryPose()
-  else if (!emoteActive) triggerSceneEmote({ src: '', loop: false })
+  else {
+    carryLoopLive = false
+    // Kill the loop for real (see stopPickupEmote). If a one-shot is mid-play
+    // (the deposit dump), let it finish — its own stop clears the loop too and
+    // reassert is a no-op once wanted is false.
+    if (!emoteActive) stopEmote({})
+  }
 }
 
 function reassertCarryPose() {
   if (!carryPoseWanted || emoteActive) return
   triggerSceneEmote({ src: CARRY_POSE_SRC, loop: true, mask: AM_UPPER_BODY })
+  carryLoopLive = true
+}
+
+// ── Mobile fallback: re-assert on stop ────────────────────────────────────────
+// Device-verified (2026-08-03): the DESKTOP explorer honours the upper-body mask
+// through locomotion, but the MOBILE explorer still cancels the emote on
+// movement. Until that lands, mobile gets the next best thing: the pose snaps
+// back every time the player stops moving. Walk = swinging arms, stop = laden.
+// Harmless on desktop (the loop stays live there, so this never fires).
+let carryLoopLive = false
+let stillForS = 0
+let lastPos: { x: number; y: number; z: number } | null = null
+const REASSERT_AFTER_STILL_S = 0.25
+const MOVE_EPSILON_M = 0.02
+
+function carryPoseKeeper(dt: number): void {
+  if (!carryPoseWanted) { lastPos = null; return }
+  const p = Transform.getOrNull(engine.PlayerEntity)?.position
+  if (!p) return
+  const moved = lastPos
+    ? Math.abs(p.x - lastPos.x) + Math.abs(p.y - lastPos.y) + Math.abs(p.z - lastPos.z) > MOVE_EPSILON_M
+    : false
+  lastPos = { x: p.x, y: p.y, z: p.z }
+  if (moved) {
+    // Locomotion cancels the loop on mobile — remember it needs restoring.
+    if (isMobile()) carryLoopLive = false
+    stillForS = 0
+    return
+  }
+  stillForS += dt
+  if (!carryLoopLive && stillForS >= REASSERT_AFTER_STILL_S) reassertCarryPose()
 }
 
 // Public cancel — stops whatever scene emote is playing (e.g. when a hold-to-clean
@@ -96,7 +142,7 @@ function emoteWatchSystem(): void {
 const EMOTE_WARMUP_DELAY_MS = 3_000   // wait out the initial scene-item load spike first
 function warmUpEmotes() {
   timers.setTimeout(() => {
-    for (const src of [MOPPING_EMOTE_SRC, PICKUP_EMOTE_SRC, PARTY_EMOTE_SRC]) {
+    for (const src of [MOPPING_EMOTE_SRC, PICKUP_EMOTE_SRC, PARTY_EMOTE_SRC, CARRY_POSE_SRC]) {
       const e = engine.addEntity()
       Transform.create(e, { position: { x: 0, y: -100, z: 0 }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
       GltfContainer.create(e, { src })
@@ -108,6 +154,7 @@ function warmUpEmotes() {
 // Call once from initClient so the watch system runs every frame
 export function initEmoteManager() {
   engine.addSystem(emoteWatchSystem)
+  engine.addSystem(carryPoseKeeper)
   warmUpEmotes()
 }
 
