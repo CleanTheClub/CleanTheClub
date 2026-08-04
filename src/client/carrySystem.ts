@@ -9,7 +9,7 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, GltfContainerLoadingState, LoadingState, AvatarAttach, AvatarAnchorPointType, MeshRenderer, Material, MaterialTransparencyMode } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, GltfContainerLoadingState, LoadingState, AvatarAttach, AvatarAnchorPointType, ParticleSystem } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
@@ -189,13 +189,10 @@ const BAG_MAX    = 1.1
 const BAG_OFFSET      = { x: 0, y: 0.10, z: 0.06 }
 
 // ── Full-container cue ────────────────────────────────────────────────────────
-// When the hands hit capacity the box itself says so: a translucent amber
-// shell breathes around it (~1.6Hz) and the box gains a subtle strain-pulse.
-// Amber matches the general-waste bin accent (colourblind-safe pairing), and
-// the 3D cue works even when the player isn't reading the HUD chip.
-const SHELL_DIMS      = { x: 0.44, y: 0.28, z: 0.41 }   // box dims + 8%
-const SHELL_PULSE_HZ  = 1.6
-const SHELL_ALPHA     = 0.22
+// A full box REEKS: at capacity a stink cloud wafts out of the opening — the
+// same green waft as dirty items, so the language is already taught. (Replaced
+// an amber pulse shell: the stink reads diegetically as "gross, empty me".)
+const FULL_STINK_TEXTURE = 'assets/scene/Particles/stink_waft.png'
 const RIG_COUNTER_ROT = { x: 0.5328, y: -0.5063, z: -0.3442, w: -0.5843 }
 // Residual fix: the runtime avatar skeleton's bone REST axes differ from the
 // emote GLB's (the explorer retargets), leaving one CONSTANT rotation after
@@ -221,9 +218,7 @@ const ITEM_SLOTS = [
 let carryAnchor: Entity | null = null
 let carryRig: Entity | null = null
 let bagEntity: Entity | null = null
-let shellEntity: Entity | null = null
-let bagBaseSize = 1
-let pulseAcc = 0
+let fullStinkEntity: Entity | null = null
 const slotEntities: Entity[] = []
 const carriedModels: string[] = []
 
@@ -244,7 +239,7 @@ function refreshCarriedBag(): void {
       carryAnchor = null
       carryRig = null
       bagEntity = null
-      shellEntity = null
+      fullStinkEntity = null
       slotEntities.length = 0
     }
     carriedModels.length = 0
@@ -282,30 +277,42 @@ function refreshCarriedBag(): void {
   const size = BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
-  bagBaseSize = size
 
-  // Amber shell appears exactly at capacity, disappears the moment space frees.
+  // Stink cloud appears exactly at capacity, disappears the moment space frees.
   const full = total >= capacity
-  if (full && !shellEntity && bagEntity) {
-    shellEntity = engine.addEntity()
-    Transform.create(shellEntity, {
-      parent:   bagEntity,
-      position: { x: 0, y: SHELL_DIMS.y / 2, z: 0 },   // box origin is its base
-      scale:    SHELL_DIMS,
+  if (full && !fullStinkEntity && carryRig) {
+    fullStinkEntity = engine.addEntity()
+    Transform.create(fullStinkEntity, {
+      parent:   carryRig,
+      position: { x: BAG_OFFSET.x, y: BAG_OFFSET.y + 0.30, z: BAG_OFFSET.z },
     })
-    MeshRenderer.setBox(shellEntity)
-    Material.setPbrMaterial(shellEntity, {
-      albedoColor:       Color4.create(1, 0.55, 0.15, SHELL_ALPHA),
-      emissiveColor:     { r: 1, g: 0.5, b: 0.1 },
-      emissiveIntensity: 1.4,
-      transparencyMode:  MaterialTransparencyMode.MTM_ALPHA_BLEND,
-      specularIntensity: 0,
-      metallic: 0,
-      roughness: 1,
+    ParticleSystem.create(fullStinkEntity, {
+      shape: ParticleSystem.Shape.Cone({ angle: 25, radius: 0.12 }),
+      rate: 5,
+      maxParticles: 8,
+      lifetime: 1.6,
+      gravity: -0.04,
+      initialVelocitySpeed: { start: 0.15, end: 0.3 },
+      initialSize:  { start: 0.22, end: 0.35 },
+      sizeOverTime: { start: 0.9, end: 2.2 },
+      initialColor: {
+        start: Color4.create(0.3, 0.9, 0.05, 0.85),
+        end:   Color4.create(0.5, 1.0, 0.2,  0.75),
+      },
+      colorOverTime: {
+        start: Color4.create(0.2, 0.75, 0.05, 0.4),
+        end:   Color4.create(0.1, 0.5,  0.05, 0.0),
+      },
+      texture:   { src: FULL_STINK_TEXTURE },
+      billboard: true,
+      blendMode: 0,   // PSB_ALPHA (const enum not re-exported)
+      loop: true,
+      prewarm: true,
+      active: true,
     })
-  } else if (!full && shellEntity) {
-    engine.removeEntity(shellEntity)
-    shellEntity = null
+  } else if (!full && fullStinkEntity) {
+    engine.removeEntity(fullStinkEntity)
+    fullStinkEntity = null
   }
 
   // Newest items on top of the pile; slots are reused, never re-created.
@@ -329,23 +336,6 @@ function refreshCarriedBag(): void {
     } else if (slotEntities[i] && GltfContainer.getOrNull(slotEntities[i])) {
       GltfContainer.deleteFrom(slotEntities[i])
     }
-  }
-}
-
-// Breathes the shell and strains the box while full. Transform-only writes.
-function fullPulseSystem(dt: number): void {
-  if (!shellEntity) return
-  pulseAcc += dt
-  const wave = 0.5 + 0.5 * Math.sin(pulseAcc * Math.PI * 2 * SHELL_PULSE_HZ)
-  const sTf = Transform.getMutableOrNull(shellEntity)
-  if (sTf) {
-    const k = 1 + 0.12 * wave
-    sTf.scale = { x: SHELL_DIMS.x * k, y: SHELL_DIMS.y * k, z: SHELL_DIMS.z * k }
-  }
-  const bTf = bagEntity && Transform.getMutableOrNull(bagEntity)
-  if (bTf) {
-    const b = bagBaseSize * (1 + 0.04 * wave)
-    bTf.scale = { x: b, y: b, z: b }
   }
 }
 
@@ -459,6 +449,5 @@ export function initCarrySystem(): void {
   }
   engine.addSystem(nudgeSystem)
   engine.addSystem(binWatchdogSystem)
-  engine.addSystem(fullPulseSystem)
   console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
 }

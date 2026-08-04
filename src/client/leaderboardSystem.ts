@@ -162,10 +162,10 @@ export function setupLeaderboardBoard(): void {
   // ── Category arrows ──────────────────────────────────────────
   // Flat quads with a pointer collider, parented to the board so they inherit
   // its position and rotation. Text glyphs sit slightly proud of each quad.
-  const makeArrow = (glyph: string, y: number, step: number, hover: string) => {
+  const makeArrow = (glyph: string, x: number, step: number, hover: string) => {
     const btn = engine.addEntity()
     Transform.create(btn, {
-      position: { x: LB_ARROW_X, y, z: LB_DEPTH },
+      position: { x, y: LB_ARROW_Y, z: LB_DEPTH },
       scale:    { x: LB_ARROW_SIZE, y: LB_ARROW_SIZE, z: LB_ARROW_SIZE },
       parent:   board,
     })
@@ -206,9 +206,8 @@ export function setupLeaderboardBoard(): void {
     return btn
   }
 
-  const arrowY = LB_START_Y + LB_HEADER_GAP
-  makeArrow('<', arrowY, -1, 'Previous board')
-  makeArrow('>', arrowY - LB_STEP_Y, +1, 'Next board')
+  makeArrow('<', -1.2, -1, 'Previous board')
+  makeArrow('>',  1.2, +1, 'Next board')
 
   // Show mock data immediately so the board looks populated before
   // the server sends its first leaderboardUpdate message
@@ -231,8 +230,10 @@ const LB_CYCLE_SECONDS = 10
 // stranding a board on whatever someone last picked, control lapses back to
 // cycling after a period of no input — so an abandoned board resumes advertising
 // every category to the next person who walks up.
-const LB_ARROW_X       = 4.4    // local X of the arrow pair (right of the score column)
-const LB_ARROW_SIZE    = 0.55
+// Bottom-centre of the board, side by side like pagination — moved from the
+// right edge (small, easy to miss) on playtest feedback.
+const LB_ARROW_Y       = -3.0
+const LB_ARROW_SIZE    = 1.1
 const LB_MANUAL_HOLD_S = 30     // no input for this long → auto-cycle resumes
 
 let manualUntilMs = 0
