@@ -94,7 +94,7 @@ const GLB_RELOAD_LIMIT     = 3
 const GLB_STATE_NAME: Record<number, string> = {
   0: 'UNKNOWN', 1: 'LOADING', 2: 'NOT_FOUND', 3: 'FINISHED_WITH_ERROR', 4: 'FINISHED',
 }
-type GlbWatch = { entity: Entity; lastState: number; reloads: number }
+type GlbWatch = { entity: Entity; lastState: number; reloads: number; stateAgeS: number }
 const glbWatch: GlbWatch[] = []
 const glbWatched = new Set<Entity>()
 let glbWatchAcc = 0
@@ -103,31 +103,49 @@ let glbWatchSystemAdded = false
 function watchGlb(entity: Entity): void {
   if (glbWatched.has(entity)) return
   glbWatched.add(entity)
-  glbWatch.push({ entity, lastState: -1, reloads: 0 })
+  glbWatch.push({ entity, lastState: -1, reloads: 0, stateAgeS: 0 })
   if (!glbWatchSystemAdded) {
     glbWatchSystemAdded = true
     engine.addSystem(glbWatchdogSystem)
   }
 }
 
+// A load can also WEDGE without erroring: state sits at LOADING (or UNKNOWN)
+// forever, which the error-only reload never touched — leaving that item
+// missing for the session with a clean-looking log. Field case: one specific
+// ground-floor recycling bin, repeatedly. Anything not FINISHED after
+// GLB_STUCK_S gets the same forced reload as an outright failure.
+const GLB_STUCK_S = 20
+
 function glbWatchdogSystem(dt: number): void {
   glbWatchAcc += dt
   if (glbWatchAcc < GLB_WATCH_INTERVAL_S) return
+  const tick = glbWatchAcc
   glbWatchAcc = 0
   for (const w of glbWatch) {
     const st = GltfContainerLoadingState.getOrNull(w.entity)?.currentState
-    if (st === undefined || st === w.lastState) continue
-    const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
-    console.log(`[GLB] '${label}' load state → ${GLB_STATE_NAME[st] ?? st}`)
-    w.lastState = st
+    if (st === w.lastState) {
+      w.stateAgeS += tick
+    } else if (st !== undefined) {
+      const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
+      console.log(`[GLB] '${label}' load state → ${GLB_STATE_NAME[st] ?? st}`)
+      w.lastState = st
+      w.stateAgeS = 0
+    }
+    if (st === undefined || st === LoadingState.FINISHED) continue
+    if (w.reloads >= GLB_RELOAD_LIMIT) continue
+
     const failed = st === LoadingState.FINISHED_WITH_ERROR || st === LoadingState.NOT_FOUND
-    if (failed && w.reloads < GLB_RELOAD_LIMIT) {
+    const stuck  = (st === LoadingState.LOADING || st === LoadingState.UNKNOWN) && w.stateAgeS >= GLB_STUCK_S
+    if (failed || stuck) {
       w.reloads++
       const src = GltfContainer.getOrNull(w.entity)?.src
       if (!src) continue
-      console.log(`[GLB] '${label}' failed to load — forcing reload ${w.reloads}/${GLB_RELOAD_LIMIT}`)
+      const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
+      console.log(`[GLB] '${label}' ${failed ? 'failed to load' : `stuck ${GLB_STATE_NAME[st]} ${Math.round(w.stateAgeS)}s`} — forcing reload ${w.reloads}/${GLB_RELOAD_LIMIT}`)
       GltfContainer.deleteFrom(w.entity)
       GltfContainer.create(w.entity, { src })
+      w.stateAgeS = 0
     }
   }
 }

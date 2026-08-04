@@ -9,7 +9,7 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, GltfContainerLoadingState, LoadingState, AvatarAttach, AvatarAnchorPointType, ParticleSystem } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
@@ -44,46 +44,6 @@ const BIN_HOVER: Record<RubbishType, string> = {
 // ── Bin locations ─────────────────────────────────────────────────────────────
 // Recorded at discovery so the first-pickup nudge can point at the nearest one.
 const binPositions: Array<{ x: number; y: number; z: number }> = []
-
-// ── Bin load watchdog ─────────────────────────────────────────────────────────
-// Field report: "sometimes one of the recycling bins isn't visible / usable."
-// Discovery is deterministic (Name comes from the composite), but the pointer
-// wiring waits for the bin's GLB to finish loading — so a failed load leaves
-// that bin both invisible AND unwired, with nothing ever retrying it. This
-// watchdog polls each bin's GltfContainerLoadingState and, on a failed load,
-// forces a reload by removing and re-adding the GltfContainer (the same
-// component-rebuild trick as the require-cache bust in Roblox: the renderer
-// re-fetches the asset from scratch). Logs every state change so the next
-// repro tells us WHICH failure mode this is rather than leaving us guessing.
-const BIN_WATCH_INTERVAL_S = 5
-const BIN_RELOAD_LIMIT     = 3   // per bin per session — never loop a hopeless asset
-type BinWatch = { entity: Entity; name: string; lastState: number; reloads: number }
-const binWatch: BinWatch[] = []
-let binWatchAcc = 0
-const LOAD_STATE_NAME: Record<number, string> = {
-  0: 'UNKNOWN', 1: 'LOADING', 2: 'NOT_FOUND', 3: 'FINISHED_WITH_ERROR', 4: 'FINISHED',
-}
-
-function binWatchdogSystem(dt: number): void {
-  binWatchAcc += dt
-  if (binWatchAcc < BIN_WATCH_INTERVAL_S) return
-  binWatchAcc = 0
-  for (const w of binWatch) {
-    const st = GltfContainerLoadingState.getOrNull(w.entity)?.currentState
-    if (st === undefined || st === w.lastState) continue
-    console.log(`[CARRY] bin '${w.name}' load state → ${LOAD_STATE_NAME[st] ?? st}`)
-    w.lastState = st
-    const failed = st === LoadingState.FINISHED_WITH_ERROR || st === LoadingState.NOT_FOUND
-    if (failed && w.reloads < BIN_RELOAD_LIMIT) {
-      w.reloads++
-      const src = GltfContainer.getOrNull(w.entity)?.src
-      if (!src) continue
-      console.log(`[CARRY] bin '${w.name}' failed to load — forcing reload ${w.reloads}/${BIN_RELOAD_LIMIT}`)
-      GltfContainer.deleteFrom(w.entity)
-      GltfContainer.create(w.entity, { src })
-    }
-  }
-}
 
 // ── First-pickup nudge ────────────────────────────────────────────────────────
 // The permanent "EMPTY BINS" text over every station is gone: it was scaffolding
@@ -439,7 +399,6 @@ export function initCarrySystem(): void {
     const type = def.type
     const stationPos = Transform.getOrNull(entity)?.position
     if (stationPos) binPositions.push({ x: stationPos.x, y: stationPos.y, z: stationPos.z })
-    binWatch.push({ entity, name: n, lastState: -1, reloads: 0 })
 
     requestSetup({
       isReady: () => findGltfEntity(entity) !== undefined,
@@ -475,7 +434,6 @@ export function initCarrySystem(): void {
     })
   }
   engine.addSystem(nudgeSystem)
-  engine.addSystem(binWatchdogSystem)
   engine.addSystem(refusePulseSystem)
   console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
 }
