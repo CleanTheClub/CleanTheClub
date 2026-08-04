@@ -1,4 +1,4 @@
-import ReactEcs, { ReactEcsRenderer, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
+import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
 import { engine, EasingFunction, UiCanvasInformation } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
@@ -512,7 +512,19 @@ function CarryChip({ S }: { S: number }) {
   )
 }
 
-const ui = () => {
+// Root wrapper: constrains ALL scene UI to the renderer-reported DEVICE safe
+// margins (notch, status bar, home indicator, rounded corners) via the SDK's
+// ScreenInsetArea. Desktop insets are typically zero, so this is a no-op
+// there. Complementary to getSafeArea(), which handles the EXPLORER's own
+// chrome (chat, minimap, profile) — two different fields of
+// UiCanvasInformation, both needed.
+const ui = () => (
+  <ScreenInsetArea uiTransform={{ width: '100%', height: '100%' }}>
+    {uiBody()}
+  </ScreenInsetArea>
+)
+
+const uiBody = () => {
   // Keep the virtual canvas matched to the real screen aspect so there's no
   // letterbox to skew centred content (see currentVirtualW above). Clamped so a
   // portrait or extreme aspect can't drive fixed-width elements off-canvas; the
