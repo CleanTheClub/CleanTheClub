@@ -10,7 +10,7 @@
 
 import { engine, timers } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
-import { MILESTONE_EVERY } from '../shared/config'
+import { MILESTONE_EVERY, THEME_DEFS } from '../shared/config'
 import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
 import { playCrowdSound } from './soundManager'
@@ -88,6 +88,8 @@ export function initNarrativeSystem(): void {
   const firedMilestones = new Set<number>()
   // Timer-warning tracking — reset each round
   const firedWarnings   = new Set<number>()
+  // Last-call announcement — once per round
+  let lastCallSeen = false
 
   engine.addSystem(() => {
     let pct         = 0
@@ -96,6 +98,8 @@ export function initNarrativeSystem(): void {
     let secondsLeft = 0
     let outcome     = ''
     let isFinale    = false
+    let theme       = ''
+    let lastCall    = false
 
     for (const [, gs] of engine.getEntitiesWith(GameState)) {
       pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
@@ -104,8 +108,18 @@ export function initNarrativeSystem(): void {
       secondsLeft = gs.secondsLeft
       outcome     = gs.outcome
       isFinale    = gs.isFinale
+      theme       = gs.theme
+      lastCall    = gs.lastCall
       break
     }
+
+    // ── Last call — 100% early close announcement (once per round) ─────────────
+    if (phase === 'playing' && lastCall && !lastCallSeen) {
+      lastCallSeen = true
+      showNarrativeToast('LAST CALL — spotless! Empty your hands at a bin!')
+      playCrowdSound()   // the club salutes an early finish
+    }
+    if (phase !== 'playing' && lastCallSeen) lastCallSeen = false
 
     // ── Round transition ───────────────────────────────────────────────────────
     if (phase !== lastPhase) {
@@ -150,12 +164,18 @@ export function initNarrativeSystem(): void {
       lastRoundNumber  = roundNumber
 
       if (prev !== -1 || phase === 'playing') {
-        // Fire for every round including round 0 on first load
+        // Fire for every round including round 0 on first load.
+        // Themed rounds get NO toast — the story card (ui.tsx) already holds
+        // the screen with the same words, and a second surface repeating them
+        // is distraction, not reinforcement.
+        const isThemed    = THEME_DEFS.some((t) => t.id === theme)
         const isMilestone = (roundNumber + 1) % MILESTONE_EVERY === 0
-        const text = isMilestone
-          ? MILESTONE_ROUND_START
-          : (ROUND_START[roundNumber] ?? ROUND_START.DEFAULT)
-        timers.setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
+        if (!isThemed) {
+          const text = isMilestone
+            ? MILESTONE_ROUND_START
+            : (ROUND_START[roundNumber] ?? ROUND_START.DEFAULT)
+          timers.setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
+        }
       }
     }
 

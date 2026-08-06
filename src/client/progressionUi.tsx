@@ -14,10 +14,11 @@ import { Color4 } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 import { theme } from './theme'
 import {
-  UPGRADES, UpgradeDef, maxLevel, nextUpgradeCost, rankForXp, JOB_TITLES,
+  UPGRADES, UpgradeDef, UpgradeId, maxLevel, nextUpgradeCost, rankForXp, JOB_TITLES, upgradeValue, TITLE_XP,
 } from '../shared/progression'
-import { OUTCOME_ADEQUATE } from '../shared/config'
-import { getCareer, getCareerOrEmpty, getLastPayoutMs, upgradeLevel, requestPurchase } from './progressionStore'
+import { OUTCOME_ADEQUATE, HOLD_DURATION_MS } from '../shared/config'
+import { CareerState, getCareer, getCareerOrEmpty, getLastPayoutMs, getLastPromotion, getLastPurchase, getPrevShiftItems, upgradeLevel, requestPurchase } from './progressionStore'
+import { tierColorForRank } from './rankBadgeSystem'
 import { getSafeArea, pct } from './safeArea'
 
 const WHITE  = theme.colors.white
@@ -46,6 +47,14 @@ const SHOP_ZOOM_DESKTOP = 1.6
 const SHOP_ZOOM_MOBILE  = 1.3
 const shopZoom = (): number => (isMobile() ? SHOP_ZOOM_MOBILE : SHOP_ZOOM_DESKTOP)
 
+/**
+ * Virtual-px width of the intermission side panel. Exported so every other
+ * right-anchored surface (toast stack, payout-card centring) can clear it while
+ * it is open — the ONE source of truth for that width, so a future resize can't
+ * silently reintroduce overlap.
+ */
+export const shopPanelWidth = (S: number): number => Math.round(580 * S * shopZoom())
+
 // The payout panel has no row-count pressure of its own but grew several bonus
 // rows with the contracts/streaks work, so it keeps its own (larger) zoom.
 const PAYOUT_ZOOM = 1.5
@@ -57,9 +66,42 @@ const HINT_SHIFTS = 5
 // Module state rather than React state: the renderer re-runs ui() continuously, so
 // a plain flag is enough and avoids threading state through ui.tsx.
 let shopOpen = false
+// When the shop last OPENED — drives the side panel's slide-in and the payout
+// card's matching glide, so the pair reads as one deliberate motion rather than
+// the card just sitting off-centre next to an already-present panel.
+let shopOpenedMs = 0
 export const isShopOpen = (): boolean => shopOpen
-export const setShopOpen = (open: boolean): void => { shopOpen = open }
+export const setShopOpen = (open: boolean): void => {
+  if (open && !shopOpen) shopOpenedMs = Date.now()
+  shopOpen = open
+}
 export const closeShop = (): void => { shopOpen = false }
+
+const SHOP_SLIDE_MS = 250
+/** 0→1 eased progress of the panel slide-in since the shop opened. */
+function shopSlideEase(): number {
+  const t = Math.min(1, Math.max(0, (Date.now() - shopOpenedMs) / SHOP_SLIDE_MS))
+  return 1 - Math.pow(1 - t, 3)
+}
+
+/**
+ * How many upgrades the player could buy RIGHT NOW — implemented, rank-unlocked,
+ * not maxed, and within budget. Drives the end-of-shift shop surfacing (playtest:
+ * many players never found the UPGRADES button at all): the payout CTA pulses and
+ * names this count, and desktop auto-opens the side panel when it is non-zero.
+ */
+export function affordableUpgradeCount(): number {
+  const c = getCareerOrEmpty()
+  const rank = rankForXp(c.xp)
+  let n = 0
+  for (const def of UPGRADES) {
+    if (!def.implemented) continue
+    if (def.minRank !== undefined && rank < def.minRank) continue
+    const cost = nextUpgradeCost(def.id, upgradeLevel(def.id))
+    if (cost !== null && c.money >= cost) n++
+  }
+  return n
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Career HUD — always-visible title, promotion progress and balance.
@@ -182,6 +224,68 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
   )
 }
 
+// ── Payout card dismissal ─────────────────────────────────────────────────────
+// The X hides the card for the REST of this intermission only — the next payout
+// (different timestamp) shows it again. ui.tsx keeps the next-shift countdown
+// visible in a small chip while the card is away.
+let payoutDismissedMs = 0
+export const dismissPayoutCard = (): void => { payoutDismissedMs = getLastPayoutMs() }
+
+/** Whether the payout card is on screen — false while a fresh promotion banner
+ *  holds the stage or after the player closed it. Drives ui.tsx's fallback
+ *  countdown chip, so "when does the next shift start" is never unanswered. */
+export function isPayoutCardShowing(): boolean {
+  const c = getCareer()
+  if (!c || !c.lastShift) return false
+  if (getLastPayoutMs() === payoutDismissedMs) return false
+  const promo = getLastPromotion()
+  if (promo !== null && Date.now() - promo.ms < PROMO_BANNER_MS) return false
+  return true
+}
+
+/**
+ * The ONE obvious short-term target to leave the shift with (playtest feedback:
+ * the end-of-shift moment should hand the player a reason to stay). Priority:
+ * promotion within reach beats a nearly-affordable upgrade beats beating your
+ * own best beats the daily streak. "Within reach" is measured against what THIS
+ * shift actually paid, so the promise "one more shift" is roughly honest.
+ * Upgrades already affordable are deliberately NOT a target — the gold shop CTA
+ * below owns that case.
+ */
+function nextUpTarget(c: CareerState): string | null {
+  const shift = c.lastShift
+  if (!shift) return null
+  const rank = rankForXp(c.xp)
+
+  if (c.nextTitle && rank + 1 < TITLE_XP.length) {
+    const xpLeft = TITLE_XP[rank + 1] - c.xp
+    if (xpLeft > 0 && xpLeft <= Math.max(shift.xp, 50) * 1.5) {
+      return `${xpLeft} XP to ${c.nextTitle} — one good shift away!`
+    }
+  }
+
+  let best: { def: UpgradeDef; gap: number } | null = null
+  for (const def of UPGRADES) {
+    if (!def.implemented) continue
+    if (def.minRank !== undefined && rank < def.minRank) continue
+    const cost = nextUpgradeCost(def.id, upgradeLevel(def.id))
+    if (cost === null || cost <= c.money) continue
+    const gap = cost - c.money
+    if (gap <= Math.max(shift.money, 100) * 1.5 && (best === null || gap < best.gap)) {
+      best = { def, gap }
+    }
+  }
+  if (best) return `One more shift to afford ${best.def.name} Lv ${upgradeLevel(best.def.id) + 1}!`
+
+  if (!shift.newBest && (c.bestItems ?? 0) > shift.items) {
+    return `Your best is ${c.bestItems} items — beat it next shift!`
+  }
+  if ((shift.streakDays ?? 0) > 0) {
+    return `Come back tomorrow to grow your Day ${shift.streakDays} work streak!`
+  }
+  return null
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // End-of-shift payout — the GDD's "clear feedback at the end of every shift".
 // Rendered by ui.tsx during the intermission, below the outcome banner.
@@ -193,6 +297,7 @@ export function ShiftPayoutPanel(
   const c = getCareer()
   const shift = c?.lastShift
   if (!c || !shift) return null
+  if (!isPayoutCardShowing()) return null
 
   // The payout is the shift's headline moment, so it renders well above ambient
   // HUD size ("can't really read it") — but it also gained grade/tip/contract/
@@ -205,10 +310,24 @@ export function ShiftPayoutPanel(
 
   // Pop-in — the card slides up and fades in over ~220ms, replacing the outcome
   // banner's old fly-to-centre beat (which is what used to collide with it).
-  const popT    = Math.min(1, Math.max(0, (Date.now() - getLastPayoutMs()) / 220))
+  // When a promotion banner played first, the pop keys on the moment the card
+  // actually APPEARS (banner end), not on the payout — otherwise the animation
+  // has already expired by the time the card renders.
+  const promo    = getLastPromotion()
+  const appearMs = promo !== null && promo.ms >= getLastPayoutMs()
+    ? promo.ms + PROMO_BANNER_MS
+    : getLastPayoutMs()
+  const popT    = Math.min(1, Math.max(0, (Date.now() - appearMs) / 220))
   const popEase = 1 - Math.pow(1 - popT, 3)
   const popDrop = Math.round((1 - popEase) * 46 * Z)   // px it rises through
   const popBg   = Color4.create(PANEL.r, PANEL.g, PANEL.b, PANEL.a * popEase)
+
+  // Improvement vs the previous shift, shown only when it IS an improvement —
+  // the point is momentum, and "beat your best" below covers the other side.
+  const prevItems  = getPrevShiftItems()
+  const itemsValue = prevItems >= 0 && shift.items > prevItems
+    ? `${shift.items}  (+${shift.items - prevItems} vs last)`
+    : String(shift.items)
 
   const row = (label: string, value: string, color: Color4) => (
     <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'space-between', width: Math.round(300 * Z) }}>
@@ -216,6 +335,15 @@ export function ShiftPayoutPanel(
       <Label value={value} fontSize={small} color={color} />
     </UiEntity>
   )
+
+  // While the desktop side-panel shop is open (auto-open or manual), the card
+  // centres in the space LEFT of the panel instead of the full screen — on
+  // narrower windows a full-width centre put the card under the panel. Eased on
+  // the panel's slide, so the card GLIDES left as the panel arrives instead of
+  // snapping to an off-centre spot.
+  const panelClear = shopOpen && !isMobile()
+    ? Math.round(shopPanelWidth(S) * shopSlideEase())
+    : 0
 
   // ONE consolidated shift report, vertically centred on the screen.
   //
@@ -235,6 +363,7 @@ export function ShiftPayoutPanel(
         flexDirection: 'column',
         justifyContent: 'center',
         alignItems: 'center',
+        padding: { right: panelClear },
       }}
     >
       <UiEntity
@@ -278,7 +407,7 @@ export function ShiftPayoutPanel(
           <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
             {/* No "Shift Complete" heading — the outcome art above already says
                 it, and on a phone every redundant row costs real estate. */}
-            {row('Items cleaned', String(shift.items), WHITE)}
+            {row('Items cleaned', itemsValue, WHITE)}
             {row('Earned',        money(shift.money), GOLD)}
             {row('XP',            `+${shift.xp}`,     XP_FILL)}
           </UiEntity>
@@ -287,7 +416,7 @@ export function ShiftPayoutPanel(
             {/* Docked pay is still pay — show exactly what was earned so a
                 below-standard shift never reads as "you got nothing" (playtest:
                 zero payout looked like a bug). */}
-            {row('Items cleaned', String(shift.items), WHITE)}
+            {row('Items cleaned', itemsValue, WHITE)}
             {row('Partial pay',   money(shift.money), GOLD)}
             {row('XP',            `+${shift.xp}`,     XP_FILL)}
             {/* Teaching line, not a permanent fixture: genuinely useful while
@@ -307,6 +436,12 @@ export function ShiftPayoutPanel(
         {/* Bonus rows — each one earned, each one named. Older payloads without
             these fields simply render nothing. */}
         {(shift.tip ?? 0) > 0 && row('Patron tip', `+${money(shift.tip)}`, GOLD)}
+        {(shift.earlyBonus ?? 0) > 0 && row(
+          `Closed ${Math.floor((shift.earlySeconds ?? 0) / 60)}:${String((shift.earlySeconds ?? 0) % 60).padStart(2, '0')} early`,
+          `+${money(shift.earlyBonus!)}`,
+          GOLD,
+        )}
+        {(shift.disasterBonus ?? 0) > 0 && row('Disaster cleared', `+${money(shift.disasterBonus!)}`, GOLD)}
         {shift.contractLabel && (shift.contractDone
           ? row(shift.contractLabel, `+${money(shift.contractBonus)}`, theme.colors.success)
           : row(shift.contractLabel, 'missed', SUBTLE))}
@@ -330,6 +465,20 @@ export function ShiftPayoutPanel(
           />
         )}
 
+        {/* The one short-term target to leave with — the shift's "reason to
+            stay". Single line by design: one goal is a hook, a list is homework. */}
+        {(() => {
+          const target = nextUpTarget(c)
+          return target ? (
+            <Label
+              value={`NEXT UP: ${target}`}
+              fontSize={Math.round(18 * Z)}
+              color={GOLD}
+              uiTransform={{ margin: { top: Math.round(10 * Z) } }}
+            />
+          ) : null
+        })()}
+
         {/* Countdown lives here too — it used to be a separate line in the HUD
             strip, which is the other half of what made the intermission read as
             two competing UIs. */}
@@ -338,6 +487,118 @@ export function ShiftPayoutPanel(
           fontSize={Math.round(18 * Z)}
           color={SUBTLE}
           uiTransform={{ margin: { top: Math.round(10 * Z) } }}
+        />
+
+        {/* Shop CTA at the decision moment (playtest: the UPGRADES button was
+            widely missed, and shift end — money in hand, deciding whether to
+            stay — is exactly when the shop matters). Hidden while the shop is
+            already open (desktop auto-opens the side panel alongside). */}
+        {!shopOpen && <PayoutShopCta Z={Z} />}
+
+        {/* Dismiss for this intermission — the countdown moves to ui.tsx's
+            fallback chip so the next-shift clock never disappears with it. */}
+        <CloseX Z={Z * 0.8} onClose={dismissPayoutCard} />
+      </UiEntity>
+    </UiEntity>
+  )
+}
+
+/**
+ * The payout card's UPGRADES button. When something is affordable it turns gold,
+ * pulses, and says how many upgrades are in budget — a card row can't be missed
+ * the way the ambient HUD button was. Otherwise it stays a quiet neutral button,
+ * still one tap from the shop but not shouting about purchases that can't happen.
+ */
+function PayoutShopCta({ Z }: { Z: number }) {
+  const n = affordableUpgradeCount()
+  // Same breathing rhythm as the career bar's near-promotion pulse.
+  const pulse = n > 0 ? 1 + 0.06 * Math.sin(Date.now() / 180) : 1
+  const w = Math.round(300 * Z * pulse)
+  const h = Math.round(54 * Z * pulse)
+  return (
+    <UiEntity
+      uiTransform={{
+        width: w, height: h,
+        margin: { top: Math.round(12 * Z) },
+        borderRadius: Math.round(12 * Z),
+        justifyContent: 'center', alignItems: 'center',
+      }}
+      uiBackground={{ color: n > 0 ? GOLD : Color4.create(1, 1, 1, 0.12) }}
+      onMouseDown={() => setShopOpen(true)}
+    >
+      <Label
+        value={n > 0 ? `UPGRADES — ${n} in budget!` : 'UPGRADES'}
+        fontSize={Math.round(21 * Z * pulse)}
+        color={n > 0 ? Color4.create(0.12, 0.08, 0, 1) : WHITE}
+      />
+    </UiEntity>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Promotion banner — the transient centre-stage moment for a rank-up. The payout
+// card's PROMOTED line is the persistent record; this is the fanfare's visual:
+// pops in at the upper third (clear of the vertically-centred payout card), title
+// in its career-tier colour, gone after a few seconds. Sound + confetti fire from
+// the store; this renders whenever a promotion is fresh, mid-round included
+// (admin grants land there).
+// ─────────────────────────────────────────────────────────────────────────────
+export const PROMO_BANNER_MS = 4000
+
+export function PromotionBanner({ S, centerStage = false }: { S: number; centerStage?: boolean }) {
+  const promo = getLastPromotion()
+  if (!promo) return null
+  const t = Date.now() - promo.ms
+  if (t > PROMO_BANNER_MS) return null
+
+  const pop  = 1 - Math.pow(1 - Math.min(1, t / 300), 3)          // scale in
+  const fade = t > PROMO_BANNER_MS - 700
+    ? Math.max(0, (PROMO_BANNER_MS - t) / 700)                     // fade out
+    : 1
+  // centerStage = the intermission gave the banner the screen to itself (the
+  // payout card and shop auto-open wait for it): centred and a third bigger.
+  // Mid-round promotions keep the smaller upper-third placement, clear of the
+  // reticle and skill-check bar.
+  const Z    = S * (0.6 + 0.4 * pop) * (centerStage ? 1.3 : 1)
+  const tier = tierColorForRank(promo.rank)
+  const pad  = Math.round(18 * Z)
+  // Clear the side panel like the payout card does — same overlap lesson.
+  const panelClear = shopOpen && !isMobile()
+    ? Math.round(shopPanelWidth(S) * shopSlideEase())
+    : 0
+
+  return (
+    <UiEntity
+      uiTransform={{
+        positionType: 'absolute',
+        position: { top: centerStage ? 0 : '16%', left: 0 },
+        width: '100%',
+        height: centerStage ? '100%' : undefined,
+        flexDirection: 'column',
+        justifyContent: centerStage ? 'center' : 'flex-start',
+        alignItems: 'center',
+        padding: { right: panelClear },
+      }}
+    >
+      <UiEntity
+        uiTransform={{
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: { top: pad, bottom: pad, left: pad * 2, right: pad * 2 },
+          borderRadius: Math.round(16 * Z),
+        }}
+        uiBackground={{ color: Color4.create(0, 0, 0, 0.8 * fade) }}
+      >
+        <Label
+          value="PROMOTED!"
+          fontSize={Math.round(26 * Z)}
+          color={Color4.create(GOLD.r, GOLD.g, GOLD.b, fade)}
+        />
+        <Label
+          value={promo.title}
+          fontSize={Math.round(46 * Z)}
+          color={Color4.create(tier.r, tier.g, tier.b, fade)}
+          uiTransform={{ margin: { top: Math.round(4 * Z) } }}
         />
       </UiEntity>
     </UiEntity>
@@ -356,6 +617,39 @@ const UPGRADE_ICONS: Record<string, string> = {
   carryCapacity: 'assets/scene/UI/upgrade_carryCapacity.png',
   portableBin:   'assets/scene/UI/upgrade_portableBin.png',
   vacuum:        'assets/scene/UI/upgrade_vacuum.png',
+}
+
+// What the next level CONCRETELY buys, as "current → next" in the upgrade's own
+// units (playtest: the prose descriptions alone left the actual effect unclear).
+// Presentation-only, like the icons — levelValues stay the single gameplay truth.
+// Vacuum shows total pieces per clean (extra + the clicked one): "sweeps 1 → 2"
+// beats exposing the internal "+0 → +1 extra" bookkeeping.
+const UPGRADE_DELTA: Record<UpgradeId, (cur: number, next: number) => string> = {
+  movementSpeed: (c, n) => `speed +${Math.round((c - 1) * 100)}% → +${Math.round((n - 1) * 100)}%`,
+  moppingSpeed:  (c, n) => `mop ${(HOLD_DURATION_MS * c / 1000).toFixed(1)}s → ${(HOLD_DURATION_MS * n / 1000).toFixed(1)}s`,
+  carryCapacity: (c, n) => `carry ${c} → ${n}`,
+  portableBin:   (c, n) => `${c} → ${n} per shift`,
+  vacuum:        (c, n) => `sweeps ${c + 1} → ${n + 1} at once`,
+}
+
+/** Level as filled/empty dots — reads at a glance where "Lv 2/4" needed parsing. */
+function LevelPips({ level, max, S }: { level: number; max: number; S: number }) {
+  const size = Math.round(10 * S)
+  return (
+    <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center', margin: { left: Math.round(10 * S) } }}>
+      {Array.from({ length: max }, (_, i) => (
+        <UiEntity
+          key={String(i)}
+          uiTransform={{
+            width: size, height: size,
+            margin: { right: Math.round(4 * S) },
+            borderRadius: Math.round(size / 2),
+          }}
+          uiBackground={{ color: i < level ? GOLD : Color4.create(1, 1, 1, 0.18) }}
+        />
+      ))}
+    </UiEntity>
+  )
 }
 
 function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: number; key?: string }) {
@@ -382,6 +676,14 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
     ? money(cost!)
     : money(cost!)
 
+  // Server-confirmed purchase → the bought row flashes gold and fades back over
+  // ~700ms (sound + confetti fire from the store; this is the visual receipt).
+  const lp     = getLastPurchase()
+  const flashT = lp && lp.id === def.id ? (Date.now() - lp.ms) / 700 : 1
+  const rowBg  = flashT < 1
+    ? Color4.create(1, 0.82, 0.25, 0.06 + 0.38 * (1 - flashT))
+    : Color4.create(1, 1, 1, 0.06)
+
   return (
     <UiEntity
       uiTransform={{
@@ -393,7 +695,7 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
         padding: { top: Math.round(6 * S), bottom: Math.round(6 * S), left: Math.round(10 * S), right: Math.round(12 * S) },
         borderRadius: Math.round(10 * S),
       }}
-      uiBackground={{ color: Color4.create(1, 1, 1, 0.06) }}
+      uiBackground={{ color: rowBg }}
     >
       <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
         <UiEntity
@@ -401,8 +703,23 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
           uiBackground={{ texture: { src: UPGRADE_ICONS[def.id] }, textureMode: 'stretch', color: WHITE }}
         />
         <UiEntity uiTransform={{ flexDirection: 'column' }}>
-          <Label value={`${def.name}   Lv ${level}/${max}`} fontSize={font} color={WHITE} />
-          <Label value={def.description} fontSize={small} color={SUBTLE} />
+          <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Label value={def.name} fontSize={font} color={WHITE} />
+            <LevelPips level={level} max={max} S={S} />
+          </UiEntity>
+          {/* Flavor line + the concrete "current → next" delta on ONE row — a
+              third line per row would overflow the mobile modal (five rows must
+              fit the short viewport; same pressure that compacted this chrome). */}
+          <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
+            <Label value={def.description} fontSize={small} color={SUBTLE} />
+            {!maxed && (
+              <Label
+                value={`  ${UPGRADE_DELTA[def.id](upgradeValue(def.id, level), upgradeValue(def.id, level + 1))}`}
+                fontSize={small}
+                color={GOLD}
+              />
+            )}
+          </UiEntity>
         </UiEntity>
       </UiEntity>
 
@@ -452,7 +769,7 @@ function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; tit
  * could be pushed off a short viewport (which is exactly what happened to the
  * old bottom-anchored CLOSE on mobile).
  */
-function CloseX({ Z }: { Z: number }) {
+function CloseX({ Z, onClose }: { Z: number; onClose?: () => void }) {
   const size = Math.round(52 * Z)
   // Anchored to the shop CARD's top-right corner, not the screen's. Screen
   // corners belong to the explorer (profile cluster on mobile, minimap on
@@ -472,7 +789,7 @@ function CloseX({ Z }: { Z: number }) {
         borderRadius: Math.round(size / 2),   // circular close, standard affordance
       }}
       uiBackground={{ color: Color4.create(1, 1, 1, 0.16) }}
-      onMouseDown={() => { shopOpen = false }}
+      onMouseDown={() => (onClose ? onClose() : (shopOpen = false))}
     >
       <Label value="X" fontSize={Math.round(30 * Z)} color={WHITE} />
     </UiEntity>
@@ -517,11 +834,13 @@ export function UpgradeShopPanel({ S }: { S: number }) {
   if (!shopOpen) return null
   const Z = S * shopZoom()
   const pad = Math.round(16 * Z)
+  // Slides in from the right edge; the payout card glides left on the same ease.
+  const slideIn = Math.round(shopPanelWidth(S) * (1 - shopSlideEase()))
   return (
     <UiEntity
       uiTransform={{
-        positionType: 'absolute', position: { top: 0, right: 0 },
-        width: Math.round(580 * Z), height: '100%',
+        positionType: 'absolute', position: { top: 0, right: -slideIn },
+        width: shopPanelWidth(S), height: '100%',
         flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
         padding: { top: pad, bottom: pad, left: pad, right: pad },
       }}
@@ -695,7 +1014,7 @@ export function ShopButton({ S }: { S: number }) {
       variant="secondary"
       fontSize={Math.round(20 * S)}
       uiTransform={{ width: Math.round(220 * S), height: Math.round(56 * S) }}
-      onMouseDown={() => { shopOpen = true }}
+      onMouseDown={() => setShopOpen(true)}
     />
   )
 }

@@ -31,6 +31,11 @@ const TIER_COLORS: Color4[] = [
   Color4.create(1.00, 0.82, 0.30, 1),   // gold
 ]
 
+/** Tier colour for a rank — exported so the promotion banner matches the plates. */
+export function tierColorForRank(rank: number): Color4 {
+  return TIER_COLORS[TIER_FOR_RANK[Math.max(0, Math.min(rank, TIER_FOR_RANK.length - 1))]]
+}
+
 // Sized to sit where the real nametag did. Authored at REF_DIST_M and scaled by
 // camera distance so the plate keeps a near-constant screen size, then faded at
 // range — both behaviours copied from the explorer's own tag.

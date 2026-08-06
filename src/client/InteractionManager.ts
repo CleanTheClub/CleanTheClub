@@ -220,6 +220,24 @@ export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
   }
 }
 
+/**
+ * Registers a server-spawned disaster stage (stain/polish) into the hold
+ * pipeline — full skill-check, streaks, mop emote, the lot. Idempotent; called
+ * by themeSpawnSystem when the replicated entity appears. Clicks are wired here
+ * directly: the ClutterSync watcher's appear branch routes new items through
+ * the sticky spawn director, which ignores non-sticky ids and would never
+ * enable these. While a stage is LOCKED the server keeps it at scale ~0.001 —
+ * no surface to hover — and rejects crafted cleans, so no extra gating needed.
+ */
+export function registerDisasterHold(itemId: string, entity: Entity) {
+  if (itemRefs.has(itemId)) return
+  itemRefs.set(itemId, { entity, type: 'hold', posEntity: entity })
+  if (!pendingCleans.has(itemId)) {
+    const syncEnt = findClutterEntity(itemId)
+    if (!syncEnt || !ClutterSync.get(syncEnt).isCleaned) enableClick(itemId)
+  }
+}
+
 // ─── Refs captured at init so enable/disable closures can call them ──────────
 // (avoids threading callbacks through every helper)
 

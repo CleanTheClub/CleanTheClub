@@ -53,6 +53,19 @@ export const RESPAWN_SCALE_FACTORS = [0.50, 0.95, 1.30, 1.60, 1.80]
 //  3+        → 1.00×  (unchanged)
 export const DEMAND_FACTORS = [0.65, 0.85, 1.0]
 
+// ── Crew power scaling ────────────────────────────────────────────────────────
+// Upgrades grow player throughput, but supply and demand only scaled with
+// HEADCOUNT — so veterans finished early and idled ("as players progress, the
+// rounds get easier"). Both knobs now also scale with the crew's AVERAGE total
+// upgrade levels (0..18 across the five upgrades):
+//   respawns: delay ÷ (1 + level × RESPAWN_POWER_PER_LEVEL) — a maxed solo
+//     player (~18 levels) gets ~2× respawn pace, i.e. roughly two-rookie flow.
+//   demand:  × (1 + level × DEMAND_POWER_PER_LEVEL), capped at the item pool —
+//     deliberately HALF the respawn slope, so upgrades always make cleaning
+//     faster than they make passing harder.
+export const RESPAWN_POWER_PER_LEVEL = 0.06
+export const DEMAND_POWER_PER_LEVEL  = 0.03
+
 // ── Closing window — let the club actually finish clean ───────────────────────
 // Playtest feedback: "when you finally finish cleaning a floor they respawn and the
 // game seems endless... the total percentage completed is difficult to guess until
@@ -85,6 +98,136 @@ export const TRANSFORM_BRIGHT = 0.8
 // Outcome thresholds (evaluated when time expires)
 export const OUTCOME_OPTIMAL  = 0.8
 export const OUTCOME_ADEQUATE = 0.5
+
+// ── Themed rounds ─────────────────────────────────────────────────────────────
+// Playtest: "many object types appear together — players switch constantly
+// between actions without mastering any one of them". A themed round narrows
+// the MIX (excluded categories start the round pre-cleaned, i.e. absent) and
+// biases the contract roll toward the night's story. The SERVER rolls the theme
+// and ships it in GameState; clients only present it.
+//
+// categories: item categories present in the round; null = the full mix.
+// contractKinds: contract pool for the round (server ContractKind names);
+//                null = any contract.
+
+export type ThemeId = '' | 'pizzaParty' | 'cocktailNight' | 'movieNight' | 'henStagDo' | 'walkout'
+export type ItemCategory = 'general' | 'recycle' | 'glasses' | 'sticky' | 'reset'
+
+// Extra themed mess, scattered at random each themed round. The server samples
+// `countMin..countMax` anchors from the positions of the authored scene items
+// (every one a spot already validated by having something placed there), adds a
+// small jitter + random yaw, and assigns a random model from `models`. Model
+// names resolve to assets/scene/Models/<name>/<name>.glb; their recycling
+// stream comes from classifyRubbish on the model name, same as scene rubbish.
+export type ThemeSpawnCfg = { models: string[]; countMin: number; countMax: number }
+
+export type RoundThemeDef = {
+  id: Exclude<ThemeId, ''>
+  title: string
+  blurb: string
+  categories: ItemCategory[] | null
+  contractKinds: string[] | null
+  spawns?: ThemeSpawnCfg
+  /**
+   * Name filter for BASE scene rubbish, on top of `categories`: when set, a
+   * rubbish item stays in the round only if its scene Name contains one of
+   * these fragments (lowercase). Playtest: category masking alone left ties at
+   * the pizza party — "general" covers both pizza slices and underwear.
+   * Other categories (sticky, glasses, resets) are unaffected.
+   */
+  keepRubbishNames?: string[]
+}
+
+// Server-owned spawn slots for themed extras — pre-created at boot so the sync
+// enumIds stay stable. Must be ≥ every theme's countMax.
+export const THEME_SLOT_PREFIX = 'theme_'
+export const THEME_SLOT_COUNT  = 30
+export const themeModelSrc = (model: string): string => `assets/scene/Models/${model}/${model}.glb`
+
+// ── Spawn size classes ────────────────────────────────────────────────────────
+// Anchors inherited from glassware sit in TIGHT spots (bar shelves, table
+// clusters); only physically small models fit there without clipping. All other
+// anchors (floors, seats) are OPEN and take anything. Playtest: "items are
+// different shapes and sizes and some spawn areas are tighter than others".
+// An anchor is tight when its source item's scene Name contains one of these:
+export const TIGHT_ANCHOR_PARTS = ['glass', 'bottle', 'drink', 'wine']
+// Models small enough for a tight spot; everything else is open-anchor only:
+export const THEME_SMALL_MODELS = new Set([
+  'drink', 'brokenBottle', 'polaroidA', 'polaroidB', 'tie', 'sock', 'sockB',
+])
+
+// ── Disaster spots ────────────────────────────────────────────────────────────
+// The "boss mess": one big multi-stage clean per round (sometimes). Three verbs
+// in sequence at one spot — sweep the pile (3 quick clicks), mop the stain
+// under it (the existing hold + skill check), then a fast polish pass — with a
+// cash bonus on the finale. Rare by design: the week-2 feedback said too many
+// PARALLEL activity types overwhelms, so depth arrives as one special moment,
+// not another scattered category.
+export const DISASTER_PREFIX = 'dis_'
+// Logical stage items of disaster N: dis_N_pileA .. dis_N_polish. Five cleans,
+// so a disaster is worth five items of demand automatically.
+export const DISASTER_STAGES = ['pileA', 'pileB', 'pileC', 'stain', 'polish'] as const
+export const DISASTER_CHANCE_CLASSIC = 0.35   // classic rounds; never on warm-up
+export const DISASTER_THEMES = ['walkout', 'henStagDo']   // these always get one
+export const DISASTER_BONUS  = 25             // $ finale bonus, paid to the polisher
+
+// RULE (playtest 2026-08-06): Creator Hub is the ONLY scale authority. Spawned
+// models use the median authored scale of their own CH-placed instances —
+// never an override, never a guess, never another model's scale. A model with
+// NO CH placement is EXCLUDED from spawning (with a loud server log) until one
+// is placed; placing a single scaled instance anywhere in CH enables it.
+
+export const THEME_DEFS: RoundThemeDef[] = [
+  {
+    id: 'pizzaParty',
+    title: 'PIZZA PARTY',
+    blurb: 'Someone threw a pizza party. The pizza won.',
+    // 'recycle' admitted so napkins survive the name filter — party debris that
+    // fits the story. Ties/bras/socks/phones do not (hence the name filter).
+    categories: ['general', 'recycle', 'sticky'],
+    contractKinds: ['general', 'sticky'],
+    spawns: { models: ['pizza', 'pizzaEaten'], countMin: 18, countMax: 26 },
+    keepRubbishNames: ['pizza', 'napkin'],
+  },
+  {
+    id: 'cocktailNight',
+    title: 'COCKTAIL NIGHT',
+    blurb: 'Cocktail night got out of hand — glasses as far as the eye can see.',
+    categories: ['glasses', 'recycle', 'sticky'],
+    contractKinds: ['glasses', 'recycle'],
+    spawns: { models: ['drink', 'brokenBottle'], countMin: 18, countMax: 26 },
+  },
+  {
+    id: 'movieNight',
+    title: 'MOVIE NIGHT',
+    blurb: 'Film night. The popcorn went everywhere except mouths.',
+    categories: ['general', 'recycle', 'sticky'],
+    contractKinds: ['general'],
+    spawns: { models: ['popcorn'], countMin: 18, countMax: 26 },
+    keepRubbishNames: ['popcorn', 'drink', 'napkin'],
+  },
+  {
+    id: 'henStagDo',
+    title: 'HEN & STAG NIGHT',
+    blurb: "Two parties collided. Don't ask about the ties.",
+    categories: null,   // chaos IS the theme
+    contractKinds: null,
+    spawns: { models: ['tie', 'bra', 'sock', 'sockB', 'polaroidA', 'polaroidB'], countMin: 16, countMax: 24 },
+  },
+  {
+    id: 'walkout',
+    title: 'THE WALKOUT',
+    blurb: 'The last crew walked out mid-shift. Everything, everywhere, all at once.',
+    categories: null,
+    // Walkout always spawns a disaster, so its contract pool can lean on it.
+    contractKinds: ['deposits', 'disaster'],
+    spawns: { models: ['bigRubbishBag'], countMin: 10, countMax: 14 },
+  },
+]
+
+// Odds that a round beyond the warm-up rolls a theme (round 0 is always classic
+// so new players learn the full loop first). Same theme never repeats twice.
+export const THEME_CHANCE = 0.5
 
 // Wallet addresses that can see the admin reset panel (lowercase)
 export const ADMIN_ADDRESSES: string[] = [

@@ -19,6 +19,8 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   isFinale:      Schemas.Boolean,  // true during the open phase that follows the final round (victory hold)
   playersIn:     Schemas.Int,      // live player count — shown in the lobby
   starting:      Schemas.Boolean,  // true during the lobby pre-match countdown (secondsLeft is the countdown)
+  theme:         Schemas.String,   // '' = classic round, else a ThemeId from THEME_DEFS
+  lastCall:      Schemas.Boolean,  // true during the 100%-early-close grace window (secondsLeft counts it down)
 })
 
 ClutterSync.validateBeforeChange((v) => v.senderAddress === AUTH_SERVER_PEER_ID)

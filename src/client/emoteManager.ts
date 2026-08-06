@@ -1,5 +1,5 @@
 import { engine, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
-import { movePlayerTo, triggerSceneEmote, stopEmote } from '~system/RestrictedActions'
+import { triggerSceneEmote, stopEmote } from '~system/RestrictedActions'
 import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 
@@ -19,14 +19,7 @@ const AM_UPPER_BODY   = 0
 const CARRY_POSE_SRC  = 'assets/scene/Emotes/Carry_emote.glb'
 let carryPoseWanted = false
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
-const INTERACT_DISTANCE = 1.5   // metres — how close player steps to the item
-const EMOTE_TRIGGER_MS  = 200   // ms — delay after movePlayerTo before emote fires
-// If the player is already within INTERACT_DISTANCE + this slack, skip movePlayerTo
-// entirely. Most cleans happen with the player standing right on top of the item, so
-// the "step" was a sub-metre nudge that bought nothing and cost a camera swing —
-// and, for hold items, could slide the cursor off the patch mid-hold (see the
-// release-detection note in InteractionManager).
-const REPOSITION_SLACK  = 0.75  // metres
+// (Step-to-item constants removed with the mechanic — see playStepEmote.)
 
 let emoteActive = false
 
@@ -168,69 +161,25 @@ export function playPartyEmote() {
   timers.setTimeout(() => stopPickupEmote(), PARTY_EMOTE_MS)
 }
 
-// Shared "step to item, face it, then fire a one-shot emote" helper.
-// targetPos — world-space position of the item being interacted with.
-// Player is stepped to INTERACT_DISTANCE away from it, facing it, then the emote at
-// `src` fires after `triggerDelayMs` and is cleared after `durationMs`.
-// triggerDelayMs lets the player finish stepping over to a DISTANT item before the
-// animation plays (pickup). For the mopping emote the player is already standing on
-// the patch, so it passes 0 to fire immediately — no perceived delay.
+// Shared one-shot interaction emote — plays WHERE THE PLAYER STANDS, always.
+// Step-to-item (movePlayerTo toward the clicked item) is fully retired: mobile
+// lost it first (fat-tap teleports into geometry + camera wrench), and desktop
+// players reported the same class of problem — moved into puddles or past
+// their destination, worst while still holding a movement key (feedback §5).
+// Nobody's avatar moves except by their own input; the reach gate in phaseGate
+// is what now enforces "get closer to interact".
+// targetPos is kept for the callers' sake (positions still gate reach + FX).
 // Like the pickup emote it also auto-cancels the moment the player moves
 // (handled by the shared emoteWatchSystem).
 function playStepEmote(
-  targetPos: { x: number; y: number; z: number },
+  _targetPos: { x: number; y: number; z: number },
   src:       string,
   durationMs: number,
-  triggerDelayMs: number = EMOTE_TRIGGER_MS,
 ) {
   if (emoteActive) stopPickupEmote()
-
-  // Step-to-item is DESKTOP ONLY. Two mobile problems killed it there:
-  //  • avatarTarget re-aims the avatar, and the mobile third-person camera
-  //    follows avatar facing — every clean wrenched the view around ("camera
-  //    gets rotated when cleaning constantly");
-  //  • the enlarged mobile tap targets make DISTANT grabs routine (including
-  //    items poking through thin walls or on the other floor), and teleporting
-  //    the avatar toward those spots can drop it inside geometry — the physics
-  //    resolver then ejects it, reported as "often teleported outside the club".
-  // Mobile simply plays the emote where the player stands.
-  let stepped = false
-  const playerPos = Transform.getOrNull(engine.PlayerEntity)?.position
-  if (playerPos && !isMobile()) {
-    const dx  = playerPos.x - targetPos.x
-    const dz  = playerPos.z - targetPos.z
-    const len = Math.sqrt(dx * dx + dz * dz)
-
-    // Only step to the item when the player is genuinely too far away to be
-    // "at" it — otherwise leave them exactly where they put themselves.
-    if (len > INTERACT_DISTANCE + REPOSITION_SLACK) {
-      const nx = len > 0.001 ? dx / len : 0
-      const nz = len > 0.001 ? dz / len : 1
-      const newRelativePosition = {
-        x: targetPos.x + nx * INTERACT_DISTANCE,
-        y: playerPos.y,
-        z: targetPos.z + nz * INTERACT_DISTANCE,
-      }
-      // avatarTarget turn-to-face is fine here: desktop mouse-look is decoupled
-      // from avatar facing, so the camera stays under the player's control.
-      movePlayerTo({ newRelativePosition, avatarTarget: targetPos })
-      stepped = true
-    }
-  }
-
   emoteActive = true
-
-  const fire = () => {
-    if (!emoteActive) return
-    triggerSceneEmote({ src, loop: false })
-    timers.setTimeout(() => stopPickupEmote(), durationMs)
-  }
-  // The delay exists solely to let a movePlayerTo step land before the arms
-  // move — when no step happened (mobile always; desktop already-in-range,
-  // the common case), it was 200ms of pure lag. Fire instantly instead.
-  const delay = stepped ? triggerDelayMs : 0
-  if (delay <= 0) fire()
-  else timers.setTimeout(fire, delay)
+  triggerSceneEmote({ src, loop: false })
+  timers.setTimeout(() => stopPickupEmote(), durationMs)
 }
 
 // Fires the pickup emote — quick-clean items (rubbish, bottles, glasses, clutter).
@@ -241,5 +190,5 @@ export function playPickupEmote(targetPos: { x: number; y: number; z: number }) 
 // Fires the mopping emote — hold-to-clean sticky patches. The player is already on
 // the patch, so it fires immediately (triggerDelayMs = 0) for an instant response.
 export function playMoppingEmote(targetPos: { x: number; y: number; z: number }, durationMs = MOPPING_EMOTE_MS) {
-  playStepEmote(targetPos, MOPPING_EMOTE_SRC, durationMs, 0)
+  playStepEmote(targetPos, MOPPING_EMOTE_SRC, durationMs)
 }

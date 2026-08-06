@@ -230,6 +230,15 @@ export function promotionBurst(): void {
   fireBurst(getBurstCfg('perfect', false))
 }
 
+/**
+ * Small one-shot burst for an upgrade purchase — a nod, not a promotion (the
+ * suboptimal cfg is the lightest: 3 cannons, small count). Same no-loop
+ * reasoning as promotionBurst.
+ */
+export function purchaseBurst(): void {
+  fireBurst(getBurstCfg('suboptimal', false))
+}
+
 export function launchCelebration(outcome: Outcome, finale = false): void {
   const resolved = (outcome === '' ? 'suboptimal' : outcome) as Outcome
   const cfg = getBurstCfg(resolved, finale)

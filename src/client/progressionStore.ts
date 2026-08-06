@@ -12,7 +12,7 @@
 import { room } from '../shared/messages'
 import { UpgradeId } from '../shared/progression'
 import { playMoneySound, playPromotionSound } from './soundManager'
-import { promotionBurst } from './confettiSystem'
+import { promotionBurst, purchaseBurst } from './confettiSystem'
 
 export type ShiftPayout = {
   money:  number
@@ -22,6 +22,11 @@ export type ShiftPayout = {
   // Juice layer — all optional-shaped so an older server payload still parses.
   grade:         string
   tip:           number
+  /** Early-close reward: the crew hit 100% and closed `earlySeconds` ahead. */
+  earlyBonus?:   number
+  earlySeconds?: number
+  /** Disaster-spot finale bonus — this player landed the polish. */
+  disasterBonus?: number
   contractLabel: string | null
   contractDone:  boolean
   contractBonus: number
@@ -48,6 +53,8 @@ export type CareerState = {
   fraction:   number
   upgrades:   Partial<Record<UpgradeId, number>>
   isGuest:    boolean
+  /** Personal best items-in-one-shift; optional-shaped for older payloads. */
+  bestItems?: number
   lastShift:  ShiftPayout | null
   promotedTo: string | null
 }
@@ -65,6 +72,22 @@ let state: CareerState | null = null
 
 /** Timestamp of the last payout, so the end-of-shift screen knows it is fresh. */
 let lastPayoutMs = 0
+
+/** Items cleaned in the shift BEFORE the current payout — session-only, for the
+ *  payout card's "+N vs last shift" improvement line. -1 until two payouts. */
+let prevShiftItems = -1
+export const getPrevShiftItems = (): number => prevShiftItems
+
+/** Last server-CONFIRMED upgrade purchase — drives the shop row's flash. Diffed
+ *  from progressUpdate rather than set on request, so a refused buy (stale
+ *  money, rank gate) celebrates nothing. */
+let lastPurchase: { id: UpgradeId; ms: number } | null = null
+export const getLastPurchase = (): { id: UpgradeId; ms: number } | null => lastPurchase
+
+/** Last promotion — title, post-promotion rank (for the tier colour) and when.
+ *  Drives the transient PROMOTED banner. */
+let lastPromotion: { title: string; rank: number; ms: number } | null = null
+export const getLastPromotion = (): { title: string; rank: number; ms: number } | null => lastPromotion
 
 export const getCareer      = (): CareerState | null => state
 export const getCareerOrEmpty = (): CareerState => state ?? EMPTY
@@ -98,6 +121,9 @@ export function initProgressionStore(): void {
       // A payout only accompanies a completed shift; purchases and joins send the
       // same message with lastShift null, which must NOT re-open the payout screen.
       if (next.lastShift) {
+        // Remember the outgoing payout's items before this one replaces it —
+        // the card shows the delta between consecutive shifts.
+        if (state?.lastShift) prevShiftItems = state.lastShift.items
         lastPayoutMs = Date.now()
         // Wage hitting the wallet gets its own sound, not just a panel.
         if (next.lastShift.passed && next.lastShift.money > 0) playMoneySound()
@@ -107,6 +133,20 @@ export function initProgressionStore(): void {
       if (next.promotedTo) {
         playPromotionSound()
         promotionBurst()
+        lastPromotion = { title: next.promotedTo, rank: next.rank, ms: Date.now() }
+      }
+      // Purchase celebration — a level ROSE versus the previous mirror (the join
+      // sync has no previous state, so a returning player's levels stay quiet).
+      // One purchase per server reply, so the first hit is the whole story.
+      if (state !== null) {
+        for (const id of Object.keys(next.upgrades) as UpgradeId[]) {
+          if ((next.upgrades[id] ?? 0) > (state.upgrades[id] ?? 0)) {
+            lastPurchase = { id, ms: Date.now() }
+            playMoneySound()
+            purchaseBurst()
+            break
+          }
+        }
       }
       state = next
     } catch (e) {

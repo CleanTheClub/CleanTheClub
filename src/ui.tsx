@@ -4,17 +4,17 @@ import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
 import { GameState } from './shared/schemas'
-import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY } from './shared/config'
+import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
-import { CareerBar, ShiftPayoutPanel, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
+import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
-import { getCareerOrEmpty, getContract } from './client/progressionStore'
+import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
@@ -322,6 +322,20 @@ let introStartMs   = -1
 let introHoldS     = INTRO_HOLD_S
 let outcomeStartMs = -1
 let prevIsOpen     = false
+// Payout timestamp the shop last auto-opened for — once per shift end, and keyed
+// on the PAYOUT (not the phase flip) so the affordability check runs against the
+// wallet AFTER wages landed, not the pre-payout balance.
+let autoOpenedPayoutMs = 0
+// Admin theme-pin cycle position: 0 = random, 1.. = THEME_DEFS index + 1.
+// Local echo of what was last sent — the server owns the actual pin.
+let adminThemeIdx = 0
+// When the themed-round story card started showing (round start / scene entry).
+// Long hold + late fade: reading time first, THEN the screen declutters.
+let themeStoryStartMs   = -1
+const THEME_STORY_MS      = 9_000
+const THEME_STORY_FADE_MS = 900
+// Beat between the payout card's centre-stage pop and the shop panel sliding in.
+const SHOP_AUTO_OPEN_DELAY_MS = 1500
 
 // ── Countdown timer colour state ──────────────────────────────────────────────
 // `currentTimerColor` is read by the timer Label each render; tweenColor mutates
@@ -394,6 +408,7 @@ function lerp(a: number, b: number, t: number): number { return a + (b - a) * t 
 export function resetIntro() {
   introStartMs = Date.now()
   introHoldS   = INTRO_HOLD_S
+  themeStoryStartMs = Date.now()   // an arriving player gets the night's story too
 }
 
 /** Called by narrativeSystem when a new round starts — shows InstructionsUI at centre then pops to top. */
@@ -401,6 +416,7 @@ export function triggerRoundStartIntro() {
   introStartMs   = Date.now()
   introHoldS     = ROUND_START_HOLD_S
   outcomeStartMs = -1
+  themeStoryStartMs = Date.now()
 }
 
 export function setupUi() {
@@ -550,6 +566,10 @@ const uiBody = () => {
   const pct           = Math.min(1, cleaned / total)
   const isOpen        = phase === 'open'
   const isLobby       = phase === 'lobby'
+  // Themed round — server-rolled; '' (or an unknown id from a newer server) = classic.
+  const themeDef      = THEME_DEFS.find((t) => t.id === (gs?.theme ?? '')) ?? null
+  // Last-call grace window — 100% reached early; secondsLeft counts it down.
+  const lastCall      = gs?.lastCall ?? false
   const starting      = gs?.starting ?? false
   const playersIn     = gs?.playersIn ?? 0
   const waiting       = isWaitingForMatch()
@@ -564,6 +584,29 @@ const uiBody = () => {
   // Round-start intro is triggered explicitly via triggerRoundStartIntro() from
   // narrativeSystem — more reliable than render-loop detection for button-click starts.
   prevIsOpen = isOpen
+
+  // ── Shift-end shop surfacing (desktop) ────────────────────────────────────────
+  // Playtest: many players never found the UPGRADES button. When the payout lands
+  // during the intermission and the player can afford at least one upgrade, the
+  // side panel opens itself — the celebration stays visible behind it, and closing
+  // it sticks for the rest of the intermission (this fires once per payout).
+  // Mobile keeps the payout card's CTA instead: the modal would cover the payout.
+  //
+  // SEQUENCED, not simultaneous (playtest round 2: banner + card + panel landing
+  // together meant a promotion "didn't catch my attention at all"): a fresh
+  // promotion banner plays solo first, then the card pops at true centre, and
+  // only after its beat does the panel slide in.
+  {
+    const payoutMs = getLastPayoutMs()
+    if (isOpen && !isMobile() && payoutMs > 0 && payoutMs !== autoOpenedPayoutMs) {
+      const promo     = getLastPromotion()
+      const promoHold = promo !== null && promo.ms >= payoutMs ? PROMO_BANNER_MS : 0
+      if (Date.now() - payoutMs > promoHold + SHOP_AUTO_OPEN_DELAY_MS) {
+        autoOpenedPayoutMs = payoutMs
+        if (!isShopOpen() && affordableUpgradeCount() > 0) setShopOpen(true)
+      }
+    }
+  }
 
   // isMobile() resolves asynchronously — returns false until the client reports
   // its platform, after which the renderer re-runs and picks up the correct values.
@@ -651,7 +694,13 @@ const uiBody = () => {
   const toastScale   = toastW / TOAST_W_DESKTOP
   const toastFont    = Math.round(TOAST_FONT_SIZE    * toastScale)
   const narrFont     = Math.round(NARR_FONT_SIZE     * toastScale)
-  const toastPos     = mobile ? TOAST_POS_MOBILE : TOAST_POS_DESKTOP
+  // While the side-panel shop is open the stack anchors LEFT of the panel —
+  // toasts landed on top of the upgrade rows otherwise (playtest screenshot).
+  const toastPos     = mobile
+    ? TOAST_POS_MOBILE
+    : shopAsPanel
+      ? { top: TOAST_POS_DESKTOP.top, right: shopPanelWidth(S) + 16 }
+      : TOAST_POS_DESKTOP
   const toastAlign   = mobile ? 'flex-start' as const : 'flex-end' as const
   // When the round-end banner fills the centre of the screen (desktop only),
   // push the toast stack down by 2 slots so it clears the banner.
@@ -695,7 +744,8 @@ const uiBody = () => {
       )
     }
   }
-  const timerColor = currentTimerColor
+  // Gold during last call — the countdown is a victory lap, not a deadline.
+  const timerColor = lastCall ? { r: 1, g: 0.82, b: 0.25, a: 1 } : currentTimerColor
 
   // ── Shared lerp targets (used by both intro and outcome animations) ───────────
   // eased = 0 → image at centre/big;  eased = 1 → image at normal top position
@@ -932,10 +982,45 @@ const uiBody = () => {
            (outcome image, % figure, countdown) so it can never collide with them —
            the failure mode that produced the narrative/speech-bubble overlap. It
            renders only during the intermission, and only once a payout has arrived. */}
-      <CareerBar S={S} withShopButton={mobile && !isShopOpen()} />
+      {/* Hidden while the side panel is open: the bar's top-right anchor sits in
+          the panel's footprint, and the panel header already shows the wallet. */}
+      {!shopAsPanel && <CareerBar S={S} withShopButton={mobile && !isShopOpen()} />}
       {/* The whole intermission in one centred card — outcome art, grade, score,
           payout and countdown. Self-centring, so it can't overflow. */}
       {isOpen && <ShiftPayoutPanel S={S} imageSrc={topImageSrc} pct={pct} seconds={seconds} />}
+      {/* Countdown chip — whenever the card is away (dismissed, or the promotion
+          banner has the stage), the next-shift clock stays answered up top. */}
+      {isOpen && !isPayoutCardShowing() && (
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: { top: TIMER_ROW_TOP, left: 0 },
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
+          }}
+        >
+          <UiEntity
+            uiTransform={{
+              padding: {
+                top: Math.round(6 * S), bottom: Math.round(6 * S),
+                left: Math.round(16 * S), right: Math.round(16 * S),
+              },
+              borderRadius: Math.round(14 * S),
+            }}
+            uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
+          >
+            <Label
+              value={`Next shift in 0:${seconds < 10 ? '0' : ''}${seconds}`}
+              fontSize={Math.round(26 * S)}
+              color={WHITE}
+            />
+          </UiEntity>
+        </UiEntity>
+      )}
+      {/* Transient PROMOTED banner — self-hides a few seconds after a rank-up.
+          During the intermission it has the screen to itself (card + shop wait). */}
+      <PromotionBanner S={S} centerStage={isOpen} />
 
       {/* Rubbish carry count — live while cleaning; hidden during the intermission,
           when there is nothing in hand to track (round start resets it anyway). */}
@@ -1268,6 +1353,48 @@ const uiBody = () => {
         </UiEntity>
       )}
 
+      {/* ── Theme story card — tonight's "what happened here", on its own clock.
+           A fixed lower-centre band, clear of the banner (upper third), the intro
+           timer and the toast stack — the earlier banner-tracking version landed
+           on the countdown and vanished with the intro before anyone could read
+           it. Nine seconds of hold with a dark backdrop, then a fade: reading
+           time first, then the screen declutters. ─────────────────────────────── */}
+      {!isOpen && themeDef && themeStoryStartMs > 0 && (() => {
+        const t = Date.now() - themeStoryStartMs
+        if (t > THEME_STORY_MS) return null
+        const fade = t > THEME_STORY_MS - THEME_STORY_FADE_MS
+          ? Math.max(0, (THEME_STORY_MS - t) / THEME_STORY_FADE_MS)
+          : 1
+        const pad = Math.round(16 * S)
+        return (
+          <UiEntity
+            uiTransform={{
+              positionType:  'absolute',
+              position:      { top: '56%', left: 0 },
+              width:         '100%',
+              flexDirection: 'row',
+              justifyContent: 'center',
+            }}
+          >
+            <UiEntity
+              uiTransform={{
+                flexDirection: 'column',
+                alignItems:    'center',
+                padding: { top: pad, bottom: pad, left: pad * 2, right: pad * 2 },
+                borderRadius: Math.round(16 * S),
+              }}
+              uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.78 * fade } }}
+            >
+              <Label value={`TONIGHT: ${themeDef.title}`} fontSize={Math.round(38 * S)}
+                color={{ r: 1, g: 0.82, b: 0.25, a: fade }} />
+              <Label value={themeDef.blurb} fontSize={Math.round(26 * S)}
+                color={{ r: 1, g: 1, b: 1, a: fade }}
+                uiTransform={{ margin: { top: Math.round(8 * S) } }} />
+            </UiEntity>
+          </UiEntity>
+        )
+      })()}
+
       {/* ── Info strip (round label + next-round controls) ────────────────────── */}
       <UiEntity
         uiTransform={{
@@ -1292,6 +1419,29 @@ const uiBody = () => {
               color={COLOR_SUBTLE}
               uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
             />
+          )}
+
+          {/* Theme label — a quiet reminder of tonight's story once the story
+              card has faded. Chip styling matches the contract chip below so the
+              strip reads as one family. Hidden while the story card is up — two
+              surfaces saying the same thing is distraction, not reinforcement. */}
+          {!isOpen && themeDef && (themeStoryStartMs < 0 || Date.now() - themeStoryStartMs > THEME_STORY_MS) && (
+            <UiEntity
+              uiTransform={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                padding: {
+                  top: Math.round(4 * S), bottom: Math.round(4 * S),
+                  left: Math.round(12 * S), right: Math.round(12 * S),
+                },
+                margin: { bottom: LABEL_MARGIN_SMALL },
+                borderRadius: Math.round(14 * S),
+              }}
+              uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
+            >
+              <Label value={themeDef.title} fontSize={Math.round(22 * S)}
+                color={{ r: 1, g: 0.82, b: 0.25, a: 1 }} />
+            </UiEntity>
           )}
 
           {/* Shift contract — the round's server-rolled mini-goal, live progress.
@@ -1323,12 +1473,24 @@ const uiBody = () => {
             </UiEntity>
           )}
 
-          {/* Closing-time frenzy — final seconds, sprees count double. */}
-          {!isOpen && phase === 'playing' && seconds <= 20 && seconds > 0 && (
+          {/* Closing-time frenzy — final seconds, sprees count double. Suppressed
+              during last call: everything is already clean, there is nothing to
+              spree on, and the countdown means "victory lap" not "hurry". */}
+          {!isOpen && phase === 'playing' && !lastCall && seconds <= 20 && seconds > 0 && (
             <Label
               value="FRENZY! Sprees count double"
               fontSize={Math.round(24 * S)}
               color={{ r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(Date.now() / 120) }}
+              uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
+            />
+          )}
+
+          {/* Last call — spotless club, doors opening early. */}
+          {!isOpen && phase === 'playing' && lastCall && (
+            <Label
+              value="LAST CALL — spotless! Doors open early"
+              fontSize={Math.round(24 * S)}
+              color={{ r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(Date.now() / 200) }}
               uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
             />
           )}
@@ -1338,8 +1500,10 @@ const uiBody = () => {
         </UiEntity>
       </UiEntity>
 
-      {/* ── Admin panel — desktop only (right edge unsafe on mobile) ─────────── */}
-      {isAdmin && !mobile && (
+      {/* ── Admin panel — desktop only (right edge unsafe on mobile), and hidden
+           while the side-panel shop owns the right edge (buttons overlapped the
+           upgrade rows' cost buttons). ─────────────────────────────────────────── */}
+      {isAdmin && !mobile && !shopAsPanel && (
         <UiEntity
           uiTransform={{
             positionType: 'absolute',
@@ -1409,6 +1573,21 @@ const uiBody = () => {
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
             onMouseDown={() => replayCareerIntro(false)}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          {/* Theme pin — cycles RANDOM → each theme → RANDOM. Sticky on the
+              server (every following round uses it), applies from the NEXT
+              round. Label shows what was last sent. */}
+          <Button
+            value={`Theme: ${adminThemeIdx === 0 ? 'RANDOM' : THEME_DEFS[adminThemeIdx - 1].title}`}
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              adminThemeIdx = (adminThemeIdx + 1) % (THEME_DEFS.length + 1)
+              room.send('adminForceTheme', {
+                themeId: adminThemeIdx === 0 ? '' : THEME_DEFS[adminThemeIdx - 1].id,
+              })
+            }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
           <Button

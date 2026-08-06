@@ -1,13 +1,14 @@
-import { engine, Entity, Name, Transform, executeTask } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, executeTask, GltfContainer, ColliderLayer } from '@dcl/sdk/ecs'
+import { Quaternion } from '@dcl/sdk/math'
 import { syncEntity } from '@dcl/sdk/network'
 import { Storage, EnvVar } from '@dcl/sdk/server'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, ADMIN_ADDRESSES } from '../shared/config'
+import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, getRoundNumber, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
@@ -293,6 +294,7 @@ function scheduleLbUpdate(): void {
 type LastShift = {
   money: number; xp: number; passed: boolean; items: number
   grade: string; tip: number
+  earlyBonus: number; earlySeconds: number; disasterBonus: number
   contractLabel: string | null; contractDone: boolean; contractBonus: number
   openingBonus: boolean; streakDays: number; streakXp: number; newBest: boolean
 }
@@ -319,6 +321,9 @@ function progressPayload(
     // Drives the "sign in to save your progress" nudge — guests earn and spend
     // normally for the session, but nothing is written to storage.
     isGuest:   isGuestAddress(address),
+    // Personal best (items in one shift) — fuels the payout card's "beat your
+    // best" target line.
+    bestItems: rec.bestItems ?? 0,
     lastShift: lastShift ?? null,
     promotedTo: promotedTo ?? null,
   })
@@ -369,6 +374,23 @@ const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in
 // itemId → stream, classified from the scene Name at discovery (see initServer).
 const rubbishTypes = new Map<string, RubbishType>()
 
+// Themed-round spawn slots: which model each live slot wears this round (drives
+// its carry stream + contract kinds) and where it stands (vacuum sweep). Both
+// re-filled by the spawn roller every round.
+const themeSlotModels    = new Map<string, string>()
+const themeSlotPositions = new Map<string, { x: number; y: number; z: number }>()
+// itemId → lowercase scene Name, for the theme mask's per-name rubbish filter.
+const itemNames          = new Map<string, string>()
+// Authored scale per spawn model, harvested from the scene at discovery: when a
+// hand-placed scene item's Name contains a model name, its hand-tuned scale is
+// what that model should spawn at (playtest: scale-1 spawns were visibly wrong
+// for models the user had scaled in the editor). Longest-first so 'pizzaEaten'
+// wins over 'pizza' and 'sockB' over 'sock'. Default 1 when never hand-placed.
+const ALL_THEME_MODELS = THEME_DEFS
+  .flatMap((t) => t.spawns?.models ?? [])
+  .sort((a, b) => b.length - a.length)
+const themeModelScales = new Map<string, { x: number; y: number; z: number }>()
+
 // Which carry stream (if any) an item fills. Glasses and bottles count too —
 // playtest: "not all collected rubbish seems to count towards my carry limit
 // which is unclear" — and being glass, they're recycling. Sticky patches are
@@ -376,7 +398,32 @@ const rubbishTypes = new Map<string, RubbishType>()
 function carryStreamFor(itemId: string): RubbishType | null {
   if (itemId.startsWith(RUBBISH_ID_PREFIX)) return rubbishTypes.get(itemId) ?? 'general'
   if (itemId.startsWith(GLASS_ID_PREFIX) || itemId.startsWith(BOTTLE_ID_PREFIX)) return 'recycle'
+  // Themed extras classify by their MODEL name through the same shared
+  // classifier as scene rubbish (pizza → general, drink/bottle → recycle).
+  if (itemId.startsWith(THEME_SLOT_PREFIX)) {
+    const model = themeSlotModels.get(itemId)
+    return model ? classifyRubbish(model) : 'general'
+  }
+  // Disaster pile bits are hauled junk (they fill hands like rubbish); the
+  // stain and polish are mop work, carried by nobody.
+  if (itemId.startsWith(DISASTER_PREFIX)) {
+    return itemId.includes('pile') ? 'general' : null
+  }
   return null
+}
+
+/**
+ * Item category for the themed-round mask (RoundManager). Built here because
+ * this module owns the discovery/stream maps. Anything that isn't rubbish,
+ * glassware or a sticky patch is a restore prop from CLUTTER_DEFS.
+ */
+function itemCategoryFor(itemId: string): ItemCategory {
+  if (itemId.startsWith(STICKY_ID_PREFIX)) return 'sticky'
+  if (itemId.startsWith(GLASS_ID_PREFIX) || itemId.startsWith(BOTTLE_ID_PREFIX)) return 'glasses'
+  if (itemId.startsWith(RUBBISH_ID_PREFIX)) {
+    return (rubbishTypes.get(itemId) ?? 'general') === 'recycle' ? 'recycle' : 'general'
+  }
+  return 'reset'
 }
 
 function getLoad(address: string): CarriedLoad {
@@ -435,7 +482,14 @@ function sendCarried(address: string): void {
 // paying a bonus at shift end. Progress is tallied HERE, from the server's own
 // accepted cleans — the client only renders it, so a crafted message can't
 // claim a contract it didn't do.
-type ContractKind = 'general' | 'recycle' | 'glasses' | 'sticky' | 'deposits'
+type ContractKind = 'general' | 'recycle' | 'glasses' | 'sticky' | 'deposits' | 'disaster'
+
+// True while the CURRENT round has a live disaster spot — set by the spawn
+// roller. Gates the disaster contract out of rounds where it can't be done.
+let disasterThisRound = false
+// address → finale bonus earned this round; paid through the shift payout so
+// the card itemises it and it flows through awardShift like every other bonus.
+const disasterBonuses = new Map<string, number>()
 type Contract = {
   kind: ContractKind; target: number; progress: number
   money: number; xp: number; label: string
@@ -451,10 +505,23 @@ const CONTRACT_DEFS: Array<{
   { kind: 'glasses',  min: 5, max: 9,  moneyPer: 6,  xpPer: 3, label: (n) => `Collect ${n} glasses` },
   { kind: 'sticky',   min: 2, max: 4,  moneyPer: 15, xpPer: 8, label: (n) => `Mop ${n} sticky patches` },
   { kind: 'deposits', min: 2, max: 3,  moneyPer: 12, xpPer: 6, label: (n) => `Empty bins ${n} times` },
+  // Only rollable on rounds that actually HAVE a disaster (see rollContract).
+  // Target 5 = every stage of the one spot: three pile bits, stain, polish.
+  { kind: 'disaster', min: 5, max: 5,  moneyPer: 8,  xpPer: 4, label: () => 'Clear the disaster zone' },
 ]
 
 function rollContract(): Contract {
-  const def = CONTRACT_DEFS[Math.floor(Math.random() * CONTRACT_DEFS.length)]
+  // Themed rounds narrow the pool to the night's story (e.g. cocktail night
+  // rolls glasses/recycle goals). Falls back to the full pool if a theme names
+  // no kind that exists here — a misconfigured theme must not break contracts.
+  // The disaster contract only exists on rounds with a live disaster — an
+  // impossible contract is worse than none. Both the themed pool AND the
+  // fallback draw from the same availability-filtered set.
+  const available  = CONTRACT_DEFS.filter((d) => d.kind !== 'disaster' || disasterThisRound)
+  const allowed = getThemeContractKinds()
+  const themedPool = allowed !== null ? available.filter((d) => allowed.includes(d.kind)) : available
+  const pool = themedPool.length > 0 ? themedPool : available
+  const def = pool[Math.floor(Math.random() * pool.length)]
   const target = def.min + Math.floor(Math.random() * (def.max - def.min + 1))
   return {
     kind: def.kind, target, progress: 0,
@@ -483,6 +550,11 @@ function contractKindsFor(itemId: string): ContractKind[] {
   if (stream === 'recycle') kinds.push('recycle')
   if (itemId.startsWith(GLASS_ID_PREFIX))  kinds.push('glasses')
   if (itemId.startsWith(STICKY_ID_PREFIX)) kinds.push('sticky')
+  // Cocktail-night drinkware counts toward glasses contracts like scene glasses.
+  const model = themeSlotModels.get(itemId)
+  if (model && (model.includes('drink') || model.includes('glass'))) kinds.push('glasses')
+  // Every disaster stage advances the disaster contract (5 stages = target 5).
+  if (itemId.startsWith(DISASTER_PREFIX)) kinds.push('disaster')
   return kinds
 }
 
@@ -528,6 +600,8 @@ export function initServer() {
 
   const itemEntities    = new Map<string, Entity>()
   const sceneItemScales = new Map<string, { x: number; y: number; z: number }>()
+  // Name + scale of every discovered hand-placed item — theme spawn scale source.
+  const themeScaleSamples: Array<{ name: string; scale: { x: number; y: number; z: number } }> = []
   // Discovery-time positions of scene items, for the vacuum's proximity sweep.
   const sceneItemPositions = new Map<string, { x: number; y: number; z: number }>()
   let enumId = 1
@@ -573,6 +647,106 @@ export function initServer() {
     if (itemId.startsWith(RUBBISH_ID_PREFIX)) {
       rubbishTypes.set(itemId, classifyRubbish(Name.getOrNull(entity)?.value ?? ''))
     }
+    // Scene Name per item — the theme mask's keepRubbishNames filter matches on it.
+    const sceneName = (Name.getOrNull(entity)?.value ?? '').toLowerCase()
+    itemNames.set(itemId, sceneName)
+    // Collect every hand-placed item's name + scale; the theme spawner derives
+    // per-model spawn scales from these after the loop.
+    if (tf && sceneName) {
+      themeScaleSamples.push({ name: sceneName, scale: { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } })
+    }
+  }
+
+  // ── Theme spawn scales — MEDIAN over hand-placed instances of the SAME model ─
+  // First-match harvesting picked whichever instance discovery met first, and
+  // hand-placed copies are scaled individually — an outlier gave every spawn a
+  // wrong size; the median is robust to that. Matching is space/underscore-
+  // insensitive, and STRICTLY same-model: an earlier "family" fallback borrowed
+  // the scene Bottle's scale for brokenBottle.glb, but authored scales only
+  // mean anything for the mesh they were tuned on (playtest: broken bottles
+  // wrong size). Models with no hand-placed twin use the explicit override map.
+  {
+    const norm = (s: string) => s.toLowerCase().replace(/[\s_]/g, '')
+    const median = (v: number[]): number => {
+      const a = [...v].sort((x, y) => x - y)
+      return a[Math.floor(a.length / 2)]
+    }
+    const report: string[] = []
+    for (const model of ALL_THEME_MODELS) {
+      const m = norm(model)
+      const matches = themeScaleSamples.filter((s) => norm(s.name).includes(m))
+      if (matches.length === 0) {
+        report.push(`${model}=EXCLUDED`)
+        console.log(`[SERVER] ⚠ theme model '${model}' has NO Creator Hub placement to take its scale from — it will NOT spawn. Place one instance in CH to enable it.`)
+        continue
+      }
+      themeModelScales.set(model, {
+        x: median(matches.map((s) => s.scale.x)),
+        y: median(matches.map((s) => s.scale.y)),
+        z: median(matches.map((s) => s.scale.z)),
+      })
+      report.push(`${model}=${themeModelScales.get(model)!.x.toFixed(2)}(CH×${matches.length})`)
+    }
+    console.log(`[SERVER] theme model scales: ${report.join(' ')}`)
+  }
+
+  // ── Themed-round spawn slots ─────────────────────────────────────────────────
+  // Server-created entities whose Transform + GltfContainer + ClutterSync all
+  // replicate over CRDT — clients render the models and late joiners get the
+  // current spawn state for free; only pointer wiring is client-side
+  // (themeSpawnSystem). Parked underground at scale ~0 until a themed round's
+  // roller places them.
+  const THEME_PARK = { x: 8, y: -50, z: 8 }
+  for (let i = 0; i < THEME_SLOT_COUNT; i++) {
+    const id = `${THEME_SLOT_PREFIX}${i}`
+    const entity = engine.addEntity()
+    Transform.create(entity, {
+      position: { ...THEME_PARK },
+      scale: { x: 0.001, y: 0.001, z: 0.001 },
+    })
+    // No GltfContainer at boot — the roller creates a FRESH one on every
+    // activation (delete-then-recreate forces the explorer to actually load the
+    // new model; an in-place src swap does not reliably reload). Its componentId
+    // is still registered for sync below so those later adds replicate.
+    ClutterSync.create(entity, { itemId: id, isCleaned: true, cleanedAt: 0, cleanedBy: '' })
+    syncEntity(entity, [Transform.componentId, GltfContainer.componentId, ClutterSync.componentId], enumId++)
+    itemEntities.set(id, entity)
+  }
+
+  // ── Disaster spot stage entities ─────────────────────────────────────────────
+  // One disaster per round max, as five sequential logical items at one spot:
+  // three pile bits (quick clicks) → the stain beneath (hold + skill check) →
+  // a polish pass (short hold, cash finale). Same server-owned CRDT visual
+  // pattern as theme slots; the roller places them, cleanItem gates the order.
+  const DISASTER_STAGE_MODELS: Record<string, string> = {
+    pileA:  themeModelSrc('bigRubbishBag'),
+    pileB:  themeModelSrc('bigRubbishBag'),
+    pileC:  themeModelSrc('bigRubbishBag'),
+    stain:  'assets/scene/Models/StickyPatchBB/StickyPatchBB.glb',
+    polish: 'assets/scene/Models/StickyPatchB/StickyPatchB.glb',
+  }
+  for (const stage of DISASTER_STAGES) {
+    const id = `${DISASTER_PREFIX}0_${stage}`
+    const entity = engine.addEntity()
+    Transform.create(entity, {
+      position: { x: 8, y: -50, z: 8 },
+      scale: { x: 0.001, y: 0.001, z: 0.001 },
+    })
+    ClutterSync.create(entity, { itemId: id, isCleaned: true, cleanedAt: 0, cleanedBy: '' })
+    syncEntity(entity, [Transform.componentId, GltfContainer.componentId, ClutterSync.componentId], enumId++)
+    itemEntities.set(id, entity)
+  }
+  const disasterStageCleaned = (stage: string): boolean => {
+    const e = itemEntities.get(`${DISASTER_PREFIX}0_${stage}`)
+    return e ? ClutterSync.getOrNull(e)?.isCleaned !== false : true
+  }
+  /** Order gate: piles anytime; the stain needs the pile gone; polish needs the stain gone. */
+  function disasterStageUnlocked(itemId: string): boolean {
+    const stage = itemId.slice(itemId.lastIndexOf('_') + 1)
+    if (stage.startsWith('pile')) return true
+    if (stage === 'stain')  return disasterStageCleaned('pileA') && disasterStageCleaned('pileB') && disasterStageCleaned('pileC')
+    if (stage === 'polish') return disasterStageCleaned('stain')
+    return false
   }
 
   const gameStateEntity = engine.addEntity()
@@ -598,8 +772,202 @@ export function initServer() {
     }
   }
 
-  initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales)
+  initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales, itemCategoryFor, (itemId) => itemNames.get(itemId) ?? '')
   setStartHold(() => Date.now() < introHoldUntil)
+
+  // Crew power = average total upgrade levels across the ACTIVE crew. Drives
+  // respawn pace + demand (RoundManager) so a veteran's round stays as full as
+  // a rookie's — their throughput grew, so the mess grows with it.
+  function crewPowerNow(): number {
+    let total = 0
+    let n = 0
+    for (const address of activePlayers) {
+      const rec = getProgress(address)
+      if (!rec) continue
+      total += Object.values(rec.upgrades ?? {}).reduce((sum, lvl) => sum + (lvl ?? 0), 0)
+      n++
+    }
+    return n === 0 ? 0 : total / n
+  }
+  setCrewPowerProvider(crewPowerNow)
+
+  // ── Themed spawn roller — called by RoundManager inside every round's mask ────
+  // Parks all slots, then places countMin..countMax random models at anchors
+  // sampled (without replacement) from the authored scene items' positions:
+  // every anchor is a spot already validated by having an item placed there, so
+  // random spawns can't land inside furniture. Small jitter + random yaw keep
+  // repeat themes from looking identical.
+  setThemeSpawnRoller((themeId) => {
+    // Park everything and DELETE the GltfContainer — the explorer does not
+    // reliably reload a GltfContainer whose src merely swaps in place (the bin
+    // watchdog learned this the hard way: delete + recreate forces a fresh
+    // load). Recreation happens a beat later, guaranteeing a tick boundary
+    // between delete and create.
+    for (let i = 0; i < THEME_SLOT_COUNT; i++) {
+      const e = itemEntities.get(`${THEME_SLOT_PREFIX}${i}`)
+      if (!e) continue
+      if (GltfContainer.getOrNull(e)) GltfContainer.deleteFrom(e)
+      const tf = Transform.getMutableOrNull(e)
+      if (tf) {
+        tf.position = { ...THEME_PARK }
+        tf.scale    = { x: 0.001, y: 0.001, z: 0.001 }
+      }
+    }
+    themeSlotModels.clear()
+    themeSlotPositions.clear()
+
+    // Park the disaster stages too — re-placed below when this round rolls one.
+    for (const stage of DISASTER_STAGES) {
+      const e = itemEntities.get(`${DISASTER_PREFIX}0_${stage}`)
+      if (!e) continue
+      if (GltfContainer.getOrNull(e)) GltfContainer.deleteFrom(e)
+      const tf = Transform.getMutableOrNull(e)
+      if (tf) {
+        tf.position = { ...THEME_PARK }
+        tf.scale    = { x: 0.001, y: 0.001, z: 0.001 }
+      }
+    }
+
+    const def = THEME_DEFS.find((t) => t.id === themeId)
+    const cfg = def?.spawns
+
+    // Anchor pool, best spots first: positions of items this theme MASKS are
+    // guaranteed empty this round (their item is absent), so extras land there
+    // before doubling up on an occupied spot — pizzas take over the bar where
+    // the glasses were. Full-mix themes have no freed spots and use everything.
+    const shuffle = <T,>(arr: T[]): T[] => {
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1))
+        ;[arr[i], arr[j]] = [arr[j], arr[i]]
+      }
+      return arr
+    }
+    // The roller runs immediately after the mask, so "this spot is free" is
+    // simply "its item is already cleaned" — one source of truth that includes
+    // the name-filtered rubbish, not a re-derivation of the mask rules.
+    // Each anchor also carries whether its spot is TIGHT (glassware shelf /
+    // table cluster) — only small models may land there.
+    type Anchor = { x: number; y: number; z: number; tight: boolean }
+    const freed:    Anchor[] = []
+    const occupied: Anchor[] = []
+    for (const [itemId, pos] of sceneItemPositions) {
+      const name  = itemNames.get(itemId) ?? ''
+      const tight = TIGHT_ANCHOR_PARTS.some((p) => name.includes(p))
+      const a = { ...pos, tight }
+      const e = itemEntities.get(itemId)
+      if (e && ClutterSync.getOrNull(e)?.isCleaned) freed.push(a)
+      else occupied.push(a)
+    }
+    const anchors = [...shuffle(freed), ...shuffle(occupied)]
+
+    // CH-scale rule: only models with a Creator Hub placement (= a known
+    // authored scale) may spawn. Excluded ones were warned about at boot.
+    const spawnable   = cfg ? cfg.models.filter((m) => themeModelScales.has(m)) : []
+    const smallModels = spawnable.filter((m) => THEME_SMALL_MODELS.has(m))
+    const count = !cfg ? 0 : Math.min(
+      THEME_SLOT_COUNT,
+      anchors.length,
+      cfg.countMin + Math.floor(Math.random() * (cfg.countMax - cfg.countMin + 1)),
+    )
+    const ids: string[] = []
+    const modelTally = new Map<string, number>()
+    for (const a of anchors) {
+      if (!cfg || ids.length >= count) break
+      // Tight spot with no small model in this theme (pizza night, walkout):
+      // skip it rather than clip a big model into a shelf.
+      const pool = a.tight ? smallModels : spawnable
+      if (pool.length === 0) continue
+      const id = `${THEME_SLOT_PREFIX}${ids.length}`
+      const entity = itemEntities.get(id)
+      if (!entity) continue
+      // Tight jitter — the anchor is a validated item spot (often a table), and
+      // a wide scatter walked items off table edges (playtest).
+      const pos = {
+        x: a.x + (Math.random() - 0.5) * 0.24,
+        y: a.y,
+        z: a.z + (Math.random() - 0.5) * 0.24,
+      }
+      const model = pool[Math.floor(Math.random() * pool.length)]
+      Transform.createOrReplace(entity, {
+        position: pos,
+        rotation: Quaternion.fromEulerDegrees(0, Math.random() * 360, 0),
+        // The model's own authored Creator Hub scale — guaranteed present, the
+        // spawnable filter above excludes anything without one.
+        scale: themeModelScales.get(model)!,
+      })
+      themeSlotModels.set(id, model)
+      themeSlotPositions.set(id, pos)
+      modelTally.set(model, (modelTally.get(model) ?? 0) + 1)
+      ids.push(id)
+    }
+    // ── Disaster spot roll ──────────────────────────────────────────────────────
+    // Always on the designated themes, a dice roll on classic rounds, never on
+    // the warm-up. Takes an OPEN anchor from the BACK of the pool (theme spawns
+    // fill from the front) so the two never fight over a spot.
+    const disasterIds: string[] = []
+    let disasterSpawned = false
+    disasterThisRound = false
+    const wantDisaster = getRoundNumber() > 0 && (
+      DISASTER_THEMES.includes(themeId) ||
+      (themeId === '' && Math.random() < DISASTER_CHANCE_CLASSIC)
+    )
+    const pileCH = themeModelScales.get('bigRubbishBag')
+    if (wantDisaster && !pileCH) {
+      console.log(`[SERVER] ⚠ disaster skipped — 'bigRubbishBag' has no Creator Hub placement for its scale`)
+    }
+    if (wantDisaster && pileCH) {
+      const spot = [...anchors].reverse().find((a) => !a.tight)
+      if (spot) {
+        disasterSpawned    = true
+        disasterThisRound  = true
+        // Pile bits clustered around the spot at the bag's own CH scale (the
+        // CH-scale rule — no tweaks); stain + polish AT it, hidden until their
+        // stage unlocks (revealed by applyAcceptedClean).
+        const layout: Record<string, { dx: number; dz: number; scale: number }> = {
+          pileA:  { dx: -0.5,  dz: -0.3,  scale: pileCH.x },
+          pileB:  { dx:  0.55, dz: -0.25, scale: pileCH.x },
+          pileC:  { dx:  0,    dz:  0.55, scale: pileCH.x },
+          stain:  { dx: 0, dz: 0, scale: 0.001 },
+          polish: { dx: 0, dz: 0, scale: 0.001 },
+        }
+        for (const stage of DISASTER_STAGES) {
+          const id = `${DISASTER_PREFIX}0_${stage}`
+          const entity = itemEntities.get(id)
+          if (!entity) continue
+          const l = layout[stage]
+          Transform.createOrReplace(entity, {
+            position: { x: spot.x + l.dx, y: spot.y, z: spot.z + l.dz },
+            rotation: Quaternion.fromEulerDegrees(0, Math.random() * 360, 0),
+            scale:    { x: l.scale, y: l.scale, z: l.scale },
+          })
+          themeSlotPositions.set(id, { x: spot.x + l.dx, y: spot.y, z: spot.z + l.dz })
+          disasterIds.push(id)
+        }
+        console.log(`[SERVER] disaster spot at (${spot.x.toFixed(1)}, ${spot.z.toFixed(1)})`)
+      }
+    }
+
+    // Fresh GltfContainers one beat after the deletes above — never a same-tick
+    // src swap. The round-start intro holds for seconds, so the delay is unseen.
+    setTimeout(() => {
+      for (const id of ids) {
+        const entity = itemEntities.get(id)
+        const model  = themeSlotModels.get(id)
+        if (!entity || !model) continue
+        GltfContainer.createOrReplace(entity, { src: themeModelSrc(model), visibleMeshesCollisionMask: ColliderLayer.CL_POINTER })
+      }
+      if (disasterSpawned) {
+        for (const stage of DISASTER_STAGES) {
+          const entity = itemEntities.get(`${DISASTER_PREFIX}0_${stage}`)
+          if (!entity) continue
+          GltfContainer.createOrReplace(entity, { src: DISASTER_STAGE_MODELS[stage], visibleMeshesCollisionMask: ColliderLayer.CL_POINTER })
+        }
+      }
+    }, 150)
+    const tally = [...modelTally].map(([m, n]) => `${m}×${n}`).join(', ')
+    console.log(`[SERVER] theme '${themeId}': ${ids.length} extras spawned (${tally})${disasterSpawned ? ' + 1 disaster' : ''}`)
+    return [...ids, ...disasterIds]
+  })
 
   // Kick off the progression read early so records are in memory before the first
   // shift ends. Failure is non-fatal: play continues, saves stay blocked.
@@ -624,20 +992,26 @@ export function initServer() {
     // Fresh contracts for everyone cleaning this round; spectators get none
     // (an empty send clears any stale contract chip on their HUD).
     contracts.clear()
+    disasterBonuses.clear()   // unbanked finale bonuses die with the old round
     for (const address of activePlayers) contracts.set(address, rollContract())
     for (const address of activeSessions) sendContract(address)
 
     // Tell every known player where they stand — those promoted in, and those still
     // spectating, so a spectator's UI shows the sign-up prompt for the new round.
     for (const address of activeSessions) sendParticipation(address)
-    console.log(`[PARTICIPATION] round ${roundNumber} — ${activePlayers.size} cleaning, ${activeSessions.size - activePlayers.size} spectating`)
+    console.log(`[PARTICIPATION] round ${roundNumber} — ${activePlayers.size} cleaning, ${activeSessions.size - activePlayers.size} spectating, crew power ${crewPowerNow().toFixed(1)}`)
   })
 
   // ── Shift complete → pay wages, award XP, persist ───────────────────────────
   // A completed round IS a shift. Rewards are derived entirely from the SERVER's
   // cleanliness count and its own contribution tally — nothing here trusts a value
   // that came from a client.
-  setShiftCompleteHandler((cleanedFraction, contributions, playersPresent) => {
+  // $ per second saved by an early 100% close. A strong crew closing ~30s early
+  // earns ~$60 on top — meaningful, but below what the same time spent cleaning
+  // a fuller club would pay, so it never beats actually having more to clean.
+  const EARLY_CLOSE_RATE = 2
+
+  setShiftCompleteHandler((cleanedFraction, contributions, playersPresent, earlyCloseSeconds) => {
     const grade = gradeFor(cleanedFraction)
     // Only players who actually cleaned something are paid; idling through a shift
     // earns nothing even though the club got cleaned around them.
@@ -660,6 +1034,18 @@ export function initServer() {
         money += tip
       }
 
+      // Early-close bonus — the crew hit 100% and closed the club ahead of the
+      // clock; every contributor shares the same per-second rate.
+      const earlyBonus = earlyCloseSeconds > 0 && rewards.passed
+        ? earlyCloseSeconds * EARLY_CLOSE_RATE
+        : 0
+      money += earlyBonus
+
+      // Disaster finale bonus — banked when this player landed the polish.
+      const disasterBonus = disasterBonuses.get(address) ?? 0
+      disasterBonuses.delete(address)
+      money += disasterBonus
+
       const res = awardShift(address, money, xp, items, rewards.passed)
       sendProgress(address, {
         money,
@@ -668,6 +1054,9 @@ export function initServer() {
         items,
         grade,
         tip,
+        earlyBonus,
+        earlySeconds: earlyCloseSeconds,
+        disasterBonus,
         contractLabel: c?.label ?? null,
         contractDone,
         contractBonus: contractDone && c ? c.money : 0,
@@ -847,6 +1236,41 @@ export function initServer() {
       scheduleLbUpdate()
     }
 
+    // Themed extras: hide server-side (CRDT propagates) and NEVER respawn —
+    // clearing the party's mess is the shift, so it has to stay cleared.
+    if (itemId.startsWith(THEME_SLOT_PREFIX)) {
+      const tf = Transform.getMutableOrNull(entity)
+      if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
+      return
+    }
+
+    // Disaster stages: hide the cleaned stage, reveal the next one, and pay the
+    // finale. No respawns — a disaster is cleared once.
+    if (itemId.startsWith(DISASTER_PREFIX)) {
+      const tf = Transform.getMutableOrNull(entity)
+      if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
+      const reveal = (stage: string) => {
+        const e = itemEntities.get(`${DISASTER_PREFIX}0_${stage}`)
+        const t = e && Transform.getMutableOrNull(e)
+        if (t) t.scale = { x: 1, y: 1, z: 1 }
+      }
+      const stage = itemId.slice(itemId.lastIndexOf('_') + 1)
+      if (stage.startsWith('pile') && disasterStageUnlocked(`${DISASTER_PREFIX}0_stain`)) {
+        reveal('stain')
+        console.log('[SERVER] disaster: pile cleared — stain revealed')
+      } else if (stage === 'stain') {
+        reveal('polish')
+        console.log('[SERVER] disaster: stain mopped — polish revealed')
+      } else if (stage === 'polish') {
+        // Finale — the polisher's bonus is banked and paid through the shift
+        // payout, so the report card itemises it and it flows through
+        // awardShift like the tip and contract bonuses do.
+        disasterBonuses.set(address, (disasterBonuses.get(address) ?? 0) + DISASTER_BONUS)
+        console.log(`[SERVER] disaster CLEARED by ${address} — +$${DISASTER_BONUS} at shift end`)
+      }
+      return
+    }
+
     const isSceneItem = SCENE_ITEM_PREFIXES.some(p => itemId.startsWith(p))
     if (isSceneItem) {
       // Hide the item by collapsing its scale — server is HOST so CRDT propagates to all clients
@@ -881,7 +1305,9 @@ export function initServer() {
   // Vacuum sweep: also clean up to `maxExtra` uncleaned rubbish pieces nearest to
   // the clicked item, never taking more than the player's remaining hand space.
   function sweepNearbyRubbish(address: string, aroundItemId: string, maxExtra: number): void {
-    const centre = sceneItemPositions.get(aroundItemId)
+    // Themed extras sweep like loose rubbish — a vacuum at a pizza party is the
+    // upgrade's showcase moment.
+    const centre = sceneItemPositions.get(aroundItemId) ?? themeSlotPositions.get(aroundItemId)
     if (!centre) return
     const space  = carryCapacityFor(address) - carriedTotal(address)
     const budget = Math.min(maxExtra, Math.max(0, space))
@@ -889,9 +1315,9 @@ export function initServer() {
 
     const candidates: Array<{ itemId: string; entity: Entity; d2: number }> = []
     for (const [itemId, entity] of itemEntities) {
-      if (!itemId.startsWith(RUBBISH_ID_PREFIX) || itemId === aroundItemId) continue
+      if (!(itemId.startsWith(RUBBISH_ID_PREFIX) || themeSlotPositions.has(itemId)) || itemId === aroundItemId) continue
       if (ClutterSync.getOrNull(entity)?.isCleaned !== false) continue
-      const p = sceneItemPositions.get(itemId)
+      const p = sceneItemPositions.get(itemId) ?? themeSlotPositions.get(itemId)
       if (!p) continue
       const dx = p.x - centre.x, dy = p.y - centre.y, dz = p.z - centre.z
       const d2 = dx * dx + dy * dy + dz * dz
@@ -920,6 +1346,13 @@ export function initServer() {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
     }
+    // Disaster stages clean IN ORDER — the stain is under the pile, the polish
+    // needs a mopped surface. Locked stages are invisible client-side anyway;
+    // this stops a crafted message skipping to the finale bonus.
+    if (data.itemId.startsWith(DISASTER_PREFIX) && !disasterStageUnlocked(data.itemId)) {
+      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      return
+    }
     // Carry gate — full hands can't pick up more carryable mess (rubbish, glasses,
     // bottles). The client pre-empts this with a toast + sound, but it's enforced
     // here so a crafted message can't ignore the capacity the upgrade is selling.
@@ -933,8 +1366,9 @@ export function initServer() {
     applyAcceptedClean(context.from, data.itemId, entity)
 
     if (isCarryItem) {
-      // Vacuum sweeps loose rubbish only — glasses/bottles are picked one by one.
-      if (data.itemId.startsWith(RUBBISH_ID_PREFIX)) {
+      // Vacuum sweeps loose rubbish and themed extras — glasses/bottles are
+      // picked one by one.
+      if (data.itemId.startsWith(RUBBISH_ID_PREFIX) || data.itemId.startsWith(THEME_SLOT_PREFIX)) {
         const extra = vacuumExtraFor(context.from)
         if (extra > 0) sweepNearbyRubbish(context.from, data.itemId, extra)
       }
@@ -1077,6 +1511,22 @@ export function initServer() {
   })
 
   // Admin testing tool: grant yourself money / XP (drives the +$ / +rank buttons).
+  room.onMessage('adminForceTheme', (data, context) => {
+    if (!context) return
+    if (!ADMIN_ADDRESSES.includes(context.from.toLowerCase())) {
+      console.log(`[SERVER] adminForceTheme rejected — not an admin: ${context.from}`)
+      return
+    }
+    // '' clears the pin (back to random); anything else must be a known theme.
+    const valid = data.themeId === '' || THEME_DEFS.some((t) => t.id === data.themeId)
+    if (!valid) {
+      console.log(`[SERVER] adminForceTheme: unknown theme '${data.themeId}' — ignored`)
+      return
+    }
+    setForcedTheme(data.themeId === '' ? null : (data.themeId as ThemeId))
+    console.log(`[SERVER] adminForceTheme: ${data.themeId === '' ? 'cleared (random)' : `pinned '${data.themeId}'`} by ${context.from}`)
+  })
+
   room.onMessage('adminGrant', (data, context) => {
     if (!context) return
     if (!ADMIN_ADDRESSES.includes(context.from.toLowerCase())) {

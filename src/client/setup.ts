@@ -7,6 +7,7 @@ import { initGlassSystem } from './glassSystem'
 import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
+import { initThemeSpawnSystem } from './themeSpawnSystem'
 import { initRestoreSystem } from './restoreSystem'
 import { initStinkSystem } from './stinkSystem'
 import { initSparkleSystem } from './sparkleSystem'
@@ -52,6 +53,7 @@ export function initClient() {
     toastKind:  'bottles',
   })
   initRubbishSystem()
+  initThemeSpawnSystem()   // click wiring for server-placed themed extras (theme_* slots)
   initRestoreSystem([
     {
       itemId:         'test_reset',

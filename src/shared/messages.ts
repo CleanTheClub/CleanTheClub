@@ -7,6 +7,12 @@ export const Messages = {
   adminReset:       Schemas.Map({ dummy: Schemas.Boolean }),  // admin only
   /** Admin testing tool — grant yourself money and/or XP. Admin-gated server-side. */
   adminGrant:       Schemas.Map({ money: Schemas.Int, xp: Schemas.Int }),
+  /**
+   * Admin testing tool — pin the round theme. Sticky: every following round uses
+   * this theme until changed; themeId '' returns to normal random rolling.
+   * Admin-gated server-side.
+   */
+  adminForceTheme:  Schemas.Map({ themeId: Schemas.String }),
   startNextRound:   Schemas.Map({ dummy: Schemas.Boolean }),  // any player (no-op)
   startMatch:       Schemas.Map({ dummy: Schemas.Boolean }),  // any player — start a match from the lobby
   /** Sent on join so the server can map address → display name for the leaderboard. */

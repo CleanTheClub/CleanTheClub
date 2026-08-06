@@ -221,7 +221,10 @@ export const UPGRADES: UpgradeDef[] = [
   {
     id: 'portableBin',
     name: 'Portable Bin',
-    description: 'Empty your hands on the spot — limited uses each shift.',
+    // "limited uses each shift" moved into the shop's delta line ("1 → 2 per
+    // shift"), which states it with real numbers — shorter here keeps the
+    // flavor + delta pair on one row in the mobile modal.
+    description: 'Empty your hands on the spot.',
     // Level = on-the-spot empties per shift (no trip to a big bag needed).
     levelValues: [0, 1, 2, 3],
     costs:       [1_200, 2_500, 4_500],
