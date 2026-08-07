@@ -9,13 +9,13 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { GameState } from '../shared/schemas'
 import { RubbishType } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
-import { DUMPSTER_PREFIX } from '../shared/config'
+import { DUMPSTER_PREFIX, BIN_STREAM_CAPACITY, BIN_STINK_FRACTION, themeModelSrc } from '../shared/config'
 import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
@@ -45,6 +45,9 @@ const BIN_HOVER: Record<RubbishType, string> = {
 // ── Bin locations ─────────────────────────────────────────────────────────────
 // Recorded at discovery so the first-pickup nudge can point at the nearest one.
 const binPositions: Array<{ x: number; y: number; z: number }> = []
+// Discovered bin models + authored scales, for the per-stream fill pulse and
+// the haul return spot (found by Name).
+const binVisuals: Array<{ name: string; entity: Entity; type: RubbishType; base: { x: number; y: number; z: number } }> = []
 
 // ── First-pickup nudge ────────────────────────────────────────────────────────
 // The permanent "EMPTY BINS" text over every station is gone: it was scaffolding
@@ -219,9 +222,12 @@ export function noteCarriedModel(src: string | undefined): void {
 
 function refreshCarriedBag(): void {
   const total = carriedGeneral + carriedRecycle
+  // Dumpster haul: the hands hold the overflowing BIN BAG itself — carry pose,
+  // box at max size, a bag riding it, permanent stink. Reads physically.
+  const haulDisplay = hauling !== ''
   // Upper-body carry pose tracks whether the hands are full.
-  setCarryPose(total > 0)
-  if (total <= 0) {
+  setCarryPose(haulDisplay || total > 0)
+  if (!haulDisplay && total <= 0) {
     if (carryAnchor) {
       engine.removeEntityWithChildren(carryAnchor)
       carryAnchor = null
@@ -235,7 +241,8 @@ function refreshCarriedBag(): void {
   }
 
   // Server count is authoritative — drop oldest decorations past it.
-  while (carriedModels.length > total) carriedModels.shift()
+  // (Not while hauling: carried is 0 then, and the bag mini is forced below.)
+  if (!haulDisplay) while (carriedModels.length > total) carriedModels.shift()
 
   if (!carryAnchor) {
     // Unscaled anchor on the hand; bag and minis are children so the bag can
@@ -261,13 +268,14 @@ function refreshCarriedBag(): void {
   // Container scales with how full the hands are — a full load looks heavier.
   // Origin is at the box base on the vertical axis (prop-authored), so scaling
   // grows it in place; the offset no longer needs to move with size.
-  const frac = Math.min(1, total / Math.max(1, capacity))
+  const frac = haulDisplay ? 1 : Math.min(1, total / Math.max(1, capacity))
   const size = BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
 
   // Stink cloud appears exactly at capacity, disappears the moment space frees.
-  const full = total >= capacity
+  // A hauled FULL bin stinks all the way out; the emptied bin rides home clean.
+  const full = (haulDisplay && haulStage === 'out') || (!haulDisplay && total >= capacity)
   if (full && !fullStinkEntity && carryRig) {
     fullStinkEntity = engine.addEntity()
     Transform.create(fullStinkEntity, {
@@ -304,7 +312,11 @@ function refreshCarriedBag(): void {
   }
 
   // Newest items on top of the pile; slots are reused, never re-created.
-  const visible = carriedModels.slice(-MAX_VISIBLE_ITEMS)
+  // While hauling the single decoration is the BIN itself (the one that
+  // vanished from its station).
+  const visible = haulDisplay
+    ? [themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')]
+    : carriedModels.slice(-MAX_VISIBLE_ITEMS)
   for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
     const src = visible[i]
     if (src) {
@@ -344,7 +356,9 @@ let carriedRecycle = 0
 let capacity     = 5      // matches the un-upgraded baseline until the server answers
 let portableLeft = 0      // Portable Bin self-empties remaining this shift
 let known        = false  // no carriedUpdate yet — hide the chip rather than guess
-let hauling: '' | 'general' | 'recycle' = ''   // dumpster bag in hand
+let hauling: '' | 'general' | 'recycle' = ''   // stream of the bin in hand
+let haulStage: '' | 'out' | 'back' = ''        // full bin → dumpster | empty bin → home
+let haulBinName = ''                            // which bin (its return spot)
 
 // Last deposit (time + size), read by ui.tsx for the "+N BINNED!" flash — a
 // getter rather than a ui import, which would cycle.
@@ -371,15 +385,23 @@ export const getCarryCapacity  = (): number => capacity
 export const getPortableLeft   = (): number => portableLeft
 export const isCarryKnown      = (): boolean => known
 export const getHauling        = (): '' | 'general' | 'recycle' => hauling
+export const getHaulStage      = (): '' | 'out' | 'back' => haulStage
 // The dumpster bag counts as full hands — every pickup gate reads this.
 export const isCarryFull       = (): boolean => known && (hauling !== '' || carriedGeneral + carriedRecycle >= capacity)
 
-/** Bin-full flags from GameState — club-wide, server-owned. */
-function binStreamFullClient(type: RubbishType): boolean {
+/** Bin fill levels from GameState — club-wide, server-owned. */
+function binFillClient(type: RubbishType): number {
   for (const [, gs] of engine.getEntitiesWith(GameState)) {
-    return type === 'general' ? gs.binFullGeneral : gs.binFullRecycle
+    return type === 'general' ? gs.binFillGeneral : gs.binFillRecycle
   }
-  return false
+  return 0
+}
+function binStreamFullClient(type: RubbishType): boolean {
+  return binFillClient(type) >= BIN_STREAM_CAPACITY
+}
+/** Fullest stream, 0..1 — drives the station piles and stink. */
+function binMaxFillFrac(): number {
+  return Math.min(1, Math.max(binFillClient('general'), binFillClient('recycle')) / BIN_STREAM_CAPACITY)
 }
 
 /** Portable Bin: empty on the spot (both streams). Server re-validates. */
@@ -397,6 +419,8 @@ export function initCarrySystem(): void {
     capacity       = data.capacity
     portableLeft   = data.portableLeft
     hauling        = data.hauling === 'general' || data.hauling === 'recycle' ? data.hauling : ''
+    haulStage      = data.haulStage === 'out' || data.haulStage === 'back' ? data.haulStage : ''
+    haulBinName    = data.haulBinName ?? ''
     known          = true
     refreshMarkers()
   })
@@ -412,6 +436,12 @@ export function initCarrySystem(): void {
     const type = def.type
     const stationPos = Transform.getOrNull(entity)?.position
     if (stationPos) binPositions.push({ x: stationPos.x, y: stationPos.y, z: stationPos.z })
+    // Authored scale captured for the fill-pulse (the bin breathes around it).
+    const binTf = Transform.getOrNull(entity)
+    binVisuals.push({
+      name: n, entity, type,
+      base: binTf ? { x: binTf.scale.x, y: binTf.scale.y, z: binTf.scale.z } : { x: 1, y: 1, z: 1 },
+    })
 
     requestSetup({
       isReady: () => findGltfEntity(entity) !== undefined,
@@ -434,8 +464,8 @@ export function initCarrySystem(): void {
             // marker above the station carries the instruction).
             if (binStreamFullClient(type)) {
               if (hauling !== '' || getCarried() > 0) { playMissSound(); return }
-              playDepositSound(type)   // bag-grab thunk
-              room.send('takeFullBag', { binType: type })
+              playDepositSound(type)   // bin-grab thunk
+              room.send('takeFullBag', { binType: type, binName: n })
               return
             }
             const inStream = type === 'general' ? carriedGeneral : carriedRecycle
@@ -473,7 +503,8 @@ export function initCarrySystem(): void {
         pointerEventsSystem.onPointerDown(
           { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: POINTER_MAX_DIST } },
           () => {
-            if (hauling === '') { playMissSound(); return }   // nothing to dump
+            // Only a FULL bin dumps here; the return leg belongs at the station.
+            if (hauling === '' || haulStage !== 'out') { playMissSound(); return }
             playDepositSound(hauling)
             const p2 = Transform.getOrNull(entity)?.position
             if (p2) playSparkle({ x: p2.x, y: p2.y + 1.5, z: p2.z })
@@ -508,6 +539,49 @@ export function initCarrySystem(): void {
   const dumpMarkers = dumpsterPositions.map((p) =>
     makeMarker(p, 'EMPTY THE BAG HERE', Color4.create(1, 0.82, 0.25, 1)))
 
+  // ── Station fill visuals — the BINS are the gauge: each bin breathe-pulses
+  // harder as ITS stream fills (general bins track general, recycling track
+  // recycling), and station stink ramps from a waft to a plume. (A junk-bag
+  // pile on the lids "just didn't read" — playtest.)
+  const STATION_STINK_Y = 1.55
+  // Stink emitters are CREATED/REMOVED on threshold crossings, never paused —
+  // a paused emitter leaves live particles sinking through the floor (the
+  // party-mode stink lesson).
+  const stationStinks: Array<Entity | null> = stationMarkerAnchors.map(() => null)
+  const makeStationStink = (p: { x: number; y: number; z: number }): Entity => {
+    const e = engine.addEntity()
+    Transform.create(e, { position: { x: p.x, y: p.y + STATION_STINK_Y, z: p.z } })
+    ParticleSystem.create(e, {
+      shape: ParticleSystem.Shape.Cone({ angle: 25, radius: 0.18 }),
+      rate: 4,
+      maxParticles: 8,
+      lifetime: 1.8,
+      gravity: -0.04,
+      initialVelocitySpeed: { start: 0.15, end: 0.3 },
+      initialSize:  { start: 0.28, end: 0.4 },
+      sizeOverTime: { start: 0.9, end: 2.2 },
+      initialColor: {
+        start: Color4.create(0.3, 0.9, 0.05, 0.85),
+        end:   Color4.create(0.5, 1.0, 0.2,  0.75),
+      },
+      colorOverTime: {
+        start: Color4.create(0.2, 0.75, 0.05, 0.4),
+        end:   Color4.create(0.1, 0.5,  0.05, 0.0),
+      },
+      texture:   { src: FULL_STINK_TEXTURE },
+      billboard: true,
+      blendMode: 0,
+      loop: true,
+      prewarm: true,
+      active: true,
+    })
+    return e
+  }
+
+  // Return-leg click target + marker at the hauled bin's empty station spot.
+  let returnTarget: Entity | null = null
+  let returnMarker: Entity | null = null
+
   let markerAcc = 0
   engine.addSystem((dt: number) => {
     markerAcc += dt
@@ -521,7 +595,69 @@ export function initCarrySystem(): void {
     }
     for (const m of dumpMarkers) {
       const tf = Transform.getMutable(m)
-      tf.scale = hauling !== '' ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+      // Dumpsters call only while the FULL bin is out; the return leg points home.
+      tf.scale = haulStage === 'out' ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+    }
+    // Return leg: a marker + click target appear at the hauled bin's empty spot.
+    if (haulStage === 'back' && haulBinName !== '') {
+      const home = binVisuals.find((b) => b.name === haulBinName)
+      const p = home && Transform.getOrNull(home.entity)?.position
+      if (p && returnTarget === null) {
+        returnTarget = engine.addEntity()
+        Transform.create(returnTarget, { position: { x: p.x, y: p.y + 0.7, z: p.z } })
+        MeshCollider.setBox(returnTarget)
+        Transform.getMutable(returnTarget).scale = { x: 1.4, y: 1.4, z: 1.4 }
+        pointerEventsSystem.onPointerDown(
+          { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: POINTER_MAX_DIST } },
+          () => {
+            if (haulStage !== 'back') return
+            playDepositSound()
+            room.send('returnBin', { dummy: true })
+          },
+        )
+        returnMarker = makeMarker(p, 'PUT THE BIN\nBACK HERE', Color4.create(0.4, 0.95, 0.5, 1))
+        Transform.getMutable(returnMarker).scale = { x: 1, y: 1, z: 1 }
+      }
+    } else if (returnTarget !== null) {
+      pointerEventsSystem.removeOnPointerDown(returnTarget)
+      engine.removeEntity(returnTarget)
+      returnTarget = null
+      if (returnMarker) { engine.removeEntity(returnMarker); returnMarker = null }
+    }
+    // Stink from BIN_STINK_FRACTION, RAMPING with fill: a faint waft at a third
+    // full, a plume at overflow. Rate mutation on a live emitter is safe —
+    // only pausing has the sinking-particles problem.
+    const frac = binMaxFillFrac()
+    const stinky = frac >= BIN_STINK_FRACTION
+    for (let i = 0; i < stationMarkerAnchors.length; i++) {
+      if (stinky && stationStinks[i] === null) {
+        stationStinks[i] = makeStationStink(stationMarkerAnchors[i])
+      } else if (!stinky && stationStinks[i] !== null) {
+        engine.removeEntity(stationStinks[i]!)
+        stationStinks[i] = null
+      }
+      if (stationStinks[i] !== null) {
+        ParticleSystem.getMutable(stationStinks[i]!).rate = Math.round(1 + 7 * frac)
+      }
+    }
+  })
+
+  // ── Bin fill pulse — per-frame breathing, per STREAM: amplitude grows with
+  // that stream's fill, so a swelling general bin next to a still recycling
+  // bin tells you exactly what needs emptying.
+  engine.addSystem(() => {
+    const now = Date.now()
+    for (const b of binVisuals) {
+      const frac = Math.min(1, binFillClient(b.type) / BIN_STREAM_CAPACITY)
+      const tf = Transform.getMutableOrNull(b.entity)
+      if (!tf) continue
+      if (frac <= 0) {
+        tf.scale = { x: b.base.x, y: b.base.y, z: b.base.z }
+        continue
+      }
+      // Up to ±6% at overflow, breathing faster as it fills.
+      const k = 1 + (0.06 * frac) * Math.sin(now / (400 - 200 * frac))
+      tf.scale = { x: b.base.x * k, y: b.base.y * k, z: b.base.z * k }
     }
   })
 

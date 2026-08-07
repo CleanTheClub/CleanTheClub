@@ -18,6 +18,7 @@
 
 import { engine, PlayerIdentityData } from '@dcl/sdk/ecs'
 import { createPersistedDoc } from './persistence'
+import { ADMIN_ADDRESSES } from '../shared/config'
 import {
   UpgradeId, canPurchase, rankForXp, titleForXp, PurchaseRefusal,
 } from '../shared/progression'
@@ -97,6 +98,9 @@ function migrate(raw: any): ProgressRecord {
 // ── In-memory state ───────────────────────────────────────────────────────────
 const records = new Map<string, ProgressRecord>()   // address → record (guests included)
 const guests  = new Set<string>()                   // addresses excluded from persistence
+// Addresses whose record came from the STORE — proof of a persistent identity,
+// which overrides an engine isGuest misreport (see registerProgressPlayer).
+const loadedFromStore = new Set<string>()
 let   dirty   = false
 
 const doc = createPersistedDoc<ProgressDoc>(
@@ -111,6 +115,18 @@ let loadStarted = false
 // its own .then — without this guard each caller re-ran the merge (harmless thanks
 // to the records.has check, but it double-logged and double-walked the document).
 let mergeDone = false
+/** Career-doc persistence health — surfaced on the in-world admin panel. */
+export function progressStorageStatus() {
+  return doc.status()
+}
+
+// Fired after the load merge RESTORES careers over pre-load stub records, so
+// server.ts can push the corrected state to those players immediately.
+let onCareersRestored: ((addresses: string[]) => void) | undefined
+export function setCareersRestoredHandler(fn: (addresses: string[]) => void): void {
+  onCareersRestored = fn
+}
+
 export function ensureProgressLoaded(): Promise<unknown> {
   loadStarted = true
   return doc.ensureLoaded().then((stored) => {
@@ -118,15 +134,58 @@ export function ensureProgressLoaded(): Promise<unknown> {
     mergeDone = true
     if (!stored || !stored.players) return
     let n = 0
+    const restored: string[] = []
     for (const [address, raw] of Object.entries(stored.players)) {
-      // Don't clobber a record already mutated in memory: on a cold server a player
-      // can clean items before the read lands, and their in-session earnings must
-      // not be reverted by the slower disk value.
-      if (records.has(address)) continue
-      records.set(address.toLowerCase(), migrate(raw))
+      const key    = address.toLowerCase()
+      const loaded = migrate(raw)
+      const existing = records.get(key)
+      if (existing) {
+        // BOOT RACE — the bug that erased the owner's career on every
+        // republish: a player who joins before the read settles (after a
+        // republish, that is almost always the OWNER testing) gets a fresh
+        // stub record; the old skip-if-present merge then ignored their real
+        // career, and the next shift-end save wrote the stub over it in the
+        // store. The stub only ever holds THIS session's pre-load earnings
+        // (records are only created via emptyRecord), so the fix is to ADD
+        // those few minutes on top of the restored career — nobody loses
+        // either side of the race.
+        loaded.money         += existing.money
+        loaded.xp            += existing.xp
+        loaded.shifts        += existing.shifts
+        loaded.lifetimeItems += existing.lifetimeItems
+        loaded.bestItems      = Math.max(loaded.bestItems, existing.bestItems)
+        for (const [id, lvl] of Object.entries(existing.upgrades)) {
+          const u = id as UpgradeId
+          loaded.upgrades[u] = Math.max(loaded.upgrades[u] ?? 0, lvl ?? 0)
+        }
+        if (existing.displayName) loaded.displayName = existing.displayName
+        // Daily/streak fields: keep whichever is from the more recent day.
+        if (existing.dailyDay >= loaded.dailyDay) {
+          loaded.dailyItems = existing.dailyItems
+          loaded.dailyDay   = existing.dailyDay
+        }
+        if (existing.lastWorkDay >= loaded.lastWorkDay && existing.lastWorkDay !== '') {
+          loaded.lastWorkDay = existing.lastWorkDay
+          loaded.workStreak  = Math.max(loaded.workStreak, existing.workStreak)
+        }
+        restored.push(key)
+        console.log(`[PROGRESS] restored stored career for ${key} over a pre-load session stub`)
+      }
+      records.set(key, loaded)
+      loadedFromStore.add(key)
+      // A stored career proves this identity persists — clear any guest
+      // misflag applied by a register that ran before the load settled.
+      if (guests.has(key)) {
+        guests.delete(key)
+        console.log(`[PROGRESS] ${key} was flagged guest but has a stored career — flag cleared`)
+      }
       n++
     }
-    console.log(`[PROGRESS] loaded ${n} player records`)
+    console.log(`[PROGRESS] loaded ${n} player records${restored.length ? ` (${restored.length} restored over boot-race stubs)` : ''}`)
+    if (restored.length > 0) {
+      dirty = true   // the merged truth should reach the store at the next checkpoint
+      onCareersRestored?.(restored)
+    }
   }).catch((e) => {
     // Saves stay blocked (loadConfirmed false), so nothing is overwritten.
     console.log('[PROGRESS] load failed — progression will not persist this session:', e)
@@ -159,8 +218,21 @@ export function registerProgressPlayer(address: string, displayName: string): Pr
   if (displayName) rec.displayName = displayName
 
   if (detectGuest(key)) {
-    guests.add(key)
-    console.log(`[PROGRESS] ${displayName || key} is a guest — progress is session-only`)
+    // The engine's isGuest is not fully trustworthy (the deployed explorer
+    // flagged the signed-in OWNER as a guest — playtest 2026-08-07). Two facts
+    // override it: an ADMIN address is definitionally a real wallet, and an
+    // address with a STORED career already proved it persists. Genuine
+    // one-time guests match neither and stay session-only.
+    if (ADMIN_ADDRESSES.includes(key)) {
+      guests.delete(key)
+      console.log(`[PROGRESS] ${displayName || key} reported as guest but is an ADMIN — persisting anyway`)
+    } else if (loadedFromStore.has(key)) {
+      guests.delete(key)
+      console.log(`[PROGRESS] ${displayName || key} reported as guest but has a stored career — persisting anyway`)
+    } else {
+      guests.add(key)
+      console.log(`[PROGRESS] ${displayName || key} is a guest — progress is session-only`)
+    }
   } else {
     guests.delete(key)
   }

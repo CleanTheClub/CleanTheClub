@@ -189,9 +189,15 @@ export const POP_FIRST_GRACE_MS = 150 // the click that STARTED the rhythm can't
 // A full stream refuses deposits until someone with EMPTY hands clicks a bin,
 // shoulders the big bag, and hauls it to a dumpster outside the club. The
 // hauler is paid on the shift payout.
-export const BIN_STREAM_CAPACITY = 30
+// 18 (was 30 — too high vs the ~40-item stream census: one late haul at best).
+// Now the first haul lands mid-round; themed nights with extras get two.
+export const BIN_STREAM_CAPACITY = 18
 export const HAUL_BONUS          = 15
 export const DUMPSTER_PREFIX     = 'Dumpster'
+// Bins start stinking at this fill fraction; the stink RATE then ramps with
+// fill (a faint waft at a third full, a plume at overflow) and the bin models
+// breathe-pulse harder as they fill — the bins themselves are the fill gauge.
+export const BIN_STINK_FRACTION  = 0.3
 
 // ── Disaster spots ────────────────────────────────────────────────────────────
 // The "boss mess": one big multi-stage clean per round (sometimes). Three verbs

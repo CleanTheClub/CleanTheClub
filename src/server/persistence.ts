@@ -33,6 +33,15 @@ const READ_WINDOW_MS = 30_000   // total time to keep trying before giving up
 // everyone", well before an external store starts rejecting the write.
 const SIZE_WARN_BYTES = 100 * 1024
 
+export type DocStatus = {
+  /** 'pending' until the first backend resolution. */
+  backend: 'jsonbin' | 'storage' | 'pending'
+  loadConfirmed: boolean
+  /** null until a save has been attempted. */
+  lastSaveOk: boolean | null
+  lastSaveMs: number
+}
+
 export type PersistedDoc<T> = {
   /** Loads once; concurrent callers share the same in-flight promise. */
   ensureLoaded(): Promise<T | null>
@@ -40,6 +49,8 @@ export type PersistedDoc<T> = {
   isLoadConfirmed(): boolean
   /** Persists `value`. Refuses to write before a confirmed read (wipe guard). */
   save(value: T): Promise<void>
+  /** Live health snapshot — surfaced in-world so failures can't stay silent. */
+  status(): DocStatus
 }
 
 /**
@@ -56,6 +67,8 @@ export function createPersistedDoc<T>(
 ): PersistedDoc<T> {
   let loadPromise: Promise<T | null> | null = null
   let loadConfirmed = false
+  let lastSaveOk: boolean | null = null
+  let lastSaveMs = 0
 
   // ── Backend resolution (once per document) ──────────────────────────────────
   let binCfg: { id: string; key: string } | null = null
@@ -164,9 +177,22 @@ export function createPersistedDoc<T>(
             `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
         }
         await write(value)
+        lastSaveOk = true
+        lastSaveMs = Date.now()
         console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
       } catch (e) {
+        lastSaveOk = false
+        lastSaveMs = Date.now()
         console.log(`[STORE:${key}] ERROR: save failed:`, e)
+      }
+    },
+
+    status(): DocStatus {
+      return {
+        backend: !binCfgLoaded ? 'pending' : binCfg ? 'jsonbin' : 'storage',
+        loadConfirmed,
+        lastSaveOk,
+        lastSaveMs,
       }
     },
   }

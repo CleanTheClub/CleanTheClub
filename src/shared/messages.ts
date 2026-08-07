@@ -35,10 +35,21 @@ export const Messages = {
   depositRubbish:   Schemas.Map({ binType: Schemas.String }),
   /** Empty on the spot via the Portable Bin upgrade (limited uses per shift). */
   portableEmpty:    Schemas.Map({ dummy: Schemas.Boolean }),
-  /** Shoulder the full bag from an overflowing bin stream (empty hands only). */
-  takeFullBag:      Schemas.Map({ binType: Schemas.String }),
-  /** Empty the hauled bag into a dumpster outside — unlocks the stream. */
+  /** Pick up an overflowing BIN itself (empty hands only) — the named bin
+   *  vanishes from its station into the player's hands. */
+  takeFullBag:      Schemas.Map({ binType: Schemas.String, binName: Schemas.String }),
+  /** Empty the hauled bin into a dumpster — stream unlocks; the empty bin is
+   *  still in hand and must be carried home. */
   dumpsterEmpty:    Schemas.Map({ dummy: Schemas.Boolean }),
+  /** Set the emptied bin back at its station — completes the round trip and
+   *  banks the haul bonus. */
+  returnBin:        Schemas.Map({ dummy: Schemas.Boolean }),
+  /**
+   * Career-storage health for the admin panel: backend in use, load state,
+   * last save result. JSON of persistence.ts DocStatus. Sent on join and after
+   * every save attempt — a silent persistence failure cost real careers once.
+   */
+  storageStatus:    Schemas.Map({ statusJson: Schemas.String }),
 
   // ── Server → Client ─────────────────────────────────────────
   cleanRejected:    Schemas.Map({ itemId: Schemas.String }),
@@ -96,9 +107,13 @@ export const Messages = {
     capacity:       Schemas.Int,
     /** Portable Bin self-empties remaining this shift (0 = none / not owned). */
     portableLeft:   Schemas.Int,
-    /** '' | 'general' | 'recycle' — this player is hauling that stream's full
-     *  bag to the dumpster (hands are the bag: pickups blocked meanwhile). */
+    /** '' | 'general' | 'recycle' — this player is hauling that stream's BIN
+     *  (hands are the bin: pickups blocked meanwhile). */
     hauling:        Schemas.String,
+    /** '' | 'out' (full bin → dumpster) | 'back' (empty bin → its station). */
+    haulStage:      Schemas.String,
+    /** Scene Name of the bin being hauled — the return spot. */
+    haulBinName:    Schemas.String,
   }),
 }
 

@@ -21,8 +21,8 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   starting:      Schemas.Boolean,  // true during the lobby pre-match countdown (secondsLeft is the countdown)
   theme:         Schemas.String,   // '' = classic round, else a ThemeId from THEME_DEFS
   lastCall:      Schemas.Boolean,  // true during the 100%-early-close grace window (secondsLeft counts it down)
-  binFullGeneral: Schemas.Boolean, // the general bins overflowed — deposits refused until a dumpster haul
-  binFullRecycle: Schemas.Boolean, // ditto for the recycling bins
+  binFillGeneral: Schemas.Int,     // deposits into the general stream this round (visual fill + full at BIN_STREAM_CAPACITY)
+  binFillRecycle: Schemas.Int,     // ditto for the recycling stream
 })
 
 ClutterSync.validateBeforeChange((v) => v.senderAddress === AUTH_SERVER_PEER_ID)

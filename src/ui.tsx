@@ -12,7 +12,7 @@ import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
-import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling } from './client/carrySystem'
+import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
@@ -430,8 +430,16 @@ export function triggerRoundStartIntro() {
   themeStoryStartMs = Date.now()
 }
 
+// Career-storage health, mirrored for the admin panel. A silent persistence
+// failure (stale jsonbin creds after a Creator Hub re-point) once cost real
+// careers on every republish — this line makes the failure visible in-world.
+let storageStatus: { backend: string; loadConfirmed: boolean; lastSaveOk: boolean | null; lastSaveMs: number } | null = null
+
 export function setupUi() {
   checkAdmin()
+  room.onMessage('storageStatus', (data) => {
+    try { storageStatus = JSON.parse(data.statusJson) } catch { storageStatus = null }
+  })
   ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: VIRTUAL_W, virtualHeight: VIRTUAL_H })
 }
 
@@ -467,9 +475,13 @@ function CarryChip({ S }: { S: number }) {
           uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.72 } }}
         >
           <Label
-            value="HAULING THE FULL BAG — dumpster is outside!"
+            value={getHaulStage() === 'back'
+              ? 'BIN EMPTIED — put it back at its station!'
+              : 'HAULING THE FULL BIN — dumpster is outside!'}
             fontSize={Math.round(26 * S)}
-            color={{ r: 1, g: 0.82, b: 0.25, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }}
+            color={getHaulStage() === 'back'
+              ? { r: 0.4, g: 0.95, b: 0.5, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }
+              : { r: 1, g: 0.82, b: 0.25, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }}
           />
         </UiEntity>
       </UiEntity>
@@ -1657,6 +1669,25 @@ const uiBody = () => {
             color={ADMIN_COLOR}
             uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
           />
+          {/* Persistence health — red until careers are provably being saved. */}
+          {(() => {
+            const s = storageStatus
+            const text = !s ? 'storage: …'
+              : s.backend === 'storage' ? 'storage: DCL (WIPES ON REPUBLISH!)'
+              : !s.loadConfirmed ? 'storage: jsonbin — LOAD FAILED'
+              : s.lastSaveOk === false ? 'storage: jsonbin — SAVE FAILED'
+              : s.lastSaveOk === true ? `storage: jsonbin ✓ saved ${Math.max(0, Math.round((Date.now() - s.lastSaveMs) / 60000))}m ago`
+              : 'storage: jsonbin ✓ loaded, no saves yet'
+            const healthy = s !== null && s.backend === 'jsonbin' && s.loadConfirmed && s.lastSaveOk !== false
+            return (
+              <Label
+                value={text}
+                fontSize={Math.round(ADMIN_BTN_FONT * 0.95)}
+                color={healthy ? { r: 0.4, g: 0.95, b: 0.5, a: 1 } : { r: 1, g: 0.35, b: 0.3, a: 1 }}
+                uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
+              />
+            )
+          })()}
           {/* Testing grants/sinks — money both ways, and rank up/down (XP jumps to
               the next title, or back to the floor of the previous one). */}
           <Button

@@ -14,6 +14,7 @@ import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, Upgra
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
+  progressStorageStatus, setCareersRestoredHandler,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -373,12 +374,19 @@ const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in
 
 // ── Dumpster haul loop ────────────────────────────────────────────────────────
 // Per-stream deposit tally for the round; at BIN_STREAM_CAPACITY that stream's
-// bins overflow and refuse deposits until someone hauls the bag to a dumpster.
+// bins overflow and refuse deposits until someone hauls A BIN to a dumpster.
+// The haul is a physical round trip: the clicked bin VANISHES from its station
+// into the hauler's hands ('out'), gets emptied at the dumpster (stream
+// unlocks), then must be carried home ('back') — the bonus banks on return.
 const binFill = { general: 0, recycle: 0 }
-const haulingBy    = new Map<string, RubbishType>()   // address → stream being hauled
-const streamHauler = new Map<RubbishType, string>()   // stream → who has its bag
+type Haul = { stream: RubbishType; binName: string; stage: 'out' | 'back' }
+const haulingBy    = new Map<string, Haul>()          // address → haul in progress
+const streamHauler = new Map<RubbishType, string>()   // stream → who took its bin
 const haulBonuses  = new Map<string, number>()        // address → banked haul pay
 const binStreamFull = (s: RubbishType): boolean => binFill[s] >= BIN_STREAM_CAPACITY
+// Scene bin models, discovered server-side so their Transforms can be hidden/
+// restored authoritatively (CRDT propagates the vanish to every client).
+const serverBins = new Map<string, { entity: Entity; type: RubbishType; base: { x: number; y: number; z: number } }>()
 
 // itemId → stream, classified from the scene Name at discovery (see initServer).
 const rubbishTypes = new Map<string, RubbishType>()
@@ -482,10 +490,21 @@ function sendCarried(address: string): void {
       carriedRecycle: load?.recycle ?? 0,
       capacity:       carryCapacityFor(address),
       portableLeft:   portableLeftFor(address),
-      hauling:        haulingBy.get(address) ?? '',
+      hauling:        haulingBy.get(address)?.stream ?? '',
+      haulStage:      haulingBy.get(address)?.stage ?? '',
+      haulBinName:    haulingBy.get(address)?.binName ?? '',
     },
     { to: [address] },
   )
+}
+
+/** Hide or restore a hauled bin at its station (server-authoritative). */
+function setBinAtStation(binName: string, present: boolean): void {
+  const bin = serverBins.get(binName)
+  if (!bin) return
+  const tf = Transform.getMutableOrNull(bin.entity)
+  if (!tf) return
+  tf.scale = present ? { ...bin.base } : { x: 0.001, y: 0.001, z: 0.001 }
 }
 
 // ── Shift contracts ───────────────────────────────────────────────────────────
@@ -725,6 +744,20 @@ export function initServer() {
     console.log(`[SERVER] theme model scales: ${report.join(' ')}`)
   }
 
+  // ── Bin models (server-side) — hauled bins vanish/return authoritatively ────
+  for (const [entity] of engine.getEntitiesWith(Name)) {
+    const n = Name.get(entity).value
+    const t: RubbishType | null =
+      n.startsWith('Bin_General') ? 'general' : n.startsWith('Bin_Recycling') ? 'recycle' : null
+    if (!t) continue
+    const tf = Transform.getOrNull(entity)
+    serverBins.set(n, {
+      entity, type: t,
+      base: tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : { x: 1, y: 1, z: 1 },
+    })
+  }
+  console.log(`[SERVER] tracked ${serverBins.size} bin models for the haul loop`)
+
   // ── Themed-round spawn slots ─────────────────────────────────────────────────
   // Server-created entities whose Transform + GltfContainer + ClutterSync all
   // replicate over CRDT — clients render the models and late joiners get the
@@ -825,6 +858,14 @@ export function initServer() {
     return n === 0 ? 0 : total / n
   }
   setCrewPowerProvider(crewPowerNow)
+
+  // Boot-race career restores (see playerProgress): the affected player — after
+  // a republish, almost always the owner testing — gets their real career
+  // pushed the moment the merge lands, plus fresh plates for everyone.
+  setCareersRestoredHandler((addresses) => {
+    for (const a of addresses) sendProgress(a)
+    broadcastRanks()
+  })
 
   // ── Themed spawn roller — called by RoundManager inside every round's mask ────
   // Parks all slots, then places countMin..countMax random models at anchors
@@ -1031,6 +1072,8 @@ export function initServer() {
     portableUsed.clear()
     binFill.general = 0
     binFill.recycle = 0
+    // Any bin still in someone's hands snaps home for the fresh shift.
+    for (const [, haul] of haulingBy) setBinAtStation(haul.binName, true)
     haulingBy.clear()
     streamHauler.clear()
     haulBonuses.clear()   // unbanked haul pay dies with the old round
@@ -1137,8 +1180,18 @@ export function initServer() {
     executeTask(async () => {
       await saveProgress()
       await saveLeaderboard()
+      // Fresh save just happened (or just failed) — tell every admin panel.
+      broadcastStorageStatus()
     })
   })
+
+  // Career-storage health → clients (admin panel line). Broadcast is fine: the
+  // payload is tiny and only admins render it.
+  function broadcastStorageStatus(address?: string): void {
+    const payload = { statusJson: JSON.stringify(progressStorageStatus()) }
+    if (address) room.send('storageStatus', payload, { to: [address] })
+    else room.send('storageStatus', payload)
+  }
 
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
   // ensureLeaderboardLoaded() guarantees only one load ever runs, even if registerPlayer
@@ -1211,13 +1264,14 @@ export function initServer() {
     activePlayers.delete(sessionId)
     signedUp.delete(sessionId)
     contracts.delete(sessionId)
-    // A hauler leaving returns the bag: the stream stays full and anyone else
-    // can shoulder it (unlike carriedRubbish, keeping this would deadlock the
-    // stream — nobody could ever take the bag again).
-    const hauledStream = haulingBy.get(sessionId)
-    if (hauledStream) {
+    // A hauler leaving puts the bin back at its station: anyone else can take
+    // over (unlike carriedRubbish, keeping this would deadlock the stream —
+    // the bin would be gone forever).
+    const haul = haulingBy.get(sessionId)
+    if (haul) {
       haulingBy.delete(sessionId)
-      streamHauler.delete(hauledStream)
+      streamHauler.delete(haul.stream)
+      setBinAtStation(haul.binName, true)
     }
     onPlayerLeave()
   }
@@ -1465,12 +1519,13 @@ export function initServer() {
   // there), and a spectator's deposit is simply a no-op.
   // A bin only accepts its own stream — the general count survives a recycling
   // deposit and vice versa, which is what makes sorting a real decision.
-  // GameState's bin-full flags are owned here (RoundManager's sync only writes
-  // the fields it knows, so these persist between its ticks).
+  // GameState's bin-fill levels are owned here (RoundManager's sync only writes
+  // the fields it knows, so these persist between its ticks). Levels, not
+  // booleans: clients render the junk piling up and the pre-overflow stink.
   function syncBinFull(): void {
     const gs = GameState.getMutable(gameStateEntity)
-    gs.binFullGeneral = binStreamFull('general')
-    gs.binFullRecycle = binStreamFull('recycle')
+    gs.binFillGeneral = binFill.general
+    gs.binFillRecycle = binFill.recycle
   }
 
   room.onMessage('depositRubbish', (data, context) => {
@@ -1487,8 +1542,8 @@ export function initServer() {
     if (load[stream] > 0) {
       bumpContract(context.from, ['deposits'])
       binFill[stream] += load[stream]
+      syncBinFull()   // every deposit — clients render the pile growing
       if (binStreamFull(stream)) {
-        syncBinFull()
         console.log(`[CARRY] ${stream} bins FULL (${binFill[stream]}) — haul needed`)
       }
     }
@@ -1496,38 +1551,55 @@ export function initServer() {
     sendCarried(context.from)
   })
 
-  // Shoulder the full bag from an overflowing stream. Empty hands only — the
-  // bag IS the load — and one bag per stream at a time.
+  // Pick up an overflowing BIN. Empty hands only — the bin IS the load — and
+  // one bin per stream at a time. The named bin vanishes from its station.
   room.onMessage('takeFullBag', (data, context) => {
     if (!context) return
     const address = context.from
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
+    const bin = serverBins.get(data.binName)
     if (getPhase() !== 'playing' || !activePlayers.has(address)) return
+    if (!bin || bin.type !== stream) { sendCarried(address); return }
     if (!binStreamFull(stream) || haulingBy.has(address) || streamHauler.has(stream)) {
       sendCarried(address)
       return
     }
     if (carriedTotal(address) > 0) { sendCarried(address); return }
-    haulingBy.set(address, stream)
+    haulingBy.set(address, { stream, binName: data.binName, stage: 'out' })
     streamHauler.set(stream, address)
+    setBinAtStation(data.binName, false)
     sendCarried(address)
-    console.log(`[CARRY] ${address.slice(0, 8)} took the ${stream} bag — off to the dumpster`)
+    console.log(`[CARRY] ${address.slice(0, 8)} took bin '${data.binName}' — off to the dumpster`)
   })
 
-  // Empty the hauled bag into a dumpster — unlocks the stream, banks the bonus.
+  // Empty the hauled bin into a dumpster — the stream unlocks immediately
+  // (other bins of the stream take deposits again), but the EMPTY bin is still
+  // in hand: the return leg completes the trip and banks the bonus.
   room.onMessage('dumpsterEmpty', (_data, context) => {
     if (!context) return
     const address = context.from
-    const stream = haulingBy.get(address)
-    if (!stream) { sendCarried(address); return }
-    haulingBy.delete(address)
-    streamHauler.delete(stream)
-    binFill[stream] = 0
+    const haul = haulingBy.get(address)
+    if (!haul || haul.stage !== 'out') { sendCarried(address); return }
+    haul.stage = 'back'
+    streamHauler.delete(haul.stream)
+    binFill[haul.stream] = 0
     syncBinFull()
-    haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
     bumpContract(address, ['deposits'])   // a dumpster run is the deposit of deposits
     sendCarried(address)
-    console.log(`[CARRY] ${address.slice(0, 8)} emptied the ${stream} bag — +$${HAUL_BONUS} banked`)
+    console.log(`[CARRY] ${address.slice(0, 8)} emptied bin '${haul.binName}' — bringing it home`)
+  })
+
+  // Set the emptied bin back at its station — round trip complete, bonus banked.
+  room.onMessage('returnBin', (_data, context) => {
+    if (!context) return
+    const address = context.from
+    const haul = haulingBy.get(address)
+    if (!haul || haul.stage !== 'back') { sendCarried(address); return }
+    haulingBy.delete(address)
+    setBinAtStation(haul.binName, true)
+    haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
+    sendCarried(address)
+    console.log(`[CARRY] ${address.slice(0, 8)} returned bin '${haul.binName}' — +$${HAUL_BONUS} banked`)
   })
 
   // Portable Bin: empty on the spot, limited uses per shift. Both the level and
@@ -1561,6 +1633,13 @@ export function initServer() {
     // Fallback enter-trigger for players who teleport directly into the scene
     // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
     heartbeat(address)   // covers reconnect-grace re-enrollment (see playerEntered)
+
+    // Storage health for this joiner's admin panel (waits a beat so the load
+    // has usually resolved a backend by the time it reports).
+    executeTask(async () => {
+      await ensureProgressLoaded().catch(() => {})
+      broadcastStorageStatus(address)
+    })
 
     executeTask(async () => {
       // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,

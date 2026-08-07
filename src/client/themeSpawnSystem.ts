@@ -73,7 +73,8 @@ function updateDisasterMarker(live: boolean, at: { x: number; y: number; z: numb
       disasterMarker = engine.addEntity()
       TextShape.create(disasterMarker, {
         text: 'DISASTER ZONE',
-        fontSize: 4,
+        // 2.5, was 4 — the big version clipped into walls (playtest).
+        fontSize: 2.5,
         textColor: Color4.create(1, 0.82, 0.25, 1),
         outlineColor: Color4.Black(),
         outlineWidth: 0.15,
@@ -296,7 +297,9 @@ export function initThemeSpawnSystem() {
         enableClick(state.itemId)
       }
     }
-    updateDisasterMarker(disasterLive, disasterAt)
+    // Beacon only during active play — an unfinished disaster used to keep it
+    // floating through the whole intermission.
+    updateDisasterMarker(disasterLive && getPhase() === 'playing', disasterAt)
   })
 
   // ── Phase gate — pointer events only live while players can clean ────────────

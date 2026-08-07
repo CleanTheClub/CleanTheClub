@@ -21,10 +21,10 @@ import { isActive, isKnown } from './participation'
 // mobile a tight radius reads as "the game ignored my tap". VERTICAL stays tight,
 // which is what actually prevents cleaning through a floor (the club's storeys
 // are ~7.3m apart), so the through-geometry protection survives the loosening.
-// 2.5m (playtest-tuned: 4 felt like arm-stretch cleaning, 1 was too strict —
-// mid-table items went unreachable). With step-to-item retired this gate is
-// the only "walk closer" enforcement, measured player→item-origin, horizontal.
-export const MAX_REACH_M      = 2.5
+// 3.5m (playtest-tuned trajectory: 4 → 1 → 2.5 → 3.5). With step-to-item
+// retired this gate is the only "walk closer" enforcement, measured
+// player→item-origin, horizontal.
+export const MAX_REACH_M      = 3.5
 export const MAX_REACH_VERT_M = 3
 
 // Pointer-event maxDistance is measured from the CAMERA, not the player — and

@@ -264,7 +264,9 @@ function syncGameState() {
   // scaled total here tunes every display and consequence at once. Cleaned is
   // capped so the bar can't read past 100% on an over-delivering solo shift.
   const demanded  = demandedTotal()
-  gs.cleanedCount = Math.min(countCleaned(), demanded)
+  // During the spawn-in beat everything is hidden — an empty club would read
+  // as 100% clean and flash the bar full for the roulette's duration.
+  gs.cleanedCount = spawningIn ? 0 : Math.min(countCleaned(), demanded)
   gs.totalCount   = demanded
   gs.secondsLeft  = phase === 'playing'
     ? lastCallStartMs > 0
@@ -301,6 +303,22 @@ function resetClutter() {
     cs.cleanedBy = ''
   }
   onRestoreScales?.()
+}
+
+// ── Spawn-in beat ─────────────────────────────────────────────────────────────
+// A round opens on a CLEAN club while the roulette spins; the night's mess
+// spawns in as the theme reveals ("have the roulette with no rubbish in the
+// scene, then spawn the rubbish in to match" — playtest request). While
+// `spawningIn` is true everything reads as hidden and the last-call check and
+// cleanliness bar are suppressed — an empty club is 100% clean by accident.
+const SPAWN_IN_DELAY_MS = 2_600   // roulette (~1.6s) + a breath
+let spawningIn = false
+let spawnInTimer: ReturnType<typeof setTimeout> | null = null
+
+function hideAllClutter() {
+  for (const [, entity] of itemEntities) {
+    ClutterSync.getMutable(entity).isCleaned = true
+  }
 }
 
 function triggerOpen() {
@@ -353,12 +371,24 @@ function startNextRound(fullReset: boolean) {
   currentOutcome  = ''
   lastCallStartMs = 0
   earlyCloseS     = 0
-  // Theme rolls BEFORE resetClutter/mask, and before onRoundStart below — the
-  // contract roll in that handler filters by the round's theme.
+  // Theme rolls at round START (clients need gs.theme for the roulette), but
+  // the mess itself arrives after the spawn-in beat: the club opens CLEAN while
+  // the wheel spins, then the night's clutter appears to match the reveal.
   currentTheme = rollTheme()
   if (currentTheme !== '') lastThemeId = currentTheme
-  resetClutter()
-  applyThemeMask()
+  hideAllClutter()
+  spawningIn = true
+  if (spawnInTimer) clearTimeout(spawnInTimer)
+  spawnInTimer = setTimeout(() => {
+    spawnInTimer = null
+    spawningIn   = false
+    resetClutter()
+    applyThemeMask()
+    // Contracts + participation land WITH the mess (the roller must run first:
+    // the disaster contract's availability flag is set by the spawn roll).
+    onRoundStart?.(roundNumber)
+    syncGameState()
+  }, SPAWN_IN_DELAY_MS)
   phase = 'playing'
 
   if (playerCount > 0) {
@@ -371,10 +401,6 @@ function startNextRound(fullReset: boolean) {
     console.log('[ROUND] No players — round timer paused until first player enters')
   }
 
-  // Promote anyone who signed up during the intermission BEFORE syncing state, so
-  // the first frame of the round already reflects who is cleaning.
-  onRoundStart?.(roundNumber)
-
   syncGameState()
 }
 
@@ -384,6 +410,8 @@ function goToLobby() {
   clearAllRespawns()
   if (roundTimer) { clearTimeout(roundTimer); roundTimer = null }
   if (startCountdownTimer) { clearTimeout(startCountdownTimer); startCountdownTimer = null }
+  if (spawnInTimer) { clearTimeout(spawnInTimer); spawnInTimer = null }
+  spawningIn = false
   roundNumber        = 0
   isFinale           = false
   currentOutcome     = ''
@@ -579,7 +607,7 @@ export function initRoundManager(
     // 20s for the round to end"). The grace window exists because cleanliness
     // counts at PICKUP — hands are full at the moment 100% lands, and an
     // instant end would void the bin run (and any deposits contract).
-    if (phase === 'playing' && lastCallStartMs === 0 && roundStartMs !== 0
+    if (phase === 'playing' && !spawningIn && lastCallStartMs === 0 && roundStartMs !== 0
         && countCleaned() >= demandedTotal()) {
       startLastCall()
     }
