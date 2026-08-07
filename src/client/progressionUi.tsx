@@ -224,6 +224,15 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
   )
 }
 
+/** Next-shift countdown colour — white, gold inside 10s, pulsing orange inside
+ *  5s. Shared by the payout card and ui.tsx's fallback chip so the clock reads
+ *  the same wherever it lives. */
+export function countdownColor(seconds: number): Color4 {
+  if (seconds <= 5)  return Color4.create(1, 0.45, 0.25, 0.7 + 0.3 * Math.sin(Date.now() / 150))
+  if (seconds <= 10) return GOLD
+  return WHITE
+}
+
 // ── Payout card dismissal ─────────────────────────────────────────────────────
 // The X hides the card for the REST of this intermission only — the next payout
 // (different timestamp) shows it again. ui.tsx keeps the next-shift countdown
@@ -442,6 +451,7 @@ export function ShiftPayoutPanel(
           GOLD,
         )}
         {(shift.disasterBonus ?? 0) > 0 && row('Disaster cleared', `+${money(shift.disasterBonus!)}`, GOLD)}
+        {(shift.haulBonus ?? 0) > 0 && row('Dumpster runs', `+${money(shift.haulBonus!)}`, GOLD)}
         {shift.contractLabel && (shift.contractDone
           ? row(shift.contractLabel, `+${money(shift.contractBonus)}`, theme.colors.success)
           : row(shift.contractLabel, 'missed', SUBTLE))}
@@ -481,11 +491,12 @@ export function ShiftPayoutPanel(
 
         {/* Countdown lives here too — it used to be a separate line in the HUD
             strip, which is the other half of what made the intermission read as
-            two competing UIs. */}
+            two competing UIs. Colour ramps as it runs out (playtest: subtle
+            grey didn't register as a clock). */}
         <Label
           value={`Next shift in 0:${seconds < 10 ? '0' : ''}${seconds}`}
           fontSize={Math.round(18 * Z)}
-          color={SUBTLE}
+          color={countdownColor(seconds)}
           uiTransform={{ margin: { top: Math.round(10 * Z) } }}
         />
 

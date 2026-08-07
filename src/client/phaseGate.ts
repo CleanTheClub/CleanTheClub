@@ -21,12 +21,10 @@ import { isActive, isKnown } from './participation'
 // mobile a tight radius reads as "the game ignored my tap". VERTICAL stays tight,
 // which is what actually prevents cleaning through a floor (the club's storeys
 // are ~7.3m apart), so the through-geometry protection survives the loosening.
-// 1m (playtest request, was 4): stand basically AT the item to clean it. With
-// step-to-item retired this gate is the only "walk closer" enforcement, and
-// tighter reach makes positioning part of the skill. WATCH ITEM: if mid-table
-// or mid-sofa items become unreachable (player can't get within 1m of their
-// centre), bump toward 1.5–2 — measured from the avatar to the item's origin.
-export const MAX_REACH_M      = 1
+// 2.5m (playtest-tuned: 4 felt like arm-stretch cleaning, 1 was too strict —
+// mid-table items went unreachable). With step-to-item retired this gate is
+// the only "walk closer" enforcement, measured player→item-origin, horizontal.
+export const MAX_REACH_M      = 2.5
 export const MAX_REACH_VERT_M = 3
 
 // Pointer-event maxDistance is measured from the CAMERA, not the player — and

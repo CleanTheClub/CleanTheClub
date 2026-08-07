@@ -111,6 +111,7 @@ export const OUTCOME_ADEQUATE = 0.5
 //                null = any contract.
 
 export type ThemeId = '' | 'pizzaParty' | 'cocktailNight' | 'movieNight' | 'henStagDo' | 'walkout'
+  | 'lostProperty' | 'paparazzi' | 'breakage' | 'springCleaning'
 export type ItemCategory = 'general' | 'recycle' | 'glasses' | 'sticky' | 'reset'
 
 // Extra themed mess, scattered at random each themed round. The server samples
@@ -153,8 +154,44 @@ export const themeModelSrc = (model: string): string => `assets/scene/Models/${m
 export const TIGHT_ANCHOR_PARTS = ['glass', 'bottle', 'drink', 'wine']
 // Models small enough for a tight spot; everything else is open-anchor only:
 export const THEME_SMALL_MODELS = new Set([
-  'drink', 'brokenBottle', 'polaroidA', 'polaroidB', 'tie', 'sock', 'sockB',
+  'drink', 'brokenBottle', 'polaroidA', 'polaroidB', 'polaroidC', 'polaroidD', 'polaroidE',
+  'tie', 'sock', 'sockB', 'phone', 'keys', 'camera',
+  'brokenGlass', 'reallyBrokenGlass', 'glassesBroken',
 ])
+
+// Multi-tap collection: model-name fragment → taps required. EMPTY for now —
+// v1 failed playtest on two counts: it only applied to THEMED spawns (scene
+// popcorn stayed one-click — interactions must follow the item TYPE, not the
+// spawn source) and had no visual feedback ("no feedback or anything to tell
+// me"). Superseded by Rhythm Pop below; machinery kept in case other models
+// ever want plain multi-tap.
+export const TAP_TAP_MODELS: Record<string, number> = {}
+
+// ── Rhythm Pop (popcorn) ──────────────────────────────────────────────────────
+// Clicking ANY popcorn — scene-placed or theme-spawned, one rule per item type —
+// starts a 3-beat circular rhythm: a ring shrinks onto a POP! disc each beat,
+// tap as it lands (desktop: click anywhere; mobile: the POP! button). Hits are
+// bonus mastery (3/3 = PERFECT + streak); the popcorn cleans when the beats end
+// no matter what — the minigame can slow you down, never lock you out.
+export const POP_NAME_PART   = 'popcorn'
+export const POP_BEATS       = 3
+export const POP_BEAT_MS     = 700
+// Tap counts as a HIT in the last 35% of the ring's fall (~245ms at 700ms
+// beats). MUST equal the moment the disc/ring turn gold in ui.tsx — playtest:
+// with the visual cue on a different threshold than the judgement, players
+// couldn't tell why they hit or missed. The gold IS the window.
+export const POP_HIT_T       = 0.65
+export const POP_FIRST_GRACE_MS = 150 // the click that STARTED the rhythm can't judge beat 1
+
+// ── Dumpster haul loop ────────────────────────────────────────────────────────
+// Bins have a per-STREAM capacity per round (deposits don't identify stations —
+// bins are interchangeable, so "the general bins are full" is club-wide state).
+// A full stream refuses deposits until someone with EMPTY hands clicks a bin,
+// shoulders the big bag, and hauls it to a dumpster outside the club. The
+// hauler is paid on the shift payout.
+export const BIN_STREAM_CAPACITY = 30
+export const HAUL_BONUS          = 15
+export const DUMPSTER_PREFIX     = 'Dumpster'
 
 // ── Disaster spots ────────────────────────────────────────────────────────────
 // The "boss mess": one big multi-stage clean per round (sometimes). Three verbs
@@ -222,6 +259,46 @@ export const THEME_DEFS: RoundThemeDef[] = [
     // Walkout always spawns a disaster, so its contract pool can lean on it.
     contractKinds: ['deposits', 'disaster'],
     spawns: { models: ['bigRubbishBag'], countMin: 10, countMax: 14 },
+  },
+  {
+    id: 'lostProperty',
+    title: 'LOST PROPERTY NIGHT',
+    blurb: 'The cloakroom exploded. Phones, keys, and one shoe. Always one shoe.',
+    categories: ['general', 'sticky'],
+    contractKinds: ['general'],
+    spawns: { models: ['phone', 'keys', 'camera', 'brokenShoe'], countMin: 14, countMax: 20 },
+    keepRubbishNames: ['phone', 'keys', 'camera', 'shoe', 'sock', 'tie', 'bra'],
+  },
+  {
+    id: 'paparazzi',
+    title: 'PAPARAZZI NIGHT',
+    blurb: 'A celebrity dropped by. The floor is 90% flash photography.',
+    categories: ['general', 'recycle', 'sticky'],
+    contractKinds: ['recycle'],
+    spawns: { models: ['polaroidA', 'polaroidB', 'polaroidC', 'polaroidD', 'polaroidE', 'camera'], countMin: 16, countMax: 24 },
+    keepRubbishNames: ['polaroid', 'camera', 'napkin'],
+  },
+  {
+    id: 'breakage',
+    title: 'BREAKAGE NIGHT',
+    blurb: "A shelf gave way. Mind your step — it's all glass out there.",
+    categories: ['glasses', 'recycle', 'sticky'],
+    contractKinds: ['glasses', 'recycle'],
+    // These only spawn once each has a CH placement (the scale rule) — the
+    // boot log lists any still EXCLUDED.
+    spawns: { models: ['brokenGlass', 'reallyBrokenGlass', 'glassesBroken', 'brokenBottle'], countMin: 14, countMax: 20 },
+    keepRubbishNames: ['glass', 'bottle'],
+  },
+  {
+    // BOSS ROUND — every milestone round (5th, 10th, …) IS spring cleaning:
+    // only mopping, everywhere. Never in the random pool (RoundManager pins it
+    // to milestones); admin cycle can still force it for testing.
+    id: 'springCleaning',
+    title: 'SPRING CLEANING',
+    blurb: 'Deep clean! Management wants every inch of this club mopped.',
+    categories: ['sticky'],
+    contractKinds: ['sticky'],
+    spawns: { models: ['StickyPatch', 'StickyPatchB'], countMin: 14, countMax: 18 },
   },
 ]
 

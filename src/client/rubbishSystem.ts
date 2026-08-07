@@ -14,6 +14,8 @@ import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { startPopRhythm } from './InteractionManager'
+import { POP_NAME_PART } from '../shared/config'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
@@ -76,6 +78,9 @@ let items: ReturnType<typeof discoverRubbish> = []
 
 // itemId → recycling stream, so the hover prompt teaches the sort before pickup.
 const rubbishTypes = new Map<string, RubbishType>()
+// Scene popcorn — collected via the Rhythm Pop minigame, same as spawned popcorn
+// (one interaction rule per item TYPE, regardless of where the item came from).
+const popcornIds = new Set<string>()
 
 function setVisible(itemId: string, visible: boolean) {
   const rec = gltfRecords.get(itemId)
@@ -128,6 +133,21 @@ function enableClick(itemId: string) {
       if (pendingCleans.has(itemId)) return
       const pos = Transform.getOrNull(containerEntity)?.position
       if (!withinReach(pos)) { maybeShowTooFarToast(); return }
+      // Popcorn detours through the Rhythm Pop beats; the clean itself then
+      // runs the identical path below (re-checked — the item may have been
+      // cleaned by someone else, or the round ended, while the beats played).
+      if (popcornIds.has(itemId)) {
+        startPopRhythm(itemId, () => {
+          if (pendingCleans.has(itemId) || lastState.get(itemId) === true) return
+          if (getPhase() === 'open' || isCarryFull()) return
+          performClean()
+        })
+        return
+      }
+      performClean()
+
+      function performClean() {
+      if (!rec) return   // narrowing doesn't cross the function boundary
       pendingCleans.add(itemId)
       noteCarriedModel(GltfContainer.getOrNull(containerEntity)?.src)
       registerSpreeHit()
@@ -168,6 +188,7 @@ function enableClick(itemId: string) {
         }
         if (pos) playSparkle(pos)
       })
+      }
     }
   )
 }
@@ -179,7 +200,9 @@ export function initRubbishSystem() {
   // Classify each item's recycling stream from its scene Name — the same shared
   // classifier the server uses, so the hover text can never lie about the sort.
   for (const { entity, itemId } of items) {
-    rubbishTypes.set(itemId, classifyRubbish(Name.getOrNull(entity)?.value ?? ''))
+    const name = Name.getOrNull(entity)?.value ?? ''
+    rubbishTypes.set(itemId, classifyRubbish(name))
+    if (name.toLowerCase().includes(POP_NAME_PART)) popcornIds.add(itemId)
   }
 
   // On scene (re-)entry clear stale state so the ClutterSync watcher re-applies

@@ -35,6 +35,10 @@ export const Messages = {
   depositRubbish:   Schemas.Map({ binType: Schemas.String }),
   /** Empty on the spot via the Portable Bin upgrade (limited uses per shift). */
   portableEmpty:    Schemas.Map({ dummy: Schemas.Boolean }),
+  /** Shoulder the full bag from an overflowing bin stream (empty hands only). */
+  takeFullBag:      Schemas.Map({ binType: Schemas.String }),
+  /** Empty the hauled bag into a dumpster outside — unlocks the stream. */
+  dumpsterEmpty:    Schemas.Map({ dummy: Schemas.Boolean }),
 
   // ── Server → Client ─────────────────────────────────────────
   cleanRejected:    Schemas.Map({ itemId: Schemas.String }),
@@ -92,6 +96,9 @@ export const Messages = {
     capacity:       Schemas.Int,
     /** Portable Bin self-empties remaining this shift (0 = none / not owned). */
     portableLeft:   Schemas.Int,
+    /** '' | 'general' | 'recycle' — this player is hauling that stream's full
+     *  bag to the dumpster (hands are the bag: pickups blocked meanwhile). */
+    hauling:        Schemas.String,
   }),
 }
 

@@ -27,6 +27,8 @@ export type ShiftPayout = {
   earlySeconds?: number
   /** Disaster-spot finale bonus — this player landed the polish. */
   disasterBonus?: number
+  /** Dumpster-run pay — banked per haul during the round. */
+  haulBonus?: number
   contractLabel: string | null
   contractDone:  boolean
   contractBonus: number

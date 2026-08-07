@@ -12,15 +12,16 @@
 import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
+import { GameState } from '../shared/schemas'
 import { RubbishType } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
+import { DUMPSTER_PREFIX } from '../shared/config'
 import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty } from './progressionStore'
 import { playPickupEmote, setCarryPose } from './emoteManager'
-import { promotionBurst } from './confettiSystem'
 
 // REAL bin models, discovered by name prefix — the placeholder cubes are gone.
 // The scene ships four stations (two per floor), each pairing a Bin_General_N
@@ -343,6 +344,7 @@ let carriedRecycle = 0
 let capacity     = 5      // matches the un-upgraded baseline until the server answers
 let portableLeft = 0      // Portable Bin self-empties remaining this shift
 let known        = false  // no carriedUpdate yet — hide the chip rather than guess
+let hauling: '' | 'general' | 'recycle' = ''   // dumpster bag in hand
 
 // Last deposit (time + size), read by ui.tsx for the "+N BINNED!" flash — a
 // getter rather than a ui import, which would cycle.
@@ -351,15 +353,15 @@ let lastDepositCount = 0
 let lastDepositType: RubbishType = 'general'
 export const getLastDeposit = () => ({ ms: lastDepositMs, count: lastDepositCount, type: lastDepositType })
 
-// Big loads earn a confetti pop on top of the sparkle — daring a fuller bag
-// should feel better than trickling deposits.
-const BIG_DEPOSIT = 8
-
+// No confetti on deposits — REMOVED after two rounds of playtest confusion
+// ("random confetti bursts", then "confetti when I deposit? weird"). The
+// deposit's own feedback is the "+N BINNED!" flash + sound; confetti now only
+// fires for LABELED moments (PERFECT streaks, promotions, purchases, disaster
+// clears), so a burst always has a visible reason on screen.
 function recordDeposit(count: number, type: RubbishType = 'general'): void {
   lastDepositMs    = Date.now()
   lastDepositCount = count
   lastDepositType  = type
-  if (count >= BIG_DEPOSIT) promotionBurst()
 }
 
 export const getCarried        = (): number => carriedGeneral + carriedRecycle
@@ -368,7 +370,17 @@ export const getCarriedRecycle = (): number => carriedRecycle
 export const getCarryCapacity  = (): number => capacity
 export const getPortableLeft   = (): number => portableLeft
 export const isCarryKnown      = (): boolean => known
-export const isCarryFull       = (): boolean => known && carriedGeneral + carriedRecycle >= capacity
+export const getHauling        = (): '' | 'general' | 'recycle' => hauling
+// The dumpster bag counts as full hands — every pickup gate reads this.
+export const isCarryFull       = (): boolean => known && (hauling !== '' || carriedGeneral + carriedRecycle >= capacity)
+
+/** Bin-full flags from GameState — club-wide, server-owned. */
+function binStreamFullClient(type: RubbishType): boolean {
+  for (const [, gs] of engine.getEntitiesWith(GameState)) {
+    return type === 'general' ? gs.binFullGeneral : gs.binFullRecycle
+  }
+  return false
+}
 
 /** Portable Bin: empty on the spot (both streams). Server re-validates. */
 export function requestPortableEmpty(): void {
@@ -384,6 +396,7 @@ export function initCarrySystem(): void {
     carriedRecycle = data.carriedRecycle
     capacity       = data.capacity
     portableLeft   = data.portableLeft
+    hauling        = data.hauling === 'general' || data.hauling === 'recycle' ? data.hauling : ''
     known          = true
     refreshMarkers()
   })
@@ -416,6 +429,15 @@ export function initCarrySystem(): void {
           { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: POINTER_MAX_DIST } },
           () => {
             if (!known) return
+            // Overflowed stream: the bin dispenses its FULL BAG instead of
+            // taking deposits — empty hands shoulder it (the persistent FULL
+            // marker above the station carries the instruction).
+            if (binStreamFullClient(type)) {
+              if (hauling !== '' || getCarried() > 0) { playMissSound(); return }
+              playDepositSound(type)   // bag-grab thunk
+              room.send('takeFullBag', { binType: type })
+              return
+            }
             const inStream = type === 'general' ? carriedGeneral : carriedRecycle
             if (inStream === 0) {
               // Wrong bin (or empty hands): a soft "nope" — the chip's colours
@@ -433,7 +455,77 @@ export function initCarrySystem(): void {
       },
     })
   }
+  // ── Dumpsters — the haul destination outside the club ────────────────────────
+  let dumpsters = 0
+  const dumpsterPositions: Array<{ x: number; y: number; z: number }> = []
+  for (const [entity] of engine.getEntitiesWith(Name)) {
+    if (!Name.get(entity).value.startsWith(DUMPSTER_PREFIX)) continue
+    dumpsters++
+    const p = Transform.getOrNull(entity)?.position
+    if (p) dumpsterPositions.push({ x: p.x, y: p.y, z: p.z })
+    requestSetup({
+      isReady: () => findGltfEntity(entity) !== undefined,
+      run: () => {
+        const gltfEnt = findGltfEntity(entity)
+        if (!gltfEnt) return
+        const clickEnt = setupClickProxy(gltfEnt, false)
+        pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
+        pointerEventsSystem.onPointerDown(
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: POINTER_MAX_DIST } },
+          () => {
+            if (hauling === '') { playMissSound(); return }   // nothing to dump
+            playDepositSound(hauling)
+            const p2 = Transform.getOrNull(entity)?.position
+            if (p2) playSparkle({ x: p2.x, y: p2.y + 1.5, z: p2.z })
+            recordDeposit(1, hauling)
+            room.send('dumpsterEmpty', { dummy: true })
+          },
+        )
+      },
+    })
+  }
+
+  // ── Haul-state markers — billboards carry the instructions, since this module
+  // can't import ui toasts (cycle). One per bin station when a stream overflows;
+  // one per dumpster while YOU are hauling. Toggled by a slow poll.
+  const stationKeys = new Set<string>()
+  const stationMarkerAnchors: Array<{ x: number; y: number; z: number }> = []
+  for (const p of binPositions) {
+    const key = `${Math.round(p.x)}:${Math.round(p.z)}`
+    if (stationKeys.has(key)) continue
+    stationKeys.add(key)
+    stationMarkerAnchors.push(p)
+  }
+  const makeMarker = (p: { x: number; y: number; z: number }, text: string, color: Color4): Entity => {
+    const e = engine.addEntity()
+    Transform.create(e, { position: { x: p.x, y: p.y + 2.4, z: p.z }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
+    TextShape.create(e, { text, fontSize: 3, textColor: color, outlineColor: Color4.Black(), outlineWidth: 0.15 })
+    Billboard.create(e, { billboardMode: 2 })   // BM_Y — yaw only, like nametags
+    return e
+  }
+  const fullMarkers = stationMarkerAnchors.map((p) =>
+    makeMarker(p, 'BINS FULL — EMPTY HANDS,\nGRAB THE BAG!', Color4.create(1, 0.45, 0.25, 1)))
+  const dumpMarkers = dumpsterPositions.map((p) =>
+    makeMarker(p, 'EMPTY THE BAG HERE', Color4.create(1, 0.82, 0.25, 1)))
+
+  let markerAcc = 0
+  engine.addSystem((dt: number) => {
+    markerAcc += dt
+    if (markerAcc < 0.5) return
+    markerAcc = 0
+    const anyFull = binStreamFullClient('general') || binStreamFullClient('recycle')
+    const showFull = anyFull && hauling === ''   // once someone hauls, the shout stops
+    for (const m of fullMarkers) {
+      const tf = Transform.getMutable(m)
+      tf.scale = showFull ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+    }
+    for (const m of dumpMarkers) {
+      const tf = Transform.getMutable(m)
+      tf.scale = hauling !== '' ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+    }
+  })
+
   engine.addSystem(nudgeSystem)
   engine.addSystem(refusePulseSystem)
-  console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations`)
+  console.log(`[CARRY] wired ${found} bin models across ${binPositions.length} stations, ${dumpsters} dumpsters`)
 }

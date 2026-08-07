@@ -6,7 +6,7 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS } from '../shared/config'
+import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_STREAM_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, getRoundNumber, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
@@ -294,7 +294,7 @@ function scheduleLbUpdate(): void {
 type LastShift = {
   money: number; xp: number; passed: boolean; items: number
   grade: string; tip: number
-  earlyBonus: number; earlySeconds: number; disasterBonus: number
+  earlyBonus: number; earlySeconds: number; disasterBonus: number; haulBonus: number
   contractLabel: string | null; contractDone: boolean; contractBonus: number
   openingBonus: boolean; streakDays: number; streakXp: number; newBest: boolean
 }
@@ -371,6 +371,15 @@ const activeSessions = new Set<string>()
 type CarriedLoad = { general: number; recycle: number }
 const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in hand
 
+// ── Dumpster haul loop ────────────────────────────────────────────────────────
+// Per-stream deposit tally for the round; at BIN_STREAM_CAPACITY that stream's
+// bins overflow and refuse deposits until someone hauls the bag to a dumpster.
+const binFill = { general: 0, recycle: 0 }
+const haulingBy    = new Map<string, RubbishType>()   // address → stream being hauled
+const streamHauler = new Map<RubbishType, string>()   // stream → who has its bag
+const haulBonuses  = new Map<string, number>()        // address → banked haul pay
+const binStreamFull = (s: RubbishType): boolean => binFill[s] >= BIN_STREAM_CAPACITY
+
 // itemId → stream, classified from the scene Name at discovery (see initServer).
 const rubbishTypes = new Map<string, RubbishType>()
 
@@ -386,8 +395,7 @@ const itemNames          = new Map<string, string>()
 // what that model should spawn at (playtest: scale-1 spawns were visibly wrong
 // for models the user had scaled in the editor). Longest-first so 'pizzaEaten'
 // wins over 'pizza' and 'sockB' over 'sock'. Default 1 when never hand-placed.
-const ALL_THEME_MODELS = THEME_DEFS
-  .flatMap((t) => t.spawns?.models ?? [])
+const ALL_THEME_MODELS = [...new Set(THEME_DEFS.flatMap((t) => t.spawns?.models ?? []))]
   .sort((a, b) => b.length - a.length)
 const themeModelScales = new Map<string, { x: number; y: number; z: number }>()
 
@@ -400,8 +408,10 @@ function carryStreamFor(itemId: string): RubbishType | null {
   if (itemId.startsWith(GLASS_ID_PREFIX) || itemId.startsWith(BOTTLE_ID_PREFIX)) return 'recycle'
   // Themed extras classify by their MODEL name through the same shared
   // classifier as scene rubbish (pizza → general, drink/bottle → recycle).
+  // Spring-cleaning sticky spawns are MOP work — carried by nobody.
   if (itemId.startsWith(THEME_SLOT_PREFIX)) {
     const model = themeSlotModels.get(itemId)
+    if (model && model.toLowerCase().includes('sticky')) return null
     return model ? classifyRubbish(model) : 'general'
   }
   // Disaster pile bits are hauled junk (they fill hands like rubbish); the
@@ -472,6 +482,7 @@ function sendCarried(address: string): void {
       carriedRecycle: load?.recycle ?? 0,
       capacity:       carryCapacityFor(address),
       portableLeft:   portableLeftFor(address),
+      hauling:        haulingBy.get(address) ?? '',
     },
     { to: [address] },
   )
@@ -550,9 +561,11 @@ function contractKindsFor(itemId: string): ContractKind[] {
   if (stream === 'recycle') kinds.push('recycle')
   if (itemId.startsWith(GLASS_ID_PREFIX))  kinds.push('glasses')
   if (itemId.startsWith(STICKY_ID_PREFIX)) kinds.push('sticky')
-  // Cocktail-night drinkware counts toward glasses contracts like scene glasses.
+  // Cocktail-night drinkware counts toward glasses contracts like scene glasses;
+  // spring-cleaning sticky spawns advance mop contracts like scene patches.
   const model = themeSlotModels.get(itemId)
   if (model && (model.includes('drink') || model.includes('glass'))) kinds.push('glasses')
+  if (model && model.toLowerCase().includes('sticky')) kinds.push('sticky')
   // Every disaster stage advances the disaster contract (5 stages = target 5).
   if (itemId.startsWith(DISASTER_PREFIX)) kinds.push('disaster')
   return kinds
@@ -600,8 +613,9 @@ export function initServer() {
 
   const itemEntities    = new Map<string, Entity>()
   const sceneItemScales = new Map<string, { x: number; y: number; z: number }>()
-  // Name + scale of every discovered hand-placed item — theme spawn scale source.
-  const themeScaleSamples: Array<{ name: string; scale: { x: number; y: number; z: number } }> = []
+  // Every hand-placed sample for theme spawn scales. `model` (GLB src basename)
+  // is the reliable identity; `name` (entity Name) is the legacy fallback.
+  const themeScaleSamples: Array<{ name: string; model?: string; scale: { x: number; y: number; z: number } }> = []
   // Discovery-time positions of scene items, for the vacuum's proximity sweep.
   const sceneItemPositions = new Map<string, { x: number; y: number; z: number }>()
   let enumId = 1
@@ -657,6 +671,25 @@ export function initServer() {
     }
   }
 
+  // CH-scale samples from EVERY GLB placement in the scene — not only the
+  // cleanable groups, and identified by the MODEL FILE it renders, not its
+  // entity Name: the user's placed brokenGlass is *named* "Wine Glass_2" (CH
+  // auto-naming), so name matching missed it. The src basename is the true
+  // identity, and exact matching also stops brokenGlass samples polluting
+  // reallyBrokenGlass. Parked / hidden entities (scale ≈ 0) are skipped.
+  for (const [entity] of engine.getEntitiesWith(GltfContainer, Transform)) {
+    const src  = GltfContainer.get(entity).src.toLowerCase()
+    const base = src.split('/').pop()?.replace('.glb', '').replace('.gltf', '') ?? ''
+    if (!base) continue
+    const tf = Transform.getOrNull(entity)
+    if (!tf || tf.scale.x <= 0.011) continue
+    themeScaleSamples.push({
+      name:  (Name.getOrNull(entity)?.value ?? '').toLowerCase(),
+      model: base,
+      scale: { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z },
+    })
+  }
+
   // ── Theme spawn scales — MEDIAN over hand-placed instances of the SAME model ─
   // First-match harvesting picked whichever instance discovery met first, and
   // hand-placed copies are scaled individually — an outlier gave every spawn a
@@ -674,7 +707,9 @@ export function initServer() {
     const report: string[] = []
     for (const model of ALL_THEME_MODELS) {
       const m = norm(model)
-      const matches = themeScaleSamples.filter((s) => norm(s.name).includes(m))
+      // Exact GLB identity first; entity-name substring only as a fallback.
+      let matches = themeScaleSamples.filter((s) => s.model === m)
+      if (matches.length === 0) matches = themeScaleSamples.filter((s) => norm(s.name).includes(m))
       if (matches.length === 0) {
         report.push(`${model}=EXCLUDED`)
         console.log(`[SERVER] ⚠ theme model '${model}' has NO Creator Hub placement to take its scale from — it will NOT spawn. Place one instance in CH to enable it.`)
@@ -847,16 +882,15 @@ export function initServer() {
     // the name-filtered rubbish, not a re-derivation of the mask rules.
     // Each anchor also carries whether its spot is TIGHT (glassware shelf /
     // table cluster) — only small models may land there.
-    type Anchor = { x: number; y: number; z: number; tight: boolean }
+    type Anchor = { x: number; y: number; z: number; tight: boolean; freed: boolean }
     const freed:    Anchor[] = []
     const occupied: Anchor[] = []
     for (const [itemId, pos] of sceneItemPositions) {
       const name  = itemNames.get(itemId) ?? ''
       const tight = TIGHT_ANCHOR_PARTS.some((p) => name.includes(p))
-      const a = { ...pos, tight }
       const e = itemEntities.get(itemId)
-      if (e && ClutterSync.getOrNull(e)?.isCleaned) freed.push(a)
-      else occupied.push(a)
+      const isFreed = !!(e && ClutterSync.getOrNull(e)?.isCleaned)
+      ;(isFreed ? freed : occupied).push({ ...pos, tight, freed: isFreed })
     }
     const anchors = [...shuffle(freed), ...shuffle(occupied)]
 
@@ -880,12 +914,17 @@ export function initServer() {
       const id = `${THEME_SLOT_PREFIX}${ids.length}`
       const entity = itemEntities.get(id)
       if (!entity) continue
-      // Tight jitter — the anchor is a validated item spot (often a table), and
-      // a wide scatter walked items off table edges (playtest).
+      // FREED anchors are empty — spawn nearly on the spot (tight jitter; wide
+      // scatter walked items off tables). OCCUPIED anchors still hold their
+      // item, so the spawn lands in a ring BESIDE it — playtest: "multiple
+      // items in the same spawn point" was spawns stacked inside base items on
+      // full-mix themes, where no anchor is ever freed.
+      const ang = Math.random() * Math.PI * 2
+      const r   = a.freed ? Math.random() * 0.12 : 0.5 + Math.random() * 0.4
       const pos = {
-        x: a.x + (Math.random() - 0.5) * 0.24,
+        x: a.x + Math.cos(ang) * r,
         y: a.y,
-        z: a.z + (Math.random() - 0.5) * 0.24,
+        z: a.z + Math.sin(ang) * r,
       }
       const model = pool[Math.floor(Math.random() * pool.length)]
       Transform.createOrReplace(entity, {
@@ -907,10 +946,13 @@ export function initServer() {
     const disasterIds: string[] = []
     let disasterSpawned = false
     disasterThisRound = false
-    const wantDisaster = getRoundNumber() > 0 && (
+    // Disaster themes ALWAYS spawn one, round 0 included — a pinned walkout
+    // test round must have its disaster (playtest: "didn't come across any
+    // disaster zones" — every test was a fresh round 0). Only the classic
+    // dice-roll skips the warm-up.
+    const wantDisaster =
       DISASTER_THEMES.includes(themeId) ||
-      (themeId === '' && Math.random() < DISASTER_CHANCE_CLASSIC)
-    )
+      (themeId === '' && getRoundNumber() > 0 && Math.random() < DISASTER_CHANCE_CLASSIC)
     const pileCH = themeModelScales.get('bigRubbishBag')
     if (wantDisaster && !pileCH) {
       console.log(`[SERVER] ⚠ disaster skipped — 'bigRubbishBag' has no Creator Hub placement for its scale`)
@@ -983,10 +1025,16 @@ export function initServer() {
     for (const address of signedUp) activePlayers.add(address)
     signedUp.clear()
 
-    // Fresh shift, empty hands, portable-bin uses restocked — and tell everyone,
-    // so the carry chip resets the moment the round starts.
+    // Fresh shift, empty hands, portable-bin uses restocked, empty bins and no
+    // bags mid-haul — and tell everyone, so the carry chip resets immediately.
     carriedRubbish.clear()
     portableUsed.clear()
+    binFill.general = 0
+    binFill.recycle = 0
+    haulingBy.clear()
+    streamHauler.clear()
+    haulBonuses.clear()   // unbanked haul pay dies with the old round
+    syncBinFull()
     for (const address of activeSessions) sendCarried(address)
 
     // Fresh contracts for everyone cleaning this round; spectators get none
@@ -1046,6 +1094,11 @@ export function initServer() {
       disasterBonuses.delete(address)
       money += disasterBonus
 
+      // Dumpster runs — banked per haul during the round.
+      const haulBonus = haulBonuses.get(address) ?? 0
+      haulBonuses.delete(address)
+      money += haulBonus
+
       const res = awardShift(address, money, xp, items, rewards.passed)
       sendProgress(address, {
         money,
@@ -1057,6 +1110,7 @@ export function initServer() {
         earlyBonus,
         earlySeconds: earlyCloseSeconds,
         disasterBonus,
+        haulBonus,
         contractLabel: c?.label ?? null,
         contractDone,
         contractBonus: contractDone && c ? c.money : 0,
@@ -1157,6 +1211,14 @@ export function initServer() {
     activePlayers.delete(sessionId)
     signedUp.delete(sessionId)
     contracts.delete(sessionId)
+    // A hauler leaving returns the bag: the stream stays full and anyone else
+    // can shoulder it (unlike carriedRubbish, keeping this would deadlock the
+    // stream — nobody could ever take the bag again).
+    const hauledStream = haulingBy.get(sessionId)
+    if (hauledStream) {
+      haulingBy.delete(sessionId)
+      streamHauler.delete(hauledStream)
+    }
     onPlayerLeave()
   }
 
@@ -1356,8 +1418,9 @@ export function initServer() {
     // Carry gate — full hands can't pick up more carryable mess (rubbish, glasses,
     // bottles). The client pre-empts this with a toast + sound, but it's enforced
     // here so a crafted message can't ignore the capacity the upgrade is selling.
+    // A hauled dumpster bag IS your hands — no pickups until it's emptied.
     const isCarryItem = carryStreamFor(data.itemId) !== null
-    if (isCarryItem && carriedTotal(context.from) >= carryCapacityFor(context.from)) {
+    if (isCarryItem && (haulingBy.has(context.from) || carriedTotal(context.from) >= carryCapacityFor(context.from))) {
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       sendCarried(context.from)
       return
@@ -1402,14 +1465,69 @@ export function initServer() {
   // there), and a spectator's deposit is simply a no-op.
   // A bin only accepts its own stream — the general count survives a recycling
   // deposit and vice versa, which is what makes sorting a real decision.
+  // GameState's bin-full flags are owned here (RoundManager's sync only writes
+  // the fields it knows, so these persist between its ticks).
+  function syncBinFull(): void {
+    const gs = GameState.getMutable(gameStateEntity)
+    gs.binFullGeneral = binStreamFull('general')
+    gs.binFullRecycle = binStreamFull('recycle')
+  }
+
   room.onMessage('depositRubbish', (data, context) => {
     if (!context) return
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
+    // Overflowed stream refuses deposits — the client pre-empts with a toast;
+    // this resync corrects any stale client that sent anyway.
+    if (binStreamFull(stream)) {
+      sendCarried(context.from)
+      return
+    }
     const load = getLoad(context.from)
     // A real (non-empty) deposit advances the deposits contract.
-    if (load[stream] > 0) bumpContract(context.from, ['deposits'])
+    if (load[stream] > 0) {
+      bumpContract(context.from, ['deposits'])
+      binFill[stream] += load[stream]
+      if (binStreamFull(stream)) {
+        syncBinFull()
+        console.log(`[CARRY] ${stream} bins FULL (${binFill[stream]}) — haul needed`)
+      }
+    }
     load[stream] = 0
     sendCarried(context.from)
+  })
+
+  // Shoulder the full bag from an overflowing stream. Empty hands only — the
+  // bag IS the load — and one bag per stream at a time.
+  room.onMessage('takeFullBag', (data, context) => {
+    if (!context) return
+    const address = context.from
+    const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
+    if (getPhase() !== 'playing' || !activePlayers.has(address)) return
+    if (!binStreamFull(stream) || haulingBy.has(address) || streamHauler.has(stream)) {
+      sendCarried(address)
+      return
+    }
+    if (carriedTotal(address) > 0) { sendCarried(address); return }
+    haulingBy.set(address, stream)
+    streamHauler.set(stream, address)
+    sendCarried(address)
+    console.log(`[CARRY] ${address.slice(0, 8)} took the ${stream} bag — off to the dumpster`)
+  })
+
+  // Empty the hauled bag into a dumpster — unlocks the stream, banks the bonus.
+  room.onMessage('dumpsterEmpty', (_data, context) => {
+    if (!context) return
+    const address = context.from
+    const stream = haulingBy.get(address)
+    if (!stream) { sendCarried(address); return }
+    haulingBy.delete(address)
+    streamHauler.delete(stream)
+    binFill[stream] = 0
+    syncBinFull()
+    haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
+    bumpContract(address, ['deposits'])   // a dumpster run is the deposit of deposits
+    sendCarried(address)
+    console.log(`[CARRY] ${address.slice(0, 8)} emptied the ${stream} bag — +$${HAUL_BONUS} banked`)
   })
 
   // Portable Bin: empty on the spot, limited uses per shift. Both the level and

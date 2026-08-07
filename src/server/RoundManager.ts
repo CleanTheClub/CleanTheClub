@@ -71,8 +71,12 @@ function rollTheme(): ThemeId {
   if (forcedTheme !== null) return forcedTheme
   // Warm-up round teaches the full loop; themes need the categoriser installed.
   if (roundNumber === 0 || !categoryFor) return ''
+  // BOSS ROUND: every milestone round is Spring Cleaning — the whole club
+  // needs mopping. Pinned to milestones, and excluded from the random pool
+  // below so it stays a rhythm the crew can feel coming.
+  if (isMilestoneRound(roundNumber)) return 'springCleaning'
   if (Math.random() >= THEME_CHANCE) return ''
-  const pool = THEME_DEFS.filter((t) => t.id !== lastThemeId)
+  const pool = THEME_DEFS.filter((t) => t.id !== lastThemeId && t.id !== 'springCleaning')
   return pool[Math.floor(Math.random() * pool.length)].id
 }
 

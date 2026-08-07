@@ -4,15 +4,15 @@ import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
 import { GameState } from './shared/schemas'
-import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS } from './shared/config'
+import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS, POP_HIT_T } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
-import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
-import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit } from './client/carrySystem'
+import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
+import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
@@ -334,6 +334,8 @@ let adminThemeIdx = 0
 let themeStoryStartMs   = -1
 const THEME_STORY_MS      = 9_000
 const THEME_STORY_FADE_MS = 900
+// Roulette spin at the front of the story card — decelerating title cycle.
+const THEME_ROULETTE_MS   = 1_600
 // Beat between the payout card's centre-stage pop and the shop panel sliding in.
 const SHOP_AUTO_OPEN_DELAY_MS = 1500
 
@@ -379,6 +381,15 @@ export function setHoldBarZone(start: number | null, end = 0) {
 // reach inputSystem, which is why the tap-anywhere version didn't register.
 let skillTapHandler: (() => void) | null = null
 export function setSkillTapHandler(fn: () => void) { skillTapHandler = fn }
+
+// ── Rhythm Pop ring state — driven per-frame by InteractionManager ────────────
+// popRingT: 0..1 progress of the current beat's shrinking ring, null = inactive.
+let popRingT: number | null = null
+let popRingHits = 0
+export function setPopRing(t: number | null, hits: number) {
+  popRingT = t
+  popRingHits = hits
+}
 
 // ── Action flash — one pop-and-fade slot shared by the moment-to-moment juice
 // (PERFECT skill hits, MISSED, cleaning SPREEs). Latest event wins the slot.
@@ -433,6 +444,37 @@ const WHITE = theme.colors.white
 // the safe-area inset keeps it above any explorer chrome along the bottom edge.
 function CarryChip({ S }: { S: number }) {
   if (!isCarryKnown()) return null   // no server answer yet — render nothing
+
+  // Dumpster haul takes over the chip: the bag is the load, and the chip is the
+  // one HUD element already about "what's in your hands".
+  if (getHauling() !== '') {
+    const sa2 = getSafeArea()
+    return (
+      <UiEntity
+        uiTransform={{
+          positionType: 'absolute',
+          position: { bottom: saPct(sa2.bottom + 0.03), left: 0 },
+          width: '100%',
+          flexDirection: 'row',
+          justifyContent: 'center',
+        }}
+      >
+        <UiEntity
+          uiTransform={{
+            padding: { top: Math.round(8 * S), bottom: Math.round(8 * S), left: Math.round(16 * S), right: Math.round(16 * S) },
+            borderRadius: Math.round(12 * S),
+          }}
+          uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.72 } }}
+        >
+          <Label
+            value="HAULING THE FULL BAG — dumpster is outside!"
+            fontSize={Math.round(26 * S)}
+            color={{ r: 1, g: 0.82, b: 0.25, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }}
+          />
+        </UiEntity>
+      </UiEntity>
+    )
+  }
 
   const gen  = getCarriedGeneral()
   const rec  = getCarriedRecycle()
@@ -1013,7 +1055,7 @@ const uiBody = () => {
             <Label
               value={`Next shift in 0:${seconds < 10 ? '0' : ''}${seconds}`}
               fontSize={Math.round(26 * S)}
-              color={WHITE}
+              color={countdownColor(seconds)}
             />
           </UiEntity>
         </UiEntity>
@@ -1313,6 +1355,88 @@ const uiBody = () => {
         </UiEntity>
       )}
 
+      {/* ── Rhythm Pop ring — a translucent ring shrinks onto the POP! disc each
+           beat; tap as it lands. Circles via full borderRadius; both centred in
+           a fixed box because React-ECS has no overlap-centring primitive. */}
+      {!isOpen && popRingT !== null && (() => {
+        const T     = Math.round(90 * S)                       // target disc
+        const scale = Math.max(1, 3 - 2 * popRingT)            // ring: 3× → 1×
+        const R     = Math.round(T * scale)
+        const box   = Math.round(T * 3)
+        // The gold moment IS the hit window — same constant as the judgement,
+        // so what the player sees is exactly what the game scores.
+        const landed = popRingT >= POP_HIT_T
+        return (
+          <UiEntity
+            uiTransform={{
+              positionType: 'absolute',
+              position: { top: '38%', left: 0 },
+              width: '100%',
+              flexDirection: 'column',
+              alignItems: 'center',
+            }}
+          >
+            <UiEntity uiTransform={{ width: box, height: box }}>
+              <UiEntity
+                uiTransform={{
+                  positionType: 'absolute',
+                  position: { top: Math.round((box - R) / 2), left: Math.round((box - R) / 2) },
+                  width: R, height: R, borderRadius: Math.round(R / 2),
+                }}
+                uiBackground={{ color: landed
+                  ? { r: 1, g: 0.82, b: 0.25, a: 0.45 }   // gold ring = tap NOW
+                  : { r: 1, g: 1, b: 1, a: 0.28 } }}
+              />
+              <UiEntity
+                uiTransform={{
+                  positionType: 'absolute',
+                  position: { top: Math.round((box - T) / 2), left: Math.round((box - T) / 2) },
+                  width: T, height: T, borderRadius: Math.round(T / 2),
+                  justifyContent: 'center', alignItems: 'center',
+                }}
+                uiBackground={{ color: landed
+                  ? { r: 1, g: 0.82, b: 0.25, a: 1 }
+                  : { r: 1, g: 0.72, b: 0.2, a: 0.85 } }}
+              >
+                <Label value="POP!" fontSize={Math.round((landed ? 30 : 24) * S)} color={{ r: 0.15, g: 0.1, b: 0, a: 1 }} />
+              </UiEntity>
+            </UiEntity>
+            {/* One-line rule — a brand-new mechanic teaches itself in place. */}
+            <Label
+              value="Tap when it turns GOLD!"
+              fontSize={Math.round(20 * S)}
+              color={{ r: 1, g: 1, b: 1, a: 0.85 }}
+              uiTransform={{ margin: { top: Math.round(2 * S) } }}
+            />
+            {/* Kernel dots — hits so far. */}
+            <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'center', margin: { top: Math.round(6 * S) } }}>
+              {[0, 1, 2].map((i) => (
+                <UiEntity key={String(i)}
+                  uiTransform={{
+                    width: Math.round(14 * S), height: Math.round(14 * S),
+                    margin: { left: Math.round(5 * S), right: Math.round(5 * S) },
+                    borderRadius: Math.round(7 * S),
+                  }}
+                  uiBackground={{ color: i < popRingHits
+                    ? { r: 1, g: 0.82, b: 0.25, a: 1 }
+                    : { r: 1, g: 1, b: 1, a: 0.25 } }}
+                />
+              ))}
+            </UiEntity>
+            {/* Mobile input — same pattern as the SCRUB button. */}
+            {mobile && (
+              <Button
+                value="POP!"
+                variant="primary"
+                fontSize={Math.round(32 * S)}
+                uiTransform={{ width: Math.round(260 * S), height: Math.round(92 * S), margin: { top: Math.round(12 * S) } }}
+                onMouseDown={() => skillTapHandler?.()}
+              />
+            )}
+          </UiEntity>
+        )
+      })()}
+
       {/* ── PERFECT! flash — pops when a skill-check release lands in the green.
            Rendered outside the hold-bar block because the bar hides on release,
            exactly when this needs to be visible. */}
@@ -1359,12 +1483,23 @@ const uiBody = () => {
            on the countdown and vanished with the intro before anyone could read
            it. Nine seconds of hold with a dark backdrop, then a fade: reading
            time first, then the screen declutters. ─────────────────────────────── */}
-      {!isOpen && themeDef && themeStoryStartMs > 0 && (() => {
+      {!isOpen && themeStoryStartMs > 0 && (() => {
         const t = Date.now() - themeStoryStartMs
         if (t > THEME_STORY_MS) return null
         const fade = t > THEME_STORY_MS - THEME_STORY_FADE_MS
           ? Math.max(0, (THEME_STORY_MS - t) / THEME_STORY_FADE_MS)
           : 1
+        // Roulette reveal — EVERY round spins (playtest request): classic
+        // rounds are a real slot on the wheel too, so the ritual is constant
+        // and a themed landing feels like a win. The server's roll is long
+        // done; this is pure drama, and the spin visibly decelerates.
+        const wheel = [...THEME_DEFS.map((td) => td.title), 'CLASSIC NIGHT']
+        const finalTitle = themeDef?.title ?? 'CLASSIC NIGHT'
+        const finalBlurb = themeDef?.blurb ?? 'Just a regular shift — the mess never sleeps.'
+        const spinning  = t < THEME_ROULETTE_MS
+        const spinT     = Math.min(1, t / THEME_ROULETTE_MS)
+        const spinIdx   = Math.floor((1 - Math.pow(1 - spinT, 2)) * wheel.length * 3)
+        const shownTitle = spinning ? wheel[spinIdx % wheel.length] : finalTitle
         const pad = Math.round(16 * S)
         return (
           <UiEntity
@@ -1385,11 +1520,15 @@ const uiBody = () => {
               }}
               uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.78 * fade } }}
             >
-              <Label value={`TONIGHT: ${themeDef.title}`} fontSize={Math.round(38 * S)}
-                color={{ r: 1, g: 0.82, b: 0.25, a: fade }} />
-              <Label value={themeDef.blurb} fontSize={Math.round(26 * S)}
-                color={{ r: 1, g: 1, b: 1, a: fade }}
-                uiTransform={{ margin: { top: Math.round(8 * S) } }} />
+              <Label value={`TONIGHT: ${shownTitle}`} fontSize={Math.round(38 * S)}
+                color={spinning
+                  ? { r: 1, g: 1, b: 1, a: 0.75 }
+                  : { r: 1, g: 0.82, b: 0.25, a: fade }} />
+              {!spinning && (
+                <Label value={finalBlurb} fontSize={Math.round(26 * S)}
+                  color={{ r: 1, g: 1, b: 1, a: fade }}
+                  uiTransform={{ margin: { top: Math.round(8 * S) } }} />
+              )}
             </UiEntity>
           </UiEntity>
         )

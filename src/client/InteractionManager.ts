@@ -4,10 +4,10 @@ import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType } from '../shared/config'
+import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType, POP_BEATS, POP_BEAT_MS, POP_HIT_T, POP_FIRST_GRACE_MS } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setSkillTapHandler } from '../ui'
+import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setSkillTapHandler, setPopRing } from '../ui'
 import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
@@ -59,6 +59,44 @@ const STREAK_CONFETTI_EVERY = 5
 // patiently holding to 100% is neutral, so cautious players aren't punished for
 // not engaging with the minigame.
 let perfectStreak = 0
+
+// ── Rhythm Pop (popcorn) ──────────────────────────────────────────────────────
+// A 3-beat circular timing game — see config for the design note. Runs beside
+// the hold machinery (mutually exclusive with it) and drives ui.tsx's ring via
+// setPopRing. onDone always fires with the hit count; the caller performs the
+// actual clean, so the server path is identical to a plain click.
+type ActiveRhythm = {
+  id: string; beat: number; beatStartMs: number; hits: number; tapped: boolean
+  onDone: (hits: number) => void
+}
+let activeRhythm: ActiveRhythm | null = null
+export const isRhythmActive = (): boolean => activeRhythm !== null
+
+/** Starts the pop rhythm for an item. False = another minigame is running. */
+export function startPopRhythm(id: string, onDone: (hits: number) => void): boolean {
+  if (activeRhythm || activeHold) return false
+  activeRhythm = { id, beat: 0, beatStartMs: Date.now(), hits: 0, tapped: false, onDone }
+  return true
+}
+
+function judgeRhythmTap(): void {
+  if (!activeRhythm || activeRhythm.tapped) return
+  const now = Date.now()
+  // The pointer-down that STARTED the rhythm arrives this same frame — ignore it.
+  if (activeRhythm.beat === 0 && now - activeRhythm.beatStartMs < POP_FIRST_GRACE_MS) return
+  activeRhythm.tapped = true
+  const t = (now - activeRhythm.beatStartMs) / POP_BEAT_MS
+  if (t >= POP_HIT_T) {
+    activeRhythm.hits++
+    playPerfectSound(activeRhythm.hits)   // ascending pop-pop-pop
+  } else {
+    // Too early — same rules as the skill check: an attempted-and-missed
+    // timing breaks the streak and says so; not engaging stays neutral.
+    perfectStreak = 0
+    flashMiss()
+    playMissSound()
+  }
+}
 
 // ─── Open-phase gate ──────────────────────────────────────────────────────────
 const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
@@ -121,7 +159,7 @@ function enableClick(id: string) {
     pointerEventsSystem.onPointerDown(
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: POINTER_MAX_DIST } },
       () => {
-        if (pendingCleans.has(id) || activeHold) return
+        if (pendingCleans.has(id) || activeHold || activeRhythm) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
         if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
@@ -238,6 +276,18 @@ export function registerDisasterHold(itemId: string, entity: Entity) {
   }
 }
 
+/**
+ * Removes a dynamically-registered hold (see registerDisasterHold). Needed for
+ * theme SLOTS that carried a sticky-patch model one round (spring cleaning)
+ * and a quick-click model the next — without this, a slot that was ever a
+ * hold would answer as "Hold to Clean" forever.
+ */
+export function unregisterDynamicHold(itemId: string) {
+  if (!itemRefs.has(itemId)) return
+  disableClick(itemId)
+  itemRefs.delete(itemId)
+}
+
 // ─── Refs captured at init so enable/disable closures can call them ──────────
 // (avoids threading callbacks through every helper)
 
@@ -270,6 +320,10 @@ export function initInteractionManager(
       showHoldBar(activeHold.id, false)
       stopStickySound()
       activeHold = null
+    }
+    if (activeRhythm) {
+      activeRhythm = null
+      setPopRing(null, 0)
     }
     pendingCleans.clear()
     pendingVisualHide.clear()
@@ -321,13 +375,44 @@ export function initInteractionManager(
     }
   }
 
-  // The mobile SCRUB button resolves the check at the tick's current position.
-  // Same 250 ms grace as the tap path, so the starting tap can't insta-resolve.
+  // The mobile SCRUB/POP button routes here. Rhythm first — it and the hold
+  // are mutually exclusive, so whichever is active owns the tap.
   setSkillTapHandler(() => {
+    if (activeRhythm) { judgeRhythmTap(); return }
     if (!activeHold) return
     const heldMs = Date.now() - activeHold.startMs
     if (heldMs <= 250) return
     resolveSkillCheck(heldMs / holdDurationMs())
+  })
+
+  // ── Rhythm Pop frame system — beat progression, desktop taps, finish ─────────
+  engine.addSystem(() => {
+    if (!activeRhythm) return
+    // Desktop tap = pointer press anywhere: the cursor is camera-locked, so a
+    // global press IS the tap (mobile goes through the POP! button above).
+    if (!isMobile() && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+      judgeRhythmTap()
+    }
+    const elapsed = Date.now() - activeRhythm.beatStartMs
+    setPopRing(Math.min(1, elapsed / POP_BEAT_MS), activeRhythm.hits)
+    if (elapsed < POP_BEAT_MS) return
+
+    if (activeRhythm.beat + 1 < POP_BEATS) {
+      activeRhythm.beat++
+      activeRhythm.beatStartMs = Date.now()
+      activeRhythm.tapped = false
+      return
+    }
+    // Beats done — the clean ALWAYS proceeds; full marks add the mastery layer.
+    const { hits, onDone } = activeRhythm
+    activeRhythm = null
+    setPopRing(null, 0)
+    if (hits === POP_BEATS) {
+      perfectStreak++
+      flashPerfect(perfectStreak)
+      if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
+    }
+    onDone(hits)
   })
 
   // Frame system: drives hold progress + fires on completion
@@ -440,6 +525,11 @@ export function initInteractionManager(
         showHoldBarRef(activeHold.id, false)
         stopStickySound()
         activeHold = null
+      }
+      // An in-flight rhythm dies without its clean — the round is over anyway.
+      if (activeRhythm) {
+        activeRhythm = null
+        setPopRing(null, 0)
       }
       for (const [id] of itemRefs) disableClick(id)
     }

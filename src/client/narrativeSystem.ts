@@ -159,25 +159,10 @@ export function initNarrativeSystem(): void {
     }
 
     // ── Round-number change → round start message ──────────────────────────────
-    if (roundNumber !== lastRoundNumber) {
-      const prev       = lastRoundNumber
-      lastRoundNumber  = roundNumber
-
-      if (prev !== -1 || phase === 'playing') {
-        // Fire for every round including round 0 on first load.
-        // Themed rounds get NO toast — the story card (ui.tsx) already holds
-        // the screen with the same words, and a second surface repeating them
-        // is distraction, not reinforcement.
-        const isThemed    = THEME_DEFS.some((t) => t.id === theme)
-        const isMilestone = (roundNumber + 1) % MILESTONE_EVERY === 0
-        if (!isThemed) {
-          const text = isMilestone
-            ? MILESTONE_ROUND_START
-            : (ROUND_START[roundNumber] ?? ROUND_START.DEFAULT)
-          timers.setTimeout(() => showNarrativeToast(text), ROUND_START_DELAY_MS)
-        }
-      }
-    }
+    // Round-start toasts retired entirely: the roulette story card (ui.tsx)
+    // now plays on EVERY round — classic included — and holds the screen far
+    // longer than a toast. Two surfaces saying "new round" was distraction.
+    lastRoundNumber = roundNumber
 
     // ── Cleanliness milestones ─────────────────────────────────────────────────
     if (phase === 'playing') {
