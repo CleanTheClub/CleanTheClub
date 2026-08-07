@@ -123,7 +123,10 @@ export function createPersistedDoc<T>(
       if (!res.ok) throw new Error(`jsonbin write ${res.status}`)
       return
     }
-    await Storage.set(key, JSON.stringify(value))
+    // Storage.set resolves FALSE on failure (rate cap, size) rather than
+    // throwing — ignoring it silently loses the write (official guidance).
+    const ok = await Storage.set(key, JSON.stringify(value))
+    if (!ok) throw new Error('Storage.set rejected the write')
   }
 
   async function load(): Promise<T | null> {

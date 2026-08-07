@@ -581,6 +581,8 @@ export function initCarrySystem(): void {
   // Return-leg click target + marker at the hauled bin's empty station spot.
   let returnTarget: Entity | null = null
   let returnMarker: Entity | null = null
+  // Whether any bin is currently scale-pulsing (one restore pass on idle).
+  let binsPulsed = false
 
   let markerAcc = 0
   engine.addSystem((dt: number) => {
@@ -646,9 +648,25 @@ export function initCarrySystem(): void {
   // that stream's fill, so a swelling general bin next to a still recycling
   // bin tells you exactly what needs emptying.
   engine.addSystem(() => {
+    // ONE GameState read per frame, not one per bin (audit: per-frame
+    // getEntitiesWith scans multiplied by the bin count). Idle short-circuit
+    // AFTER one restore pass, so a round reset can't freeze a mid-pulse scale.
+    const genFrac = Math.min(1, binFillClient('general') / BIN_STREAM_CAPACITY)
+    const recFrac = Math.min(1, binFillClient('recycle') / BIN_STREAM_CAPACITY)
+    if (genFrac <= 0 && recFrac <= 0) {
+      if (binsPulsed) {
+        binsPulsed = false
+        for (const b of binVisuals) {
+          const tf = Transform.getMutableOrNull(b.entity)
+          if (tf) tf.scale = { x: b.base.x, y: b.base.y, z: b.base.z }
+        }
+      }
+      return
+    }
+    binsPulsed = true
     const now = Date.now()
     for (const b of binVisuals) {
-      const frac = Math.min(1, binFillClient(b.type) / BIN_STREAM_CAPACITY)
+      const frac = b.type === 'general' ? genFrac : recFrac
       const tf = Transform.getMutableOrNull(b.entity)
       if (!tf) continue
       if (frac <= 0) {

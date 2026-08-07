@@ -1274,6 +1274,19 @@ export function initServer() {
       setBinAtStation(haul.binName, true)
     }
     onPlayerLeave()
+
+    // Last player out → checkpoint. The runtime shuts the server down ~2min
+    // after the club empties, and the next save moment (shift end) will never
+    // come — without this, a mid-round purchase or admin grant made after the
+    // previous checkpoint would evaporate (official guidance: save at
+    // player-leave). saveProgress no-ops unless something is dirty.
+    if (activeSessions.size === 0) {
+      console.log('[SERVER] club empty — checkpoint save')
+      executeTask(async () => {
+        await saveProgress()
+        await saveLeaderboard()
+      })
+    }
   }
 
   onEnterSceneObservable.add((player) => {
