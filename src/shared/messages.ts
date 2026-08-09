@@ -50,6 +50,18 @@ export const Messages = {
    * every save attempt — a silent persistence failure cost real careers once.
    */
   storageStatus:    Schemas.Map({ statusJson: Schemas.String }),
+  /**
+   * PUBLIC carry state, broadcast to everyone on every change: remote clients
+   * attach a carry box (or hauled bin) to that player's hand. Without it, other
+   * players saw the carry EMOTE with visibly empty hands (live test).
+   */
+  carryPublic:      Schemas.Map({
+    address:   Schemas.String,
+    total:     Schemas.Int,
+    capacity:  Schemas.Int,
+    hauling:   Schemas.String,
+    haulStage: Schemas.String,
+  }),
 
   // ── Server → Client ─────────────────────────────────────────
   cleanRejected:    Schemas.Map({ itemId: Schemas.String }),

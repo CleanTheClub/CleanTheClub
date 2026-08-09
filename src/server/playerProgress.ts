@@ -45,6 +45,15 @@ export type ProgressRecord = {
   workStreak:   number   // consecutive days with at least one passed shift
   dailyItems:   number   // items cleaned on dailyDay (drives the daily board)
   dailyDay:     string   // UTC day the dailyItems counter belongs to
+  /**
+   * Lifetime per-kind tallies — the raw material for achievement gear ("clean
+   * 1000 pieces of pizza"). Keys are normalized letters-only kind names
+   * ('pizza', 'wineglass', 'deposit', 'shiftcocktailnight', …); achievements
+   * sum whatever keys they care about at read time. Counting ships AHEAD of
+   * the achievements because stats can't be backfilled. Sparse by nature —
+   * a player only holds keys for kinds they've actually touched.
+   */
+  kindCounts:   Record<string, number>
 }
 
 type ProgressDoc = {
@@ -65,6 +74,7 @@ const emptyRecord = (displayName = ''): ProgressRecord => ({
   workStreak: 0,
   dailyItems: 0,
   dailyDay: '',
+  kindCounts: {},
 })
 
 /** UTC day stamp — the boundary all daily mechanics share. */
@@ -92,7 +102,24 @@ function migrate(raw: any): ProgressRecord {
       if (typeof v === 'number' && v > 0) rec.upgrades[k as UpgradeId] = Math.floor(v)
     }
   }
+  if (raw.kindCounts && typeof raw.kindCounts === 'object') {
+    for (const [k, v] of Object.entries(raw.kindCounts)) {
+      if (typeof v === 'number' && v > 0) rec.kindCounts[k] = Math.floor(v)
+    }
+  }
   return rec
+}
+
+/**
+ * Bumps a lifetime kind counter (see ProgressRecord.kindCounts). Guests count
+ * too — their record is session-only like everything else of theirs.
+ */
+export function bumpKindCount(address: string, kind: string, n = 1): void {
+  if (!kind) return
+  const rec = records.get(address.toLowerCase())
+  if (!rec) return
+  rec.kindCounts[kind] = (rec.kindCounts[kind] ?? 0) + n
+  dirty = true
 }
 
 // ── In-memory state ───────────────────────────────────────────────────────────

@@ -137,7 +137,8 @@ function enableClick(itemId: string) {
       // runs the identical path below (re-checked — the item may have been
       // cleaned by someone else, or the round ended, while the beats played).
       if (popcornIds.has(itemId)) {
-        startPopRhythm(itemId, () => {
+        startPopRhythm(itemId, (hits) => {
+          if (hits === 0) return   // blank run — popcorn stays, click to retry
           if (pendingCleans.has(itemId) || lastState.get(itemId) === true) return
           if (getPhase() === 'open' || isCarryFull()) return
           performClean()

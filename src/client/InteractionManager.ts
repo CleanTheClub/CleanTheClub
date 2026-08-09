@@ -403,7 +403,9 @@ export function initInteractionManager(
       activeRhythm.tapped = false
       return
     }
-    // Beats done — the clean ALWAYS proceeds; full marks add the mastery layer.
+    // Beats done. At least ONE hit collects (zero-effort collection made the
+    // rhythm decorative — playtest); full marks add the mastery layer. A blank
+    // run flashes MISSED and the popcorn stays for a retry.
     const { hits, onDone } = activeRhythm
     activeRhythm = null
     setPopRing(null, 0)
@@ -411,6 +413,9 @@ export function initInteractionManager(
       perfectStreak++
       flashPerfect(perfectStreak)
       if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
+    } else if (hits === 0) {
+      flashMiss()
+      playMissSound()
     }
     onDone(hits)
   })

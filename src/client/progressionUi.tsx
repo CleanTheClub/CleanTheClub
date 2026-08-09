@@ -522,8 +522,14 @@ export function ShiftPayoutPanel(
  */
 function PayoutShopCta({ Z }: { Z: number }) {
   const n = affordableUpgradeCount()
-  // Same breathing rhythm as the career bar's near-promotion pulse.
-  const pulse = n > 0 ? 1 + 0.06 * Math.sin(Date.now() / 180) : 1
+  // Desktop breathes by SIZE; mobile breathes by ALPHA at a fixed size — size
+  // changes force a UI relayout every frame, which stutters on mobile's uneven
+  // frame pacing (playtest: "UI tweens of scale are jittery on mobile").
+  const wave  = Math.sin(Date.now() / 180)
+  const pulse = n > 0 && !isMobile() ? 1 + 0.06 * wave : 1
+  const bgColor = n > 0
+    ? (isMobile() ? Color4.create(GOLD.r, GOLD.g, GOLD.b, 0.8 + 0.2 * wave) : GOLD)
+    : Color4.create(1, 1, 1, 0.12)
   const w = Math.round(300 * Z * pulse)
   const h = Math.round(54 * Z * pulse)
   return (
@@ -534,7 +540,7 @@ function PayoutShopCta({ Z }: { Z: number }) {
         borderRadius: Math.round(12 * Z),
         justifyContent: 'center', alignItems: 'center',
       }}
-      uiBackground={{ color: n > 0 ? GOLD : Color4.create(1, 1, 1, 0.12) }}
+      uiBackground={{ color: bgColor }}
       onMouseDown={() => setShopOpen(true)}
     >
       <Label

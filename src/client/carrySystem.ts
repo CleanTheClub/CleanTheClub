@@ -9,7 +9,8 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData } from '@dcl/sdk/ecs'
+import { getUserData } from '~system/UserIdentity'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { GameState } from '../shared/schemas'
@@ -220,14 +221,45 @@ export function noteCarriedModel(src: string | undefined): void {
   if (carriedModels.length > 24) carriedModels.shift()   // hard bound, safety only
 }
 
+// ── Admin hold-test ───────────────────────────────────────────────────────────
+// Preview any placed scene model riding the carry rig — same left-hand attach,
+// counter-rotation, pose and emote as the box. Local-only visual, for auditing
+// candidate carry props ("test holding them"). Resolved from the PLACED entity
+// by Name, so whatever Creator Hub says the model is, that's what's held.
+let holdTestSrc: string | null = null
+export function setCarryHoldTest(name: string | null): void {
+  holdTestSrc = null
+  if (name) {
+    for (const [entity] of engine.getEntitiesWith(Name)) {
+      if (Name.get(entity).value !== name) continue
+      const gltfEnt = findGltfEntity(entity) ?? entity
+      const src = GltfContainer.getOrNull(gltfEnt)?.src
+      if (src) holdTestSrc = src
+      break
+    }
+    if (!holdTestSrc) console.log(`[CARRY] hold-test: no placed GLB found named '${name}'`)
+  }
+  // Tear the rig down so the container model swaps cleanly on rebuild.
+  if (carryAnchor) {
+    engine.removeEntityWithChildren(carryAnchor)
+    carryAnchor = null
+    carryRig = null
+    bagEntity = null
+    fullStinkEntity = null
+    slotEntities.length = 0
+  }
+  refreshCarriedBag()
+}
+
 function refreshCarriedBag(): void {
   const total = carriedGeneral + carriedRecycle
+  const holdTest = holdTestSrc !== null
   // Dumpster haul: the hands hold the overflowing BIN BAG itself — carry pose,
   // box at max size, a bag riding it, permanent stink. Reads physically.
   const haulDisplay = hauling !== ''
   // Upper-body carry pose tracks whether the hands are full.
-  setCarryPose(haulDisplay || total > 0)
-  if (!haulDisplay && total <= 0) {
+  setCarryPose(holdTest || haulDisplay || total > 0)
+  if (!holdTest && !haulDisplay && total <= 0) {
     if (carryAnchor) {
       engine.removeEntityWithChildren(carryAnchor)
       carryAnchor = null
@@ -258,10 +290,11 @@ function refreshCarriedBag(): void {
       rotation: currentRigRotation(),
     })
 
-    if (SHOW_CARRY_CONTAINER) {
+    if (SHOW_CARRY_CONTAINER || holdTest) {
       bagEntity = engine.addEntity()
       Transform.create(bagEntity, { parent: carryRig, position: BAG_OFFSET })
-      GltfContainer.create(bagEntity, { src: BAG_MODEL })
+      // Hold-test overrides the container with the model under audition.
+      GltfContainer.create(bagEntity, { src: holdTestSrc ?? BAG_MODEL })
     }
   }
 
@@ -269,13 +302,15 @@ function refreshCarriedBag(): void {
   // Origin is at the box base on the vertical axis (prop-authored), so scaling
   // grows it in place; the offset no longer needs to move with size.
   const frac = haulDisplay ? 1 : Math.min(1, total / Math.max(1, capacity))
-  const size = BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  // Hold-test shows the auditioned model at its native scale — judge it raw.
+  const size = holdTest ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
 
   // Stink cloud appears exactly at capacity, disappears the moment space frees.
   // A hauled FULL bin stinks all the way out; the emptied bin rides home clean.
-  const full = (haulDisplay && haulStage === 'out') || (!haulDisplay && total >= capacity)
+  // Hold-test props never stink — it's a fitting room, not a shift.
+  const full = !holdTest && ((haulDisplay && haulStage === 'out') || (!haulDisplay && total >= capacity))
   if (full && !fullStinkEntity && carryRig) {
     fullStinkEntity = engine.addEntity()
     Transform.create(fullStinkEntity, {
@@ -313,8 +348,10 @@ function refreshCarriedBag(): void {
 
   // Newest items on top of the pile; slots are reused, never re-created.
   // While hauling the single decoration is the BIN itself (the one that
-  // vanished from its station).
-  const visible = haulDisplay
+  // vanished from its station). Hold-test shows the audited model alone.
+  const visible = holdTest
+    ? []
+    : haulDisplay
     ? [themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')]
     : carriedModels.slice(-MAX_VISIBLE_ITEMS)
   for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
@@ -412,7 +449,77 @@ export function requestPortableEmpty(): void {
   room.send('portableEmpty', { dummy: true })
 }
 
+// ── Remote carry visuals ──────────────────────────────────────────────────────
+// What OTHER players carry, attached to THEIR avatars (avatarId form of
+// AvatarAttach — the same trick as career plates). Without this, remote
+// viewers saw the carry emote play over visibly empty hands (live test).
+type RemoteCarry = { anchor: Entity; bag: Entity; lastSrc: string }
+const remoteCarries = new Map<string, RemoteCarry>()
+let ownAddress = ''
+
+function removeRemoteCarry(address: string): void {
+  const rc = remoteCarries.get(address)
+  if (!rc) return
+  engine.removeEntityWithChildren(rc.anchor)
+  remoteCarries.delete(address)
+}
+
+function updateRemoteCarry(address: string, total: number, capacity: number, hauling: string, haulStage: string): void {
+  const show = total > 0 || hauling !== ''
+  if (!show) { removeRemoteCarry(address); return }
+
+  let rc = remoteCarries.get(address)
+  if (!rc) {
+    const anchor = engine.addEntity()
+    Transform.create(anchor, {})
+    AvatarAttach.create(anchor, { avatarId: address, anchorPointId: AvatarAnchorPointType.AAPT_LEFT_HAND })
+    const rig = engine.addEntity()
+    Transform.create(rig, { parent: anchor, rotation: currentRigRotation() })
+    const bag = engine.addEntity()
+    Transform.create(bag, { parent: rig, position: BAG_OFFSET })
+    rc = { anchor, bag, lastSrc: '' }
+    remoteCarries.set(address, rc)
+  }
+  // Hauling shows the BIN; carrying shows the box scaled by how full they are.
+  const src = hauling !== ''
+    ? themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')
+    : BAG_MODEL
+  if (rc.lastSrc !== src) {
+    GltfContainer.createOrReplace(rc.bag, { src })
+    rc.lastSrc = src
+  }
+  const frac = hauling !== '' ? 1 : Math.min(1, total / Math.max(1, capacity))
+  const size = hauling !== '' ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  Transform.getMutable(rc.bag).scale = { x: size, y: size, z: size }
+}
+
 export function initCarrySystem(): void {
+  // Own address, to skip self in the public carry broadcasts (the local rig
+  // already renders our own hands).
+  getUserData({}).then((d) => { ownAddress = (d.data?.userId ?? '').toLowerCase() })
+
+  room.onMessage('carryPublic', (data) => {
+    const addr = data.address.toLowerCase()
+    if (addr === ownAddress) return
+    updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage)
+  })
+
+  // Sweep for departed players every few seconds — their avatar is gone but
+  // the attach entity would linger otherwise.
+  let remoteSweepAcc = 0
+  engine.addSystem((dt: number) => {
+    remoteSweepAcc += dt
+    if (remoteSweepAcc < 5) return
+    remoteSweepAcc = 0
+    if (remoteCarries.size === 0) return
+    const present = new Set<string>()
+    for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) {
+      present.add(data.address.toLowerCase())
+    }
+    for (const [addr] of remoteCarries) {
+      if (!present.has(addr)) removeRemoteCarry(addr)
+    }
+  })
   room.onMessage('carriedUpdate', (data) => {
     carriedGeneral = data.carriedGeneral
     carriedRecycle = data.carriedRecycle

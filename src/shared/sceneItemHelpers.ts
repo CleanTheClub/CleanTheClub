@@ -1,9 +1,7 @@
 import {
   engine, Entity, Transform, GltfContainer, GltfContainerLoadingState,
-  LoadingState, Name, MeshCollider, MeshRenderer,
-  ColliderLayer, Material, MaterialTransparencyMode, pointerEventsSystem,
+  LoadingState, Name, MeshCollider, ColliderLayer,
 } from '@dcl/sdk/ecs'
-import { Color3, Color4, Quaternion } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 
 // ── Mobile tap targets ────────────────────────────────────────────────────────
@@ -175,18 +173,15 @@ function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
   return true
 }
 
-// The glow disc doubles as visibility aid and hover highlight on mobile:
-// resting it makes small items readable across a dark dance floor; on reticle
-// hover it brightens, standing in for the toon outline the proxy suppresses.
-// Alpha values only — the disc entity itself is local, never synced.
-const DISC_WORLD_SIZE  = 0.55   // metres, before compensating for item scale
-const DISC_ALPHA_REST  = 0.10
-const DISC_ALPHA_HOVER = 0.42
 
 // Creates the invisible, enlarged mobile tap target as a child of the item, so it
 // inherits the item's position and scale (including being scaled away to nothing
-// when the item is hidden — a cleaned item must not stay tappable). Also drops
-// the glow disc under the item (same parent, so it hides with it).
+// when the item is hidden — a cleaned item must not stay tappable).
+//
+// The emissive glow disc that used to accompany every proxy is GONE (playtest
+// 2026-08-07): it existed to make items findable in mobile's darker render, a
+// job the player point light now does — and each disc cost a plane + PBR
+// material + per-hover material writes on the platform least able to afford it.
 function createMobileTapTarget(gltfEnt: Entity): Entity {
   const proxy = engine.addEntity()
   Transform.create(proxy, {
@@ -194,40 +189,6 @@ function createMobileTapTarget(gltfEnt: Entity): Entity {
     scale:  { x: MOBILE_TAP_SCALE, y: MOBILE_TAP_SCALE, z: MOBILE_TAP_SCALE },
   })
   MeshCollider.setBox(proxy, ColliderLayer.CL_POINTER)
-
-  // Child scale is multiplied by the item's own scale, so divide it out to keep
-  // the disc a consistent world size whether the item is scale 0.3 or 1.
-  const itemScale = Transform.getOrNull(gltfEnt)?.scale?.x ?? 1
-  const d = DISC_WORLD_SIZE / Math.max(0.05, itemScale)
-  const disc = engine.addEntity()
-  Transform.create(disc, {
-    parent:   gltfEnt,
-    position: { x: 0, y: 0.01, z: 0 },
-    rotation: Quaternion.fromEulerDegrees(90, 0, 0),   // plane flat on the floor
-    scale:    { x: d, y: d, z: 1 },
-  })
-  MeshRenderer.setPlane(disc)
-  const tex = Material.Texture.Common({ src: 'assets/scene/UI/glow_disc.png' })
-  const setDisc = (alpha: number) => Material.setPbrMaterial(disc, {
-    texture:           tex,
-    alphaTexture:      tex,
-    albedoColor:       Color4.create(1, 1, 1, alpha),
-    emissiveTexture:   tex,
-    emissiveColor:     Color3.White(),
-    emissiveIntensity: alpha * 2,
-    transparencyMode:  MaterialTransparencyMode.MTM_ALPHA_BLEND,
-    specularIntensity: 0,
-    metallic: 0,
-    roughness: 1,
-  })
-  setDisc(DISC_ALPHA_REST)
-
-  // The proxy is the pointer target, so hover fires on it even though the disc
-  // does the glowing. Callers attach their own onPointerDown to the proxy; the
-  // hover handlers here don't conflict with that.
-  pointerEventsSystem.onPointerHoverEnter({ entity: proxy }, () => setDisc(DISC_ALPHA_HOVER))
-  pointerEventsSystem.onPointerHoverLeave({ entity: proxy }, () => setDisc(DISC_ALPHA_REST))
-
   return proxy
 }
 

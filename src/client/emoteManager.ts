@@ -1,4 +1,4 @@
-import { engine, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
 import { triggerSceneEmote, stopEmote } from '~system/RestrictedActions'
 import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
@@ -133,6 +133,7 @@ function emoteWatchSystem(): void {
 // the lobby + countdown, 15s+ in) — leaving it cold exactly when it mattered. Holding
 // a permanent reference keeps the asset resident so every mop is instant.
 const EMOTE_WARMUP_DELAY_MS = 3_000   // wait out the initial scene-item load spike first
+const warmupEntities: Array<{ entity: Entity; src: string }> = []
 function warmUpEmotes() {
   timers.setTimeout(() => {
     for (const src of [MOPPING_EMOTE_SRC, PICKUP_EMOTE_SRC, PARTY_EMOTE_SRC, CARRY_POSE_SRC]) {
@@ -140,14 +141,38 @@ function warmUpEmotes() {
       Transform.create(e, { position: { x: 0, y: -100, z: 0 }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
       GltfContainer.create(e, { src })
       // Never removed — the reference keeps the GLB loaded for the session.
+      warmupEntities.push({ entity: e, src })
     }
   }, EMOTE_WARMUP_DELAY_MS)
+}
+
+// A mobile app-switch SUSPENDS the client without reloading the scene; the OS
+// can flush asset memory meanwhile, and the resident references above don't
+// force a re-fetch on resume — so the mop emote silently stopped playing until
+// a full reload (playtest). A huge wall-clock gap between frames IS the resume
+// signal; delete-and-recreate the warm-up GltfContainers to force re-fetches
+// (same trick as the bin load watchdog).
+const RESUME_GAP_MS = 5_000
+let lastFrameWallMs = 0
+function emoteRewarmOnResume() {
+  const now  = Date.now()
+  const prev = lastFrameWallMs
+  lastFrameWallMs = now
+  if (prev === 0) return                    // first frame — nothing to measure
+  const gap = now - prev
+  if (gap < RESUME_GAP_MS || warmupEntities.length === 0) return
+  console.log(`[EMOTE] app resumed after ${Math.round(gap / 1000)}s — re-warming emote GLBs`)
+  for (const w of warmupEntities) GltfContainer.deleteFrom(w.entity)
+  timers.setTimeout(() => {
+    for (const w of warmupEntities) GltfContainer.createOrReplace(w.entity, { src: w.src })
+  }, 200)
 }
 
 // Call once from initClient so the watch system runs every frame
 export function initEmoteManager() {
   engine.addSystem(emoteWatchSystem)
   engine.addSystem(carryPoseKeeper)
+  engine.addSystem(emoteRewarmOnResume)
   warmUpEmotes()
 }
 

@@ -197,6 +197,16 @@ export function setRoundStartHandler(h: RoundStartHandler): void {
   onRoundStart = h
 }
 
+// Fired when the spawn-in beat completes (mess + theme mask applied). Contracts
+// roll HERE, not at round start — they filter by the disaster availability the
+// spawn roller decides. Participation must NOT wait for this: promoting players
+// 2.6s late flashed the spectate overlay at every enrolled player (live test).
+type SpawnInHandler = (roundNumber: number) => void
+let onSpawnIn: SpawnInHandler | undefined
+export function setSpawnInHandler(h: SpawnInHandler): void {
+  onSpawnIn = h
+}
+
 export function getPhase():       Phase  { return phase }
 export function getRoundNumber(): number { return roundNumber }
 
@@ -384,12 +394,15 @@ function startNextRound(fullReset: boolean) {
     spawningIn   = false
     resetClutter()
     applyThemeMask()
-    // Contracts + participation land WITH the mess (the roller must run first:
-    // the disaster contract's availability flag is set by the spawn roll).
-    onRoundStart?.(roundNumber)
+    // Contracts land WITH the mess — the roller above just decided whether a
+    // disaster contract is even possible this round.
+    onSpawnIn?.(roundNumber)
     syncGameState()
   }, SPAWN_IN_DELAY_MS)
   phase = 'playing'
+  // Participation promotes AT the phase flip — waiting for the spawn-in beat
+  // left every enrolled player staring at the spectate overlay for 2.6s.
+  onRoundStart?.(roundNumber)
 
   if (playerCount > 0) {
     // Players are present — start the countdown immediately

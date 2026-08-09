@@ -12,7 +12,7 @@ import { theme } from './client/theme'
 import { isWaitingForMatch } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
-import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage } from './client/carrySystem'
+import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
@@ -329,6 +329,13 @@ let autoOpenedPayoutMs = 0
 // Admin theme-pin cycle position: 0 = random, 1.. = THEME_DEFS index + 1.
 // Local echo of what was last sent — the server owns the actual pin.
 let adminThemeIdx = 0
+// Admin hold-test: audition placed models on the carry rig (0 = off).
+// Names must match the Creator Hub entities exactly.
+const HOLD_TEST_MODELS = [
+  'Disco_Ball', 'Gold_Dustpan', 'Gold_Platter', 'Gold_Wheelie_Bin',
+  'Ice_Bucket', 'Janitor_Caddy', 'Milk_Crate',
+]
+let adminHoldIdx = 0
 // When the themed-round story card started showing (round start / scene entry).
 // Long hold + late fade: reading time first, THEN the screen declutters.
 let themeStoryStartMs   = -1
@@ -1509,7 +1516,11 @@ const uiBody = () => {
         const finalTitle = themeDef?.title ?? 'CLASSIC NIGHT'
         const finalBlurb = themeDef?.blurb ?? 'Just a regular shift — the mess never sleeps.'
         const spinning  = t < THEME_ROULETTE_MS
-        const spinT     = Math.min(1, t / THEME_ROULETTE_MS)
+        // QUANTIZED to fixed 100ms ticks: per-frame stepping looked smooth on
+        // desktop but jittered with mobile's uneven frame pacing. Fixed ticks
+        // read identically everywhere — and click like a real slot machine.
+        const qt        = Math.floor(t / 100) * 100
+        const spinT     = Math.min(1, qt / THEME_ROULETTE_MS)
         const spinIdx   = Math.floor((1 - Math.pow(1 - spinT, 2)) * wheel.length * 3)
         const shownTitle = spinning ? wheel[spinIdx % wheel.length] : finalTitle
         const pad = Math.round(16 * S)
@@ -1757,6 +1768,18 @@ const uiBody = () => {
               room.send('adminForceTheme', {
                 themeId: adminThemeIdx === 0 ? '' : THEME_DEFS[adminThemeIdx - 1].id,
               })
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          {/* Hold-test — cycles placed models onto the carry rig (same attach,
+              pose and emote as the box). Local preview only. */}
+          <Button
+            value={`Hold: ${adminHoldIdx === 0 ? 'OFF' : HOLD_TEST_MODELS[adminHoldIdx - 1]}`}
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              adminHoldIdx = (adminHoldIdx + 1) % (HOLD_TEST_MODELS.length + 1)
+              setCarryHoldTest(adminHoldIdx === 0 ? null : HOLD_TEST_MODELS[adminHoldIdx - 1])
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />

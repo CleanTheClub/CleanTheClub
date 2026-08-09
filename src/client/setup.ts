@@ -8,6 +8,34 @@ import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
+import { engine, Transform, LightSource } from '@dcl/sdk/ecs'
+import { Color3 } from '@dcl/sdk/math'
+import { getPlatform, isMobile } from '@dcl/sdk/platform'
+
+// ── Mobile player light ───────────────────────────────────────────────────────
+// The mobile renderer resolves the club much darker than desktop (playtest:
+// "it's too dark"). One warm point light rides the local player. Platform
+// resolves asynchronously, so a one-shot system waits for it.
+function initMobilePlayerLight(): void {
+  const waitForPlatform = () => {
+    if (getPlatform() === null) return
+    engine.removeSystem(waitForPlatform)
+    if (!isMobile()) return
+    const light = engine.addEntity()
+    Transform.create(light, { parent: engine.PlayerEntity, position: { x: 0, y: 1.8, z: 0 } })
+    LightSource.create(light, {
+      active: true,
+      color: Color3.create(1, 0.93, 0.82),   // warm club glow, not a torch
+      // Candelas (engine default is a blinding 16000) — a soft personal fill.
+      // TUNE by eye on a real phone.
+      intensity: 1200,
+      range: 10,
+      type: LightSource.Type.Point({}),
+    })
+    console.log('[LIGHT] mobile player light attached')
+  }
+  engine.addSystem(waitForPlatform)
+}
 import { initRestoreSystem } from './restoreSystem'
 import { initStinkSystem } from './stinkSystem'
 import { initSparkleSystem } from './sparkleSystem'
@@ -54,6 +82,7 @@ export function initClient() {
   })
   initRubbishSystem()
   initThemeSpawnSystem()   // click wiring for server-placed themed extras (theme_* slots)
+  initMobilePlayerLight()  // mobile renders the club too dark — see above
   initRestoreSystem([
     {
       itemId:         'test_reset',

@@ -8,13 +8,13 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_STREAM_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, getRoundNumber, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
-  progressStorageStatus, setCareersRestoredHandler,
+  progressStorageStatus, setCareersRestoredHandler, bumpKindCount,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -431,6 +431,21 @@ function carryStreamFor(itemId: string): RubbishType | null {
 }
 
 /**
+ * Lifetime-stat key for a cleaned item — normalized letters-only, so
+ * 'Wine Glass_12' → 'wineglass' and 'pizza_4' → 'pizza'. Theme spawns key by
+ * their MODEL ('pizza', 'brokenbottle'); disaster stages roll up under one key.
+ * Granular on purpose: achievements later sum whichever keys they care about
+ * ("pieces of pizza" = pizza + pizzaeaten).
+ */
+const statNorm = (s: string): string => s.toLowerCase().replace(/[^a-z]/g, '')
+function statKeyFor(itemId: string): string {
+  if (itemId.startsWith(THEME_SLOT_PREFIX)) return statNorm(themeSlotModels.get(itemId) ?? 'themed')
+  if (itemId.startsWith(DISASTER_PREFIX))  return 'disasterstage'
+  const name = itemNames.get(itemId)
+  return statNorm(name && name !== '' ? name : itemId)
+}
+
+/**
  * Item category for the themed-round mask (RoundManager). Built here because
  * this module owns the discovery/stream maps. Anything that isn't rubbish,
  * glassware or a sticky patch is a restore prop from CLUTTER_DEFS.
@@ -496,6 +511,16 @@ function sendCarried(address: string): void {
     },
     { to: [address] },
   )
+  // Public subset for everyone else — drives the box/bin on this player's
+  // avatar as seen by OTHERS (the emote replicates via the platform; the prop
+  // must be replicated by us).
+  room.send('carryPublic', {
+    address,
+    total:     (load?.general ?? 0) + (load?.recycle ?? 0),
+    capacity:  carryCapacityFor(address),
+    hauling:   haulingBy.get(address)?.stream ?? '',
+    haulStage: haulingBy.get(address)?.stage ?? '',
+  })
 }
 
 /** Hide or restore a hauled bin at its station (server-authoritative). */
@@ -1080,17 +1105,24 @@ export function initServer() {
     syncBinFull()
     for (const address of activeSessions) sendCarried(address)
 
-    // Fresh contracts for everyone cleaning this round; spectators get none
-    // (an empty send clears any stale contract chip on their HUD).
+    // Stale contracts vanish immediately (chips clear); fresh ones roll at the
+    // spawn-in beat below, once the disaster roll has decided what's possible.
     contracts.clear()
     disasterBonuses.clear()   // unbanked finale bonuses die with the old round
-    for (const address of activePlayers) contracts.set(address, rollContract())
     for (const address of activeSessions) sendContract(address)
 
     // Tell every known player where they stand — those promoted in, and those still
     // spectating, so a spectator's UI shows the sign-up prompt for the new round.
+    // This runs AT the phase flip: delaying it to the spawn-in beat flashed the
+    // spectate overlay at every enrolled player (live two-player test).
     for (const address of activeSessions) sendParticipation(address)
     console.log(`[PARTICIPATION] round ${roundNumber} — ${activePlayers.size} cleaning, ${activeSessions.size - activePlayers.size} spectating, crew power ${crewPowerNow().toFixed(1)}`)
+  })
+
+  // ── Spawn-in complete → contracts roll (disaster availability now known) ─────
+  setSpawnInHandler(() => {
+    for (const address of activePlayers) contracts.set(address, rollContract())
+    for (const address of activeSessions) sendContract(address)
   })
 
   // ── Shift complete → pay wages, award XP, persist ───────────────────────────
@@ -1141,6 +1173,10 @@ export function initServer() {
       const haulBonus = haulBonuses.get(address) ?? 0
       haulBonuses.delete(address)
       money += haulBonus
+
+      // Shift-type tally — 'shiftclassic', 'shiftpizzaparty', … (fuels
+      // achievement gates like "work 10 cocktail nights").
+      bumpKindCount(address, 'shift' + statNorm(getTheme() || 'classic'))
 
       const res = awardShift(address, money, xp, items, rewards.passed)
       sendProgress(address, {
@@ -1344,6 +1380,8 @@ export function initServer() {
     // the point the server ACCEPTS the clean, so respawns during the round can't
     // erase the credit.
     recordContribution(address)
+    // Lifetime kind tally — achievement fuel ("clean 1000 pieces of pizza").
+    bumpKindCount(address, statKeyFor(itemId))
 
     // Accepted carryable mess goes into the player's hands, in its stream's pouch.
     const stream = carryStreamFor(itemId)
@@ -1395,6 +1433,7 @@ export function initServer() {
         // payout, so the report card itemises it and it flows through
         // awardShift like the tip and contract bonuses do.
         disasterBonuses.set(address, (disasterBonuses.get(address) ?? 0) + DISASTER_BONUS)
+        bumpKindCount(address, 'disastercleared')
         console.log(`[SERVER] disaster CLEARED by ${address} — +$${DISASTER_BONUS} at shift end`)
       }
       return
@@ -1554,6 +1593,7 @@ export function initServer() {
     // A real (non-empty) deposit advances the deposits contract.
     if (load[stream] > 0) {
       bumpContract(context.from, ['deposits'])
+      bumpKindCount(context.from, 'deposit')
       binFill[stream] += load[stream]
       syncBinFull()   // every deposit — clients render the pile growing
       if (binStreamFull(stream)) {
@@ -1611,6 +1651,7 @@ export function initServer() {
     haulingBy.delete(address)
     setBinAtStation(haul.binName, true)
     haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
+    bumpKindCount(address, 'haulcompleted')
     sendCarried(address)
     console.log(`[CARRY] ${address.slice(0, 8)} returned bin '${haul.binName}' — +$${HAUL_BONUS} banked`)
   })
@@ -1627,6 +1668,7 @@ export function initServer() {
     }
     portableUsed.set(address, (portableUsed.get(address) ?? 0) + 1)
     carriedRubbish.set(address, { general: 0, recycle: 0 })
+    bumpKindCount(address, 'portableempty')
     sendCarried(address)
   })
 

@@ -68,7 +68,26 @@ let disasterMarker: Entity | null = null
 let disasterWasLive = false
 
 function updateDisasterMarker(live: boolean, at: { x: number; y: number; z: number } | null) {
-  if (live && at) {
+  // Announce on the rising edge regardless of distance — the toast is the
+  // "it exists" beat; the floating text is only the wayfinder.
+  if (live && !disasterWasLive) {
+    showNarrativeToast('DISASTER ZONE spotted — big mess, big pay. Clear it!')
+  }
+  disasterWasLive = live
+
+  // The beacon earns its keep AT A DISTANCE (wayfinding); within ~7m the pile
+  // itself is visible and floating text is noise ("adding vs distracting").
+  let show = live && at !== null
+  if (show && at) {
+    const p = Transform.getOrNull(engine.PlayerEntity)?.position
+    if (p) {
+      const dx = p.x - at.x
+      const dz = p.z - at.z
+      if (dx * dx + dz * dz < 49) show = false
+    }
+  }
+
+  if (show && at) {
     if (disasterMarker === null) {
       disasterMarker = engine.addEntity()
       TextShape.create(disasterMarker, {
@@ -85,14 +104,10 @@ function updateDisasterMarker(live: boolean, at: { x: number; y: number; z: numb
     const pos = { x: at.x, y: at.y + 2.3, z: at.z }
     if (!tf) Transform.create(disasterMarker, { position: pos })
     else Transform.getMutable(disasterMarker).position = pos
-    if (!disasterWasLive) {
-      showNarrativeToast('DISASTER ZONE spotted — big mess, big pay. Clear it!')
-    }
   } else if (disasterMarker !== null) {
     engine.removeEntity(disasterMarker)
     disasterMarker = null
   }
-  disasterWasLive = live
 }
 // Last GltfContainer src seen per slot — the server delivers each round's model
 // slightly after the round starts (delete-then-recreate, see the roller), so
@@ -172,7 +187,8 @@ function enableClick(itemId: string) {
       const srcNow = (GltfContainer.getOrNull(entity)?.src ?? '').toLowerCase()
       // Popcorn detours through Rhythm Pop — identical rule to scene popcorn.
       if (srcNow.includes(POP_NAME_PART)) {
-        startPopRhythm(itemId, () => {
+        startPopRhythm(itemId, (hits) => {
+          if (hits === 0) return   // blank run — popcorn stays, click to retry
           if (pendingCleans.has(itemId) || lastState.get(itemId) === true) return
           if (getPhase() === 'open' || isCarryFull()) return
           performClean()
