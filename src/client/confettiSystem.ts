@@ -15,7 +15,7 @@ import {
   timers,
 } from '@dcl/sdk/ecs'
 import { Color4, Quaternion } from '@dcl/sdk/math'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Config — all tunables in one place ───────────────────────────────────────
@@ -25,8 +25,12 @@ const DEBUG_CONFETTI = false      // fire immediately on init; set false to ship
 
 // ── Pool ─────────────────────────────────────────────────────────────────────
 // Must comfortably hold: (pieces_per_burst) × (LIFE_MAX_MS / LOOP_INTERVAL_MS)
-// Finale steady state: 12 pieces/cannon × 9 cannons × (8 000 ms / 1 000 ms) = 864 → 1000 is safe
-const POOL_SIZE = 1000
+// Finale steady state: 12 pieces/cannon × 9 cannons × (~6s avg life / 1s) ≈ 650.
+// Was 1000 entities + 1000 PBR materials at boot — two-thirds of the scene's
+// runtime entity count for a moment that lasts seconds, and mesh count is a
+// budgeted axis on mobile. 700 + the shorter lifetimes below keeps the finale
+// visually identical (pool exhaustion just skips a burst's tail, logged).
+const POOL_SIZE = 700
 
 // ── Piece appearance ──────────────────────────────────────────────────────────
 const PIECE_W           = 0.22   // width  (metres)
@@ -57,8 +61,10 @@ const SPIN_Z_MAX         = 380
 const SPIN_Y_FACTOR      = 0.4   // yaw is this fraction of roll speed
 
 // ── Lifetime & fade ───────────────────────────────────────────────────────────
-const LIFE_MIN_MS        = 5_000  // milliseconds
-const LIFE_MAX_MS        = 8_000
+// Pieces reach the floor ≈4s after launch (18m at GRAVITY 1.8) — lifetimes
+// past that mostly animate confetti inside the floor. Trimmed from 5-8s.
+const LIFE_MIN_MS        = 4_500  // milliseconds
+const LIFE_MAX_MS        = 6_500
 const FADE_START_FRAC    = 0.80  // fraction of lifetime when fade-out begins
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
@@ -208,7 +214,8 @@ function fireBurst(cfg: BurstCfg): void {
       spawned++
     }
   }
-  console.log(`[Confetti] Burst — ${spawned} pieces`)
+  // Once per second for the whole intermission — debug only (log noise).
+  if (DEBUG_CONFETTI) console.log(`[Confetti] Burst — ${spawned} pieces`)
 }
 
 function scheduleNextBurst(cfg: BurstCfg): void {
@@ -327,16 +334,15 @@ export function initConfettiSystem(): void {
   // ── Phase watcher ───────────────────────────────────────────────────────────
   let lastPhase = ''
   engine.addSystem(() => {
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      if (gs.phase === lastPhase) continue
-      const prev = lastPhase
-      lastPhase  = gs.phase
-      console.log(`[Confetti] Phase: "${prev}" → "${gs.phase}"`)
-      if (gs.phase === 'open'    && prev === 'playing') launchCelebration(gs.outcome as Outcome, gs.isFinale)
-      if (gs.phase === 'playing' && prev === 'open')    stopCelebration()
-      // The finale now exits 'open' → 'lobby' (not 'playing'), so stop here too.
-      if (gs.phase === 'lobby'   && prev === 'open')    stopCelebration()
-    }
+    const gs = gameState()
+    if (!gs || gs.phase === lastPhase) return
+    const prev = lastPhase
+    lastPhase  = gs.phase
+    console.log(`[Confetti] Phase: "${prev}" → "${gs.phase}"`)
+    if (gs.phase === 'open'    && prev === 'playing') launchCelebration(gs.outcome as Outcome, gs.isFinale)
+    if (gs.phase === 'playing' && prev === 'open')    stopCelebration()
+    // The finale now exits 'open' → 'lobby' (not 'playing'), so stop here too.
+    if (gs.phase === 'lobby'   && prev === 'open')    stopCelebration()
   })
 
   // ── Debug burst ─────────────────────────────────────────────────────────────

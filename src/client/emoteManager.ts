@@ -166,6 +166,13 @@ function emoteRewarmOnResume() {
   timers.setTimeout(() => {
     for (const w of warmupEntities) GltfContainer.createOrReplace(w.entity, { src: w.src })
   }, 200)
+  // The carry LOOP also died in the suspend, but the keeper believes it's live
+  // (staleness is only detected via movement, and nothing moved while frozen).
+  // Mark it stale now — and again once the re-fetched GLB has had time to land,
+  // in case the first re-assert fired against a still-cold asset (a cold
+  // triggerSceneEmote no-ops silently).
+  carryLoopLive = false
+  timers.setTimeout(() => { carryLoopLive = false }, 3_000)
 }
 
 // Call once from initClient so the watch system runs every frame

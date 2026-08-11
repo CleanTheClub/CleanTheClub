@@ -186,8 +186,19 @@ export function ensureProgressLoaded(): Promise<unknown> {
           loaded.upgrades[u] = Math.max(loaded.upgrades[u] ?? 0, lvl ?? 0)
         }
         if (existing.displayName) loaded.displayName = existing.displayName
-        // Daily/streak fields: keep whichever is from the more recent day.
-        if (existing.dailyDay >= loaded.dailyDay) {
+        // Pre-load kind tallies are additive, same as the headline numbers —
+        // dropping them undercounted the achievement counters by whatever the
+        // player touched before the read settled.
+        for (const [k, cnt] of Object.entries(existing.kindCounts)) {
+          loaded.kindCounts[k] = (loaded.kindCounts[k] ?? 0) + cnt
+        }
+        // Daily fields: SAME day sums (both sides earned today), a strictly
+        // newer session day replaces. The old >=-replace dropped the stored
+        // day's count whenever the race happened on the same UTC day —
+        // which is when it always happens.
+        if (existing.dailyDay === loaded.dailyDay && existing.dailyDay !== '') {
+          loaded.dailyItems += existing.dailyItems
+        } else if (existing.dailyDay > loaded.dailyDay) {
           loaded.dailyItems = existing.dailyItems
           loaded.dailyDay   = existing.dailyDay
         }
@@ -284,6 +295,16 @@ export function getProgress(address: string): ProgressRecord {
   let rec = records.get(key)
   if (!rec) { rec = emptyRecord(); records.set(key, rec) }
   return rec
+}
+
+/**
+ * Read-only lookup that does NOT create a record. Presence/heartbeat paths use
+ * this: getProgress's create-on-read materialised a stub for every session id
+ * that ever entered — which is exactly the record the boot-race merge then has
+ * to repair, and a dead row in `records` for every passer-by.
+ */
+export function peekProgress(address: string): ProgressRecord | undefined {
+  return records.get(address.toLowerCase())
 }
 
 // Streak bonus: +10 XP per consecutive work day, capped so a long streak is a
@@ -438,6 +459,11 @@ export async function saveProgress(): Promise<void> {
   if (pruned > 0) console.log(`[PROGRESS] skipped ${pruned} empty record(s)`)
   if (Object.keys(players).length === 0) return   // nothing persistable (all guests)
 
+  // Clear BEFORE the await so mutations that land mid-write re-mark the flag,
+  // then restore on failure so the next checkpoint retries — the old
+  // clear-and-forget meant a failed final save (e.g. right before the empty-
+  // club shutdown) silently lost the shift.
   dirty = false
-  await doc.save({ v: SCHEMA_VERSION, players })
+  const ok = await doc.save({ v: SCHEMA_VERSION, players })
+  if (!ok) dirty = true
 }

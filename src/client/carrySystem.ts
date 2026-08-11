@@ -13,12 +13,11 @@ import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, Text
 import { getUserData } from '~system/UserIdentity'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
-import { GameState } from '../shared/schemas'
 import { RubbishType } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { DUMPSTER_PREFIX, BIN_STREAM_CAPACITY, BIN_STINK_FRACTION, themeModelSrc } from '../shared/config'
 import { requestSetup } from './spawnDirector'
-import { POINTER_MAX_DIST } from './phaseGate'
+import { POINTER_MAX_DIST, gameState } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty } from './progressionStore'
@@ -428,10 +427,9 @@ export const isCarryFull       = (): boolean => known && (hauling !== '' || carr
 
 /** Bin fill levels from GameState — club-wide, server-owned. */
 function binFillClient(type: RubbishType): number {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) {
-    return type === 'general' ? gs.binFillGeneral : gs.binFillRecycle
-  }
-  return 0
+  const gs = gameState()
+  if (!gs) return 0
+  return type === 'general' ? gs.binFillGeneral : gs.binFillRecycle
 }
 function binStreamFullClient(type: RubbishType): boolean {
   return binFillClient(type) >= BIN_STREAM_CAPACITY
@@ -455,9 +453,17 @@ export function requestPortableEmpty(): void {
 // viewers saw the carry emote play over visibly empty hands (live test).
 type RemoteCarry = { anchor: Entity; bag: Entity; lastSrc: string }
 const remoteCarries = new Map<string, RemoteCarry>()
+
+// address → station bin name that player is currently hauling ('' = none).
+// Station-bin visibility is CLIENT-owned: the server's old Transform write on
+// the bin entity never replicated (composite entities aren't synced), so the
+// hauled bin used to stay visibly at its station for everyone. Each client now
+// hides/restores bins from its own haul state + these broadcast remote hauls.
+const remoteHauls = new Map<string, string>()
 let ownAddress = ''
 
 function removeRemoteCarry(address: string): void {
+  remoteHauls.delete(address)
   const rc = remoteCarries.get(address)
   if (!rc) return
   engine.removeEntityWithChildren(rc.anchor)
@@ -501,6 +507,8 @@ export function initCarrySystem(): void {
   room.onMessage('carryPublic', (data) => {
     const addr = data.address.toLowerCase()
     if (addr === ownAddress) return
+    const mid = data.haulStage === 'out' || data.haulStage === 'back'
+    remoteHauls.set(addr, mid ? (data.haulBinName ?? '') : '')
     updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage)
   })
 
@@ -690,22 +698,52 @@ export function initCarrySystem(): void {
   let returnMarker: Entity | null = null
   // Whether any bin is currently scale-pulsing (one restore pass on idle).
   let binsPulsed = false
+  // Station bins currently hidden because someone (us or a remote player) is
+  // hauling them. Recomputed on the 0.5s cadence; the fill-pulse skips these.
+  const hiddenBins = new Set<string>()
+  // Marker visibility change-guards — the old version rewrote every marker's
+  // Transform each 0.5s tick whether or not anything changed.
+  let lastShowFull = false
+  let lastShowDump = false
 
   let markerAcc = 0
   engine.addSystem((dt: number) => {
     markerAcc += dt
     if (markerAcc < 0.5) return
     markerAcc = 0
+
+    // ── Station-bin visibility (own haul + broadcast remote hauls) ─────────
+    const hauledNow = new Set<string>()
+    if (haulStage !== '' && haulBinName !== '') hauledNow.add(haulBinName)
+    for (const [, binName] of remoteHauls) if (binName !== '') hauledNow.add(binName)
+    for (const b of binVisuals) {
+      const shouldHide = hauledNow.has(b.name)
+      if (shouldHide === hiddenBins.has(b.name)) continue
+      const tf = Transform.getMutableOrNull(b.entity)
+      if (!tf) continue
+      if (shouldHide) {
+        hiddenBins.add(b.name)
+        tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
+      } else {
+        hiddenBins.delete(b.name)
+        tf.scale = { x: b.base.x, y: b.base.y, z: b.base.z }
+      }
+    }
     const anyFull = binStreamFullClient('general') || binStreamFullClient('recycle')
     const showFull = anyFull && hauling === ''   // once someone hauls, the shout stops
-    for (const m of fullMarkers) {
-      const tf = Transform.getMutable(m)
-      tf.scale = showFull ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+    if (showFull !== lastShowFull) {
+      lastShowFull = showFull
+      for (const m of fullMarkers) {
+        Transform.getMutable(m).scale = showFull ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+      }
     }
-    for (const m of dumpMarkers) {
-      const tf = Transform.getMutable(m)
-      // Dumpsters call only while the FULL bin is out; the return leg points home.
-      tf.scale = haulStage === 'out' ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+    // Dumpsters call only while the FULL bin is out; the return leg points home.
+    const showDump = haulStage === 'out'
+    if (showDump !== lastShowDump) {
+      lastShowDump = showDump
+      for (const m of dumpMarkers) {
+        Transform.getMutable(m).scale = showDump ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
+      }
     }
     // Return leg: a marker + click target appear at the hauled bin's empty spot.
     if (haulStage === 'back' && haulBinName !== '') {
@@ -751,19 +789,24 @@ export function initCarrySystem(): void {
     }
   })
 
-  // ── Bin fill pulse — per-frame breathing, per STREAM: amplitude grows with
-  // that stream's fill, so a swelling general bin next to a still recycling
-  // bin tells you exactly what needs emptying.
-  engine.addSystem(() => {
-    // ONE GameState read per frame, not one per bin (audit: per-frame
-    // getEntitiesWith scans multiplied by the bin count). Idle short-circuit
-    // AFTER one restore pass, so a round reset can't freeze a mid-pulse scale.
+  // ── Bin fill pulse — breathing per STREAM: amplitude grows with that
+  // stream's fill, so a swelling general bin next to a still recycling bin
+  // tells you exactly what needs emptying. Stepped at 20 Hz — invisible on a
+  // ~2.5s breathe cycle, and it cuts ~8 dirty Transforms/frame to a third.
+  let pulseAcc = 0
+  engine.addSystem((dt: number) => {
+    pulseAcc += dt
+    if (pulseAcc < 0.05) return
+    pulseAcc = 0
+    // ONE GameState read per tick, not one per bin. Idle short-circuit AFTER
+    // one restore pass, so a round reset can't freeze a mid-pulse scale.
     const genFrac = Math.min(1, binFillClient('general') / BIN_STREAM_CAPACITY)
     const recFrac = Math.min(1, binFillClient('recycle') / BIN_STREAM_CAPACITY)
     if (genFrac <= 0 && recFrac <= 0) {
       if (binsPulsed) {
         binsPulsed = false
         for (const b of binVisuals) {
+          if (hiddenBins.has(b.name)) continue   // hauled bins stay hidden
           const tf = Transform.getMutableOrNull(b.entity)
           if (tf) tf.scale = { x: b.base.x, y: b.base.y, z: b.base.z }
         }
@@ -773,6 +816,7 @@ export function initCarrySystem(): void {
     binsPulsed = true
     const now = Date.now()
     for (const b of binVisuals) {
+      if (hiddenBins.has(b.name)) continue   // hauled bins stay hidden
       const frac = b.type === 'general' ? genFrac : recFrac
       const tf = Transform.getMutableOrNull(b.entity)
       if (!tf) continue

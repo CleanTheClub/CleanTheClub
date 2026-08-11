@@ -1,15 +1,14 @@
 import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
-import { engine, EasingFunction, UiCanvasInformation } from '@dcl/sdk/ecs'
+import { engine, EasingFunction, UiCanvasInformation, timers } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
-import { GameState } from './shared/schemas'
 import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS, POP_HIT_T } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
-import { isWaitingForMatch } from './client/phaseGate'
+import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
@@ -220,7 +219,7 @@ interface ToastEntry {
   count?:   number
   total?:   number
   text?:    string
-  timerId?: ReturnType<typeof setTimeout>
+  timerId?: number
 }
 
 let _toastId = 0
@@ -243,7 +242,9 @@ const TOAST_DURATION: Record<ToastKind, number> = {
 function _addToast(entry: Omit<ToastEntry, 'id' | 'timerId'>) {
   const id = ++_toastId
   const t: ToastEntry = { ...entry, id }
-  t.timerId = setTimeout(() => {
+  // timers.*, not the global setTimeout — engine-tick timers respect the scene
+  // lifecycle instead of firing from outside it.
+  t.timerId = timers.setTimeout(() => {
     const i = activeToasts.findIndex(x => x.id === id)
     if (i !== -1) activeToasts.splice(i, 1)
   }, TOAST_DURATION[entry.kind])
@@ -262,8 +263,8 @@ export function showCollectionToast(kind: 'glasses' | 'bottles', count: number, 
   if (existing) {
     existing.count = count
     existing.total = total
-    if (existing.timerId) clearTimeout(existing.timerId)
-    existing.timerId = setTimeout(() => {
+    if (existing.timerId !== undefined) timers.clearTimeout(existing.timerId)
+    existing.timerId = timers.setTimeout(() => {
       const i = activeToasts.findIndex(x => x.id === existing.id)
       if (i !== -1) activeToasts.splice(i, 1)
     }, TOAST_DURATION[kind])
@@ -273,7 +274,7 @@ export function showCollectionToast(kind: 'glasses' | 'bottles', count: number, 
   }
 
   if (count === total) {
-    setTimeout(() => showCleanedToast(), 350)
+    timers.setTimeout(() => showCleanedToast(), 350)
   }
 }
 
@@ -292,10 +293,9 @@ async function checkAdmin() {
   } catch (_) {}
 }
 
-function getGameState() {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs
-  return null
-}
+// Reads phaseGate's once-per-frame snapshot instead of opening another
+// component iterator from inside the render loop.
+const getGameState = () => gameState()
 
 function formatTime(s: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -342,7 +342,15 @@ let themeStoryStartMs   = -1
 const THEME_STORY_MS      = 9_000
 const THEME_STORY_FADE_MS = 900
 // Roulette spin at the front of the story card — decelerating title cycle.
+// 100ms-quantized clock for decorative pulses. Feeding raw Date.now() sines
+// into color props changed the prop EVERY frame — a guaranteed UI update per
+// node per frame even with the game static. Same idiom as the roulette tick.
+const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
+
 const THEME_ROULETTE_MS   = 1_600
+// Hoisted — building this inside the render allocated a fresh array every
+// frame for the full 9s the roulette card is up.
+const THEME_WHEEL = [...THEME_DEFS.map((td) => td.title), 'CLASSIC NIGHT']
 // Beat between the payout card's centre-stage pop and the shop panel sliding in.
 const SHOP_AUTO_OPEN_DELAY_MS = 1500
 
@@ -487,8 +495,8 @@ function CarryChip({ S }: { S: number }) {
               : 'HAULING THE FULL BIN — dumpster is outside!'}
             fontSize={Math.round(26 * S)}
             color={getHaulStage() === 'back'
-              ? { r: 0.4, g: 0.95, b: 0.5, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }
-              : { r: 1, g: 0.82, b: 0.25, a: 0.75 + 0.25 * Math.sin(Date.now() / 200) }}
+              ? { r: 0.4, g: 0.95, b: 0.5, a: 0.75 + 0.25 * Math.sin(pulseNow() / 200) }
+              : { r: 1, g: 0.82, b: 0.25, a: 0.75 + 0.25 * Math.sin(pulseNow() / 200) }}
           />
         </UiEntity>
       </UiEntity>
@@ -517,7 +525,7 @@ function CarryChip({ S }: { S: number }) {
   const genW = Math.round(trackW * Math.min(1, gen / cap))
   const recW = Math.round(trackW * Math.min(1, rec / cap))
   // Pulse the whole chip when full, so "go empty this" is impossible to miss.
-  const pulse = full ? 0.75 + 0.25 * Math.sin(Date.now() / 140) : 1
+  const pulse = full ? 0.75 + 0.25 * Math.sin(pulseNow() / 140) : 1
 
   return (
     <UiEntity
@@ -1316,7 +1324,7 @@ const uiBody = () => {
                   width: Math.round((holdZoneEnd - holdZoneStart) * holdBarW),
                   height: '100%',
                 }}
-                uiBackground={{ color: { r: 0.2, g: 1, b: 0.45, a: 0.45 + 0.2 * Math.sin(Date.now() / 140) } }}
+                uiBackground={{ color: { r: 0.2, g: 1, b: 0.45, a: 0.45 + 0.2 * Math.sin(pulseNow() / 140) } }}
               />
             )}
             {holdZoneStart !== null && (
@@ -1512,7 +1520,7 @@ const uiBody = () => {
         // rounds are a real slot on the wheel too, so the ritual is constant
         // and a themed landing feels like a win. The server's roll is long
         // done; this is pure drama, and the spin visibly decelerates.
-        const wheel = [...THEME_DEFS.map((td) => td.title), 'CLASSIC NIGHT']
+        const wheel = THEME_WHEEL
         const finalTitle = themeDef?.title ?? 'CLASSIC NIGHT'
         const finalBlurb = themeDef?.blurb ?? 'Just a regular shift — the mess never sleeps.'
         const spinning  = t < THEME_ROULETTE_MS
@@ -1642,7 +1650,7 @@ const uiBody = () => {
             <Label
               value="FRENZY! Sprees count double"
               fontSize={Math.round(24 * S)}
-              color={{ r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(Date.now() / 120) }}
+              color={{ r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 120) }}
               uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
             />
           )}
@@ -1652,7 +1660,7 @@ const uiBody = () => {
             <Label
               value="LAST CALL — spotless! Doors open early"
               fontSize={Math.round(24 * S)}
-              color={{ r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(Date.now() / 200) }}
+              color={{ r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 200) }}
               uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
             />
           )}

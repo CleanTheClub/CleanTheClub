@@ -13,8 +13,8 @@
 
 import { engine, Entity, Transform, GltfContainer, GltfContainerLoadingState, LoadingState, pointerEventsSystem, PointerEvents, InputAction, TextShape, Billboard, BillboardMode } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
-import { ClutterSync, GameState } from '../shared/schemas'
-import { THEME_SLOT_PREFIX, DISASTER_PREFIX, DISASTER_BONUS, PICKUP_TOUCH_MS, TAP_TAP_MODELS, POP_NAME_PART } from '../shared/config'
+import { ClutterSync } from '../shared/schemas'
+import { THEME_SLOT_PREFIX, DISASTER_PREFIX, DISASTER_BONUS, PICKUP_TOUCH_MS, POP_NAME_PART } from '../shared/config'
 import { registerDisasterHold, unregisterDynamicHold, startPopRhythm } from './InteractionManager'
 import { purchaseBurst } from './confettiSystem'
 import { classifyRubbish } from '../shared/glassDiscovery'
@@ -24,7 +24,8 @@ import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase, gameState } from './phaseGate'
+import { onClutterPoll, ClutterEntry } from './clutterWatcher'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 
@@ -55,10 +56,6 @@ let polishWasCleaned: boolean | undefined
 // HOLDS owned by the InteractionManager, not quick clicks. Membership follows
 // the model, so a slot switches modes cleanly between rounds.
 const holdSlots = new Set<string>()
-
-// Multi-tap progress per item (tap-tap popcorn). Cleared on phase change and
-// when an item resolves either way.
-const tapCounts = new Map<string, number>()
 
 // ── Disaster beacon ───────────────────────────────────────────────────────────
 // Playtest: "wasn't clear where the disaster zone was" — the pile read as three
@@ -114,11 +111,6 @@ function updateDisasterMarker(live: boolean, at: { x: number; y: number; z: numb
 // click wiring re-registers when the model lands, keeping hover text truthful.
 const lastSrc       = new Map<string, string>()
 
-function getPhase(): string {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
-  return 'playing'
-}
-
 // Toast throttles mirror rubbishSystem's (the miss blip plays every time).
 const TOAST_COOLDOWN_MS = 3_000
 let lastFullToastMs = 0
@@ -158,7 +150,7 @@ function enableClick(itemId: string) {
     },
     () => {
       const now = Date.now()
-      if (getPhase() === 'open') {
+      if (currentPhase() === 'open') {
         if (now - lastOpenToastMs > TOAST_COOLDOWN_MS) {
           lastOpenToastMs = now
           showNarrativeToast('Wait for the next round!')
@@ -190,21 +182,10 @@ function enableClick(itemId: string) {
         startPopRhythm(itemId, (hits) => {
           if (hits === 0) return   // blank run — popcorn stays, click to retry
           if (pendingCleans.has(itemId) || lastState.get(itemId) === true) return
-          if (getPhase() === 'open' || isCarryFull()) return
+          if (currentPhase() === 'open' || isCarryFull()) return
           performClean()
         })
         return
-      }
-      // Tap-tap models: the first taps are pops, the LAST tap cleans.
-      const tapEntry = Object.entries(TAP_TAP_MODELS).find(([frag]) => srcNow.includes(frag))
-      if (tapEntry && tapEntry[1] > 1) {
-        const taps = (tapCounts.get(itemId) ?? 0) + 1
-        if (taps < tapEntry[1]) {
-          tapCounts.set(itemId, taps)
-          playCleanSound()   // pop! (random-pitched, so tap-tap-tap sings)
-          return
-        }
-        tapCounts.delete(itemId)
       }
       performClean()
 
@@ -234,19 +215,13 @@ function enableClick(itemId: string) {
 
 export function initThemeSpawnSystem() {
   // ── Authoritative state watcher — discovers replicated slots + follows their
-  // cleaned state. Same poll cadence as the other item systems. ────────────────
-  let syncAcc = 0
-  engine.addSystem((dt: number) => {
-    syncAcc += dt
-    if (syncAcc < SYNC_POLL_S) return
-    syncAcc = 0
+  // cleaned state. Rides the shared ClutterSync poll (same cadence as before). ──
+  onClutterPoll((entries: readonly ClutterEntry[]) => {
     let disasterLive = false
     let disasterAt: { x: number; y: number; z: number } | null = null
-    for (const [entity] of engine.getEntitiesWith(ClutterSync)) {
-      const state = ClutterSync.get(entity)
-
+    for (const { entity, itemId, isCleaned } of entries) {
       // Any uncleaned disaster stage keeps the beacon up over the spot.
-      if (state.itemId.startsWith(DISASTER_PREFIX) && !state.isCleaned) {
+      if (itemId.startsWith(DISASTER_PREFIX) && !isCleaned) {
         disasterLive = true
         if (disasterAt === null) disasterAt = Transform.getOrNull(entity)?.position ?? null
       }
@@ -255,72 +230,70 @@ export function initThemeSpawnSystem() {
       // watch the polish for the all-clients finale celebration. Registration
       // waits for the GltfContainer — pointer events before the model exists
       // trip the explorer's "Missing MeshCollider" warning; the next poll
-      // (SYNC_POLL_S) picks it up once the model lands.
-      if (state.itemId.startsWith(DISASTER_PREFIX) && !state.itemId.includes('pile')) {
-        if (GltfContainer.getOrNull(entity)?.src && slotModelLoaded(entity)) registerDisasterHold(state.itemId, entity)
-        if (state.itemId.endsWith('_polish')) {
-          if (polishWasCleaned === false && state.isCleaned) {
+      // picks it up once the model lands.
+      if (itemId.startsWith(DISASTER_PREFIX) && !itemId.includes('pile')) {
+        if (GltfContainer.getOrNull(entity)?.src && slotModelLoaded(entity)) registerDisasterHold(itemId, entity)
+        if (itemId.endsWith('_polish')) {
+          if (polishWasCleaned === false && isCleaned) {
             showNarrativeToast(`DISASTER CLEARED! +$${DISASTER_BONUS} on the payout!`)
             purchaseBurst()
             const pos = Transform.getOrNull(entity)?.position
             if (pos) playSparkle(pos)
           }
-          polishWasCleaned = state.isCleaned
+          polishWasCleaned = isCleaned
         }
         continue
       }
 
-      if (!isQuickThemedId(state.itemId)) continue
-      slotEntities.set(state.itemId, entity)
+      if (!isQuickThemedId(itemId)) continue
+      slotEntities.set(itemId, entity)
 
       // Model swap (new round's GltfContainer landed/changed): drop all stale
       // wiring — the idempotent per-poll blocks below re-wire once the new
       // model is LOADED. Sticky-patch models (spring cleaning) belong to the
       // HOLD pipeline; anything else is a quick click.
       const src = GltfContainer.getOrNull(entity)?.src ?? ''
-      if (src !== lastSrc.get(state.itemId)) {
-        lastSrc.set(state.itemId, src)
-        tapCounts.delete(state.itemId)
-        disableClick(state.itemId)
-        if (holdSlots.has(state.itemId)) {
-          holdSlots.delete(state.itemId)
-          unregisterDynamicHold(state.itemId)
+      if (src !== lastSrc.get(itemId)) {
+        lastSrc.set(itemId, src)
+        disableClick(itemId)
+        if (holdSlots.has(itemId)) {
+          holdSlots.delete(itemId)
+          unregisterDynamicHold(itemId)
         }
       }
       if (src.toLowerCase().includes('sticky')) {
-        if (!holdSlots.has(state.itemId) && slotModelLoaded(entity)) {
-          holdSlots.add(state.itemId)
-          registerDisasterHold(state.itemId, entity)   // hold pipeline owns it
+        if (!holdSlots.has(itemId) && slotModelLoaded(entity)) {
+          holdSlots.add(itemId)
+          registerDisasterHold(itemId, entity)   // hold pipeline owns it
         }
         continue
       }
       // Live but unwired (fresh spawn, model still streaming, or a re-wire
       // after a swap) — retry; enableClick self-gates on the load state.
-      if (state.isCleaned === false && !pendingCleans.has(state.itemId) && !wiredSlots.has(state.itemId)) {
-        enableClick(state.itemId)
+      if (isCleaned === false && !pendingCleans.has(itemId) && !wiredSlots.has(itemId)) {
+        enableClick(itemId)
       }
 
-      if (lastState.get(state.itemId) === state.isCleaned) continue
-      lastState.set(state.itemId, state.isCleaned)
-      pendingCleans.delete(state.itemId)
+      if (lastState.get(itemId) === isCleaned) continue
+      lastState.set(itemId, isCleaned)
+      pendingCleans.delete(itemId)
 
-      if (state.isCleaned) {
-        disableClick(state.itemId)
+      if (isCleaned) {
+        disableClick(itemId)
       } else {
         // A slot waking for a new round: the server has already placed and
         // scaled it; clear any leftover local shrink before wiring the click.
         cancelShrink(entity)
-        enableClick(state.itemId)
+        enableClick(itemId)
       }
     }
     // Beacon only during active play — an unfinished disaster used to keep it
     // floating through the whole intermission.
-    updateDisasterMarker(disasterLive && getPhase() === 'playing', disasterAt)
+    updateDisasterMarker(disasterLive && currentPhase() === 'playing', disasterAt)
   })
 
   // ── Phase gate — pointer events only live while players can clean ────────────
   onPhaseChange((phase) => {
-    tapCounts.clear()
     if (phase === 'playing') {
       let live = 0
       for (const [itemId] of slotEntities) {
@@ -341,8 +314,7 @@ export function initThemeSpawnSystem() {
       // Live count reads the COMPONENT, not lastState: the watcher poll may not
       // have run yet at the phase flip, which logged a themed round as "0
       // extras" while bottles were visibly spawning (playtest).
-      let theme = ''
-      for (const [, gs] of engine.getEntitiesWith(GameState)) { theme = gs.theme; break }
+      const theme = gameState()?.theme ?? ''
       let liveNow = 0
       for (const [, entity] of slotEntities) {
         if (ClutterSync.getOrNull(entity)?.isCleaned === false) liveNow++

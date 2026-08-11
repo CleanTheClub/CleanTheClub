@@ -58,12 +58,26 @@ const handlers: Handler[] = []
 // nothing re-fired them when the answer arrived, leaving every item unclickable
 // for the whole round. Keying the watcher on both re-fires the handlers the
 // moment participation catches up.
-let lastGateKey = ''
+let lastPhaseSeen: string | null = null
+let lastActiveSeen: boolean | null = null
 let systemAdded = false
 
+// ── Shared GameState read ─────────────────────────────────────────────────────
+// A dozen systems (and the UI) each opened their own getEntitiesWith(GameState)
+// iterator every frame. One high-priority system snapshots the component once
+// per frame; everyone else reads the cached reference.
+type GameStateRead = ReturnType<typeof GameState.get>
+let cachedGs: GameStateRead | null = null
+
+export function gameState(): GameStateRead | null {
+  if (cachedGs) return cachedGs
+  // Pre-init / pre-sync fallback — no pinning, the refresher owns the cache.
+  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs
+  return null
+}
+
 export function currentPhase(): string {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
-  return 'playing'
+  return gameState()?.phase ?? 'playing'
 }
 
 // ── Participation gate ─────────────────────────────────────────────────────────
@@ -84,9 +98,17 @@ export function isWaitingForMatch(): boolean {
   return !isActive()
 }
 
-// Kept for call-site compatibility. Participation now arrives by message, so there
-// is no local watcher to start.
-export function initPhaseGate(): void {}
+// Starts the per-frame GameState snapshot. Client-only (called from setup.ts) —
+// this must NOT run at module scope, because the bundle is shared and a
+// module-level addSystem would land on the server engine too.
+export function initPhaseGate(): void {
+  // Higher priority number runs FIRST — the snapshot must be fresh before any
+  // default-priority consumer reads it this frame.
+  engine.addSystem(() => {
+    cachedGs = null
+    for (const [, gs] of engine.getEntitiesWith(GameState)) { cachedGs = gs; return }
+  }, 200000)
+}
 
 // True only while this player can clean: the playing phase AND actually enrolled
 // in the shift. The server enforces the same rule when accepting cleans; this just
@@ -102,10 +124,13 @@ export function onPhaseChange(handler: Handler): void {
   if (!systemAdded) {
     systemAdded = true
     engine.addSystem(() => {
+      // Composite gate: phase AND participation (see comment above). Compared
+      // field-by-field — the old template-string key allocated every frame.
       const p = currentPhase()
-      const key = `${p}|${isActive()}`
-      if (key === lastGateKey) return
-      lastGateKey = key
+      const a = isActive()
+      if (p === lastPhaseSeen && a === lastActiveSeen) return
+      lastPhaseSeen  = p
+      lastActiveSeen = a
       for (const h of handlers) h(p)
     })
   }

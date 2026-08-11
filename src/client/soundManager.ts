@@ -28,7 +28,6 @@ const VOL_CLEAN   = 0.42   // fires dozens of times a round — keep it well und
                            // the deposit thunk (twice lowered on playtest feedback)
 const VOL_SQUELCH = 2.0
 
-const INIT_POS = { x: 8, y: 1, z: 8 }
 
 // ── Notification sound — one entity, pitch+volume swapped per toast kind ──────
 // cleaned:         light & quick    (high pitch, low volume)
@@ -65,11 +64,11 @@ const CLEAN_POOL_SIZE = 3
 const cleanPool: Entity[] = []
 let   cleanIdx  = 0
 
-// Moves the sound entity to the player's current position then retriggers playback.
-// The false→true toggle via setTimeout is the standard DCL retrigger pattern.
+// Retriggers playback. Every SFX entity is PARENTED to the player (positional
+// audio at zero distance ≈ global, and it works on every client — true
+// `global:` audio is DCL 2.0 desktop-only), so there is no per-play position
+// write. The false→true toggle via setTimeout is the standard DCL retrigger.
 function playAt(entity: Entity, pitch?: number) {
-  const pos = Transform.getOrNull(engine.PlayerEntity)?.position ?? INIT_POS
-  Transform.getMutable(entity).position = pos
   const src = AudioSource.getMutable(entity)
   if (pitch !== undefined) src.pitch = pitch
   src.playing = false
@@ -78,50 +77,50 @@ function playAt(entity: Entity, pitch?: number) {
 
 export function initSoundManager() {
   hoverEntity = engine.addEntity()
-  Transform.create(hoverEntity,  { position: INIT_POS })
+  Transform.create(hoverEntity,  { parent: engine.PlayerEntity })
   AudioSource.create(hoverEntity,  { audioClipUrl: SND_HOVER,  playing: false, loop: false, volume: VOL_HOVER  })
 
   clickEntity = engine.addEntity()
-  Transform.create(clickEntity,  { position: INIT_POS })
+  Transform.create(clickEntity,  { parent: engine.PlayerEntity })
   AudioSource.create(clickEntity,  { audioClipUrl: SND_CLICK,  playing: false, loop: false, volume: VOL_CLICK  })
 
   stickyEntity = engine.addEntity()
-  Transform.create(stickyEntity, { position: INIT_POS })
+  Transform.create(stickyEntity, { parent: engine.PlayerEntity })
   AudioSource.create(stickyEntity, { audioClipUrl: SND_STICKY, playing: false, loop: false, volume: VOL_STICKY })
 
   for (let i = 0; i < CLEAN_POOL_SIZE; i++) {
     const e = engine.addEntity()
-    Transform.create(e, { position: INIT_POS })
+    Transform.create(e, { parent: engine.PlayerEntity })
     AudioSource.create(e, { audioClipUrl: SND_CLEAN, playing: false, loop: false, volume: VOL_CLEAN })
     cleanPool.push(e)
   }
 
   squelchEntity = engine.addEntity()
-  Transform.create(squelchEntity, { position: INIT_POS })
+  Transform.create(squelchEntity, { parent: engine.PlayerEntity })
   AudioSource.create(squelchEntity, { audioClipUrl: SND_SQUELCH, playing: false, loop: false, volume: VOL_SQUELCH })
 
   notificationEntity = engine.addEntity()
-  Transform.create(notificationEntity, { position: INIT_POS })
+  Transform.create(notificationEntity, { parent: engine.PlayerEntity })
   AudioSource.create(notificationEntity, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.7, pitch: 1.0 })
 
   moneyEntity = engine.addEntity()
-  Transform.create(moneyEntity, { position: INIT_POS })
+  Transform.create(moneyEntity, { parent: engine.PlayerEntity })
   AudioSource.create(moneyEntity, { audioClipUrl: SND_MONEY, playing: false, loop: false, volume: 1.0 })
 
   promotionEntity = engine.addEntity()
-  Transform.create(promotionEntity, { position: INIT_POS })
+  Transform.create(promotionEntity, { parent: engine.PlayerEntity })
   AudioSource.create(promotionEntity, { audioClipUrl: SND_PROMOTION, playing: false, loop: false, volume: 1.0 })
 
   depositEntity = engine.addEntity()
-  Transform.create(depositEntity, { position: INIT_POS })
+  Transform.create(depositEntity, { parent: engine.PlayerEntity })
   AudioSource.create(depositEntity, { audioClipUrl: SND_DEPOSIT, playing: false, loop: false, volume: 1.0 })
 
   errorEntity = engine.addEntity()
-  Transform.create(errorEntity, { position: INIT_POS })
+  Transform.create(errorEntity, { parent: engine.PlayerEntity })
   AudioSource.create(errorEntity, { audioClipUrl: SND_ERROR, playing: false, loop: false, volume: 0.8 })
 
   crowdEntity = engine.addEntity()
-  Transform.create(crowdEntity, { position: INIT_POS })
+  Transform.create(crowdEntity, { parent: engine.PlayerEntity })
   AudioSource.create(crowdEntity, { audioClipUrl: SND_CROWD, playing: false, loop: false, volume: 0.9 })
 }
 
@@ -199,8 +198,6 @@ export function playToastSound(kind: ToastKind) {
   lastNotificationMs = now
 
   const { pitch, volume } = NOTIFICATION_SETTINGS[kind]
-  const pos = Transform.getOrNull(engine.PlayerEntity)?.position ?? INIT_POS
-  Transform.getMutable(notificationEntity).position = pos
   const src = AudioSource.getMutable(notificationEntity)
   src.pitch   = pitch
   src.volume  = volume

@@ -8,7 +8,7 @@
 // spree, turning the wind-down into a rush.
 
 import { engine } from '@dcl/sdk/ecs'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 import { flashSpree } from '../ui'
 import { playSpreeSound } from './soundManager'
 
@@ -20,10 +20,8 @@ let count  = 0
 let lastMs = 0
 
 function inFrenzy(): boolean {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) {
-    return gs.phase === 'playing' && (gs.secondsLeft ?? 999) <= FRENZY_LAST_S
-  }
-  return false
+  const gs = gameState()
+  return gs ? gs.phase === 'playing' && (gs.secondsLeft ?? 999) <= FRENZY_LAST_S : false
 }
 
 export function registerSpreeHit(): void {

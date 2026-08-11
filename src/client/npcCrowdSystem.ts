@@ -20,7 +20,7 @@
 import { engine, Entity, Transform, AvatarShape, Name, timers } from '@dcl/sdk/ecs'
 import { Quaternion, Color3 } from '@dcl/sdk/math'
 import { getPlatform, isMobile } from '@dcl/sdk/platform'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Config — edit freely ──────────────────────────────────────────────────────
@@ -263,10 +263,8 @@ function retriggerEmote(npc: Npc) {
 }
 
 function getPhase(): { phase: string; finale: boolean } {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) {
-    return { phase: gs.phase, finale: gs.isFinale }
-  }
-  return { phase: 'playing', finale: false }
+  const gs = gameState()
+  return gs ? { phase: gs.phase, finale: gs.isFinale } : { phase: 'playing', finale: false }
 }
 
 // Whether a given NPC should be present right now.

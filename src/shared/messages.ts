@@ -61,6 +61,10 @@ export const Messages = {
     capacity:  Schemas.Int,
     hauling:   Schemas.String,
     haulStage: Schemas.String,
+    // Which station bin the haul took — clients hide/show that bin themselves.
+    // (The server's old Transform write on the bin never replicated: composite
+    // entities aren't syncEntity'd, so remote players saw the bin stay put.)
+    haulBinName: Schemas.String,
   }),
 
   // ── Server → Client ─────────────────────────────────────────

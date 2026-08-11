@@ -50,6 +50,20 @@ export function holdDurationMs(): number {
   return Math.round(HOLD_DURATION_MS * upgradeValue('moppingSpeed', upgradeLevel('moppingSpeed')))
 }
 
+/**
+ * Restore movement to the player's UPGRADED baseline, not engine defaults.
+ *
+ * The sticky hazard slows the player by replacing AvatarLocomotionSettings, so
+ * its restore path must come back through here. Deleting the component instead
+ * would silently strip a purchased Movement Speed upgrade for the rest of the
+ * session, because applyMovementSpeed only re-writes when the LEVEL changes.
+ * This module is the single owner of that component.
+ */
+export function reapplyMovementSpeed(): void {
+  appliedSpeedLevel = -1
+  applyMovementSpeed()
+}
+
 export function initUpgradeEffects(): void {
   // Levels only change on purchase or on the join sync, so polling slowly is ample
   // and avoids a per-frame component write.

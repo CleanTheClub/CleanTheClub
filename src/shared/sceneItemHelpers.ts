@@ -125,8 +125,13 @@ function glbWatchdogSystem(dt: number): void {
     if (st === w.lastState) {
       w.stateAgeS += tick
     } else if (st !== undefined) {
-      const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
-      console.log(`[GLB] '${label}' load state → ${GLB_STATE_NAME[st] ?? st}`)
+      // Quiet on the happy path: every watched GLB reaching FINISHED at boot
+      // flooded ~110 log lines that buried real signals (project cleanup).
+      // Deviations and post-reload recoveries still log.
+      if (st !== LoadingState.FINISHED || w.reloads > 0) {
+        const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
+        console.log(`[GLB] '${label}' load state → ${GLB_STATE_NAME[st] ?? st}`)
+      }
       w.lastState = st
       w.stateAgeS = 0
     }

@@ -3,7 +3,7 @@
 // emission system — so it tracks round resets automatically.
 
 import { engine, Entity, Name, VisibilityComponent } from '@dcl/sdk/ecs'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 
 const GRUNGE_ENTITY_NAME = 'clubGrunge'
 const HIDE_THRESHOLD     = 0.5   // hide when pct >= this
@@ -11,22 +11,30 @@ const HIDE_THRESHOLD     = 0.5   // hide when pct >= this
 export function initGrungeSystem(): void {
   let grunge: Entity | undefined
   let lastVisible: boolean | null = null
+  let searchedForS = 0
+  let gaveUp = false
 
-  engine.addSystem(() => {
-    // One-shot lookup — keep trying each frame until the scene entity loads.
+  engine.addSystem((dt: number) => {
+    // One-shot lookup with a 10s bail-out — without it a renamed/missing
+    // entity meant a full engine Name scan every frame, forever.
     if (grunge === undefined) {
+      if (gaveUp) return
+      searchedForS += dt
       for (const [e] of engine.getEntitiesWith(Name)) {
         if (Name.get(e).value === GRUNGE_ENTITY_NAME) { grunge = e; break }
       }
-      if (grunge === undefined) return
+      if (grunge === undefined) {
+        if (searchedForS > 10) {
+          gaveUp = true
+          console.log(`[Grunge] gave up after 10s — "${GRUNGE_ENTITY_NAME}" not found (renamed in Creator Hub?)`)
+        }
+        return
+      }
       console.log(`[Grunge] Found "${GRUNGE_ENTITY_NAME}" (entity ${grunge})`)
     }
 
-    let pct = 0
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      pct = gs.cleanedCount / Math.max(1, gs.totalCount)
-      break
-    }
+    const gs = gameState()
+    const pct = gs ? gs.cleanedCount / Math.max(1, gs.totalCount) : 0
 
     const visible = pct < HIDE_THRESHOLD
     if (visible === lastVisible) return

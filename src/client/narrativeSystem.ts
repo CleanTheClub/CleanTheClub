@@ -10,6 +10,7 @@
 
 import { engine, timers } from '@dcl/sdk/ecs'
 import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 import { MILESTONE_EVERY, THEME_DEFS } from '../shared/config'
 import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
@@ -91,27 +92,22 @@ export function initNarrativeSystem(): void {
   // Last-call announcement — once per round
   let lastCallSeen = false
 
-  engine.addSystem(() => {
-    let pct         = 0
-    let phase       = 'playing'
-    let roundNumber = 0
-    let secondsLeft = 0
-    let outcome     = ''
-    let isFinale    = false
-    let theme       = ''
-    let lastCall    = false
-
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
-      phase       = gs.phase
-      roundNumber = gs.roundNumber
-      secondsLeft = gs.secondsLeft
-      outcome     = gs.outcome
-      isFinale    = gs.isFinale
-      theme       = gs.theme
-      lastCall    = gs.lastCall
-      break
-    }
+  // 4 Hz — this is pure event logic (milestone/warning edges on 1s-granular
+  // server fields); running it at frame rate bought nothing.
+  let pollAcc = 0
+  engine.addSystem((dt: number) => {
+    pollAcc += dt
+    if (pollAcc < 0.25) return
+    pollAcc = 0
+    const gs = gameState()
+    const pct         = gs ? Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount)) : 0
+    const phase       = gs?.phase ?? 'playing'
+    const roundNumber = gs?.roundNumber ?? 0
+    const secondsLeft = gs?.secondsLeft ?? 0
+    const outcome     = gs?.outcome ?? ''
+    const isFinale    = gs?.isFinale ?? false
+    const theme       = gs?.theme ?? ''
+    const lastCall    = gs?.lastCall ?? false
 
     // ── Last call — 100% early close announcement (once per round) ─────────────
     if (phase === 'playing' && lastCall && !lastCallSeen) {

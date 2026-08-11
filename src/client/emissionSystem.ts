@@ -17,7 +17,7 @@
 //  vivid  : phase === 'open'              — authored values fully restored (party mode)
 
 import { engine, Entity, GltfNodeModifiers, Name } from '@dcl/sdk/ecs'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 import { TRANSFORM_DIM, TRANSFORM_MID, TRANSFORM_BRIGHT } from '../shared/config'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +188,12 @@ export function initEmissionSystem(): void {
   const discovered = new Map<string, DiscoveredEntry>()
   const needsDiscovery = new Set(EMISSION_TARGETS.map(t => t.name))
 
-  const discoverSystem = () => {
+  // 10s bail-out (same pattern as restoreSystem): without it, a renamed or
+  // missing target meant a full engine Name scan EVERY FRAME for the whole
+  // session — a permanent hidden cost triggered by a Creator Hub rename.
+  let discoverForS = 0
+  const discoverSystem = (dt: number) => {
+    discoverForS += dt
     for (const [entity] of engine.getEntitiesWith(Name)) {
       const entityName = Name.get(entity).value
       if (!needsDiscovery.has(entityName)) continue
@@ -197,7 +202,12 @@ export function initEmissionSystem(): void {
       needsDiscovery.delete(entityName)
       console.log(`[Emission] Found "${entityName}" (entity ${entity})`)
     }
-    if (needsDiscovery.size === 0) engine.removeSystem(discoverSystem)
+    if (needsDiscovery.size === 0) {
+      engine.removeSystem(discoverSystem)
+    } else if (discoverForS > 10) {
+      console.log(`[Emission] gave up after 10s — missing: ${[...needsDiscovery].join(', ')} (renamed in Creator Hub?)`)
+      engine.removeSystem(discoverSystem)
+    }
   }
   engine.addSystem(discoverSystem)
 
@@ -212,15 +222,10 @@ export function initEmissionSystem(): void {
 
     if (discovered.size === 0) return
 
-    let pct         = 0
-    let phase       = 'playing'
-    let roundNumber = 0
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      pct         = Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount))
-      phase       = gs.phase
-      roundNumber = gs.roundNumber
-      break
-    }
+    const gs          = gameState()
+    const pct         = gs ? Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount)) : 0
+    const phase       = gs?.phase ?? 'playing'
+    const roundNumber = gs?.roundNumber ?? 0
 
     // Round transition — force re-apply in case the renderer cleared the component.
     if (roundNumber !== lastRoundNumber) {

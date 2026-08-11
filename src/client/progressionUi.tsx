@@ -21,6 +21,10 @@ import { CareerState, getCareer, getCareerOrEmpty, getLastPayoutMs, getLastPromo
 import { tierColorForRank } from './rankBadgeSystem'
 import { getSafeArea, pct } from './safeArea'
 
+// 100ms-quantized clock for decorative pulses — see ui.tsx's pulseNow: raw
+// per-frame sines force a UI update per node per frame even when idle.
+const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
+
 const WHITE  = theme.colors.white
 const SUBTLE = theme.text.subtle
 const PANEL  = Color4.create(0, 0, 0, 0.82)
@@ -142,8 +146,8 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
   const frac      = Math.max(0, Math.min(1, c.fraction))
   const nearPromo = c.nextTitle !== null && frac >= 0.8
   const pulse     = nearPromo
-    ? 0.7  + 0.3  * Math.sin(Date.now() / 120)
-    : 0.85 + 0.15 * Math.sin(Date.now() / 300)
+    ? 0.7  + 0.3  * Math.sin(pulseNow() / 120)
+    : 0.85 + 0.15 * Math.sin(pulseNow() / 300)
   const fillColor = nearPromo
     ? Color4.create(1, 0.82, 0.25, Math.max(0.4, pulse))
     : Color4.create(XP_FILL.r, XP_FILL.g, XP_FILL.b, Math.max(0.5, pulse))
@@ -228,7 +232,7 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
  *  5s. Shared by the payout card and ui.tsx's fallback chip so the clock reads
  *  the same wherever it lives. */
 export function countdownColor(seconds: number): Color4 {
-  if (seconds <= 5)  return Color4.create(1, 0.45, 0.25, 0.7 + 0.3 * Math.sin(Date.now() / 150))
+  if (seconds <= 5)  return Color4.create(1, 0.45, 0.25, 0.7 + 0.3 * Math.sin(pulseNow() / 150))
   if (seconds <= 10) return GOLD
   return WHITE
 }
@@ -525,7 +529,7 @@ function PayoutShopCta({ Z }: { Z: number }) {
   // Desktop breathes by SIZE; mobile breathes by ALPHA at a fixed size — size
   // changes force a UI relayout every frame, which stutters on mobile's uneven
   // frame pacing (playtest: "UI tweens of scale are jittery on mobile").
-  const wave  = Math.sin(Date.now() / 180)
+  const wave  = Math.sin(pulseNow() / 180)
   const pulse = n > 0 && !isMobile() ? 1 + 0.06 * wave : 1
   const bgColor = n > 0
     ? (isMobile() ? Color4.create(GOLD.r, GOLD.g, GOLD.b, 0.8 + 0.2 * wave) : GOLD)

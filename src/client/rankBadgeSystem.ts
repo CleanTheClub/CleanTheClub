@@ -72,15 +72,13 @@ type Plate = {
   scale:   number   // last distance-derived scale, reused by the animator
   rank:    number   // to detect promotions
   popMs:   number   // >=0 while a promotion pop is playing
-  bob:     number   // per-plate phase so plates don't float in lockstep
+  appliedScale: number   // last scale actually written — skip no-op writes
 }
 
 // ── Cuteness knobs ────────────────────────────────────────────────────────────
 // The plate keeps a flat dark pill for legibility (a coloured glow washed the
 // text out), and earns its character from motion instead: it drifts gently and
 // pops on promotion. Rank colour lives in the title text.
-const BOB_AMPLITUDE_M = 0.012
-const BOB_SPEED       = 1.6
 const POP_MS          = 700
 const POP_SCALE       = 0.45   // extra scale at the peak of a promotion pop
 const plates = new Map<string, Plate>()   // lowercased address → plate
@@ -124,7 +122,7 @@ function buildPlate(address: string, avatar: Entity): Plate {
   return {
     root, carrier, pill, nameT, titleT, avatar,
     key: '', fade: -1, scale: 1, rank: -1, popMs: -1,
-    bob: Math.random() * Math.PI * 2,
+    appliedScale: -1,
   }
 }
 
@@ -219,15 +217,18 @@ function initNametagHideArea(): void {
 }
 
 /**
- * Per-frame plate animation: a gentle float, plus a springy pop when a player is
- * promoted. Kept separate from the 0.4 s reconcile loop so motion stays smooth.
+ * Plate animation: a springy pop when a player is promoted, plus applying the
+ * distance-derived scale. Writes the Transform ONLY when the value changes —
+ * the old version also drove a 0.012m idle bob, which was invisible motion at
+ * the cost of one dirty Transform per player every frame, forever.
  */
 function animatePlates(dt: number): void {
   for (const [, p] of plates) {
-    p.bob += dt * BOB_SPEED
     let scale = p.scale
+    let popping = false
 
     if (p.popMs >= 0) {
+      popping = true
       p.popMs += dt * 1000
       const t = Math.min(1, p.popMs / POP_MS)
       // Out-and-back: swells fast, settles slow.
@@ -235,10 +236,12 @@ function animatePlates(dt: number): void {
       if (t >= 1) p.popMs = -1
     }
 
+    if (!popping && Math.abs(scale - p.appliedScale) < 0.001) continue
     const ct = Transform.getMutableOrNull(p.carrier)
     if (!ct) continue
+    p.appliedScale = scale
     ct.scale    = { x: scale, y: scale, z: scale }
-    ct.position = { x: 0, y: PLATE_Y + Math.sin(p.bob) * BOB_AMPLITUDE_M, z: 0 }
+    ct.position = { x: 0, y: PLATE_Y, z: 0 }
   }
 }
 

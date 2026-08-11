@@ -165,8 +165,8 @@ const respawnTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 // ── Per-shift contribution tally ──────────────────────────────────────────────
 // address → items cleaned during the CURRENT round. Counted incrementally rather
-// than tallied from ClutterSync at round end, because items respawn mid-round and
-// clear their cleanedBy — a snapshot at the end would undercount badly.
+// than tallied from ClutterSync at round end, because items respawn mid-round —
+// a snapshot at the end would undercount badly.
 const roundContributions = new Map<string, number>()
 
 /** Called by the server for every accepted clean, to attribute it to a player. */
@@ -268,17 +268,14 @@ function computeOutcome(pct: number): Outcome {
 
 function syncGameState() {
   const now = Date.now()
-  const gs  = GameState.getMutable(gameStateEntity)
-  gs.phase        = phase
   // Demand-scaled: clients render cleaned/total directly, so shipping the
   // scaled total here tunes every display and consequence at once. Cleaned is
   // capped so the bar can't read past 100% on an over-delivering solo shift.
   const demanded  = demandedTotal()
   // During the spawn-in beat everything is hidden — an empty club would read
   // as 100% clean and flash the bar full for the roulette's duration.
-  gs.cleanedCount = spawningIn ? 0 : Math.min(countCleaned(), demanded)
-  gs.totalCount   = demanded
-  gs.secondsLeft  = phase === 'playing'
+  const cleaned = spawningIn ? 0 : Math.min(countCleaned(), demanded)
+  const secondsLeft = phase === 'playing'
     ? lastCallStartMs > 0
       ? Math.max(0, Math.ceil((LAST_CALL_MS - (now - lastCallStartMs)) / 1000))   // last-call countdown
       : roundStartMs === 0
@@ -289,6 +286,26 @@ function syncGameState() {
     : phase === 'lobby' && starting
     ? Math.max(0, Math.ceil((LOBBY_COUNTDOWN_MS - (now - startCountdownStartMs)) / 1000))
     : 0
+  const lastCall = lastCallStartMs > 0
+
+  // Diff before touching the mutable view: getMutable marks the component dirty
+  // and re-broadcasts the FULL GameState to every peer even when nothing changed.
+  // This runs on a 1s interval for the server's whole life (plus every accepted
+  // clean), so the no-change case is the common one — an idle lobby used to
+  // re-broadcast identical state once a second forever.
+  // (binFillGeneral/binFillRecycle are owned by syncBinFull, not compared here.)
+  const cur = GameState.get(gameStateEntity)
+  if (cur.phase === phase && cur.cleanedCount === cleaned && cur.totalCount === demanded
+      && cur.secondsLeft === secondsLeft && cur.roundNumber === roundNumber
+      && cur.outcome === currentOutcome && cur.isFinale === isFinale
+      && cur.playersIn === playerCount && cur.starting === starting
+      && cur.theme === currentTheme && cur.lastCall === lastCall) return
+
+  const gs = GameState.getMutable(gameStateEntity)
+  gs.phase         = phase
+  gs.cleanedCount  = cleaned
+  gs.totalCount    = demanded
+  gs.secondsLeft   = secondsLeft
   gs.roundNumber   = roundNumber
   gs.outcome       = currentOutcome
   gs.canStartEarly = false   // early start disabled — intermission is no longer skippable
@@ -296,7 +313,7 @@ function syncGameState() {
   gs.playersIn     = playerCount
   gs.starting      = starting
   gs.theme         = currentTheme
-  gs.lastCall      = lastCallStartMs > 0
+  gs.lastCall      = lastCall
 }
 
 function clearAllRespawns() {
@@ -309,8 +326,6 @@ function resetClutter() {
   for (const [, entity] of itemEntities) {
     const cs = ClutterSync.getMutable(entity)
     cs.isCleaned = false
-    cs.cleanedAt = 0
-    cs.cleanedBy = ''
   }
   onRestoreScales?.()
 }
@@ -513,10 +528,7 @@ export function onItemCleaned(def: (typeof CLUTTER_DEFS)[number]) {
   const t = setTimeout(() => {
     respawnTimers.delete(def.id)
     const entity = itemEntities.get(def.id)!
-    const cs = ClutterSync.getMutable(entity)
-    cs.isCleaned = false
-    cs.cleanedAt = 0
-    cs.cleanedBy = ''
+    ClutterSync.getMutable(entity).isCleaned = false
     syncGameState()
   }, delay)
   respawnTimers.set(def.id, t)

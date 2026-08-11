@@ -47,8 +47,14 @@ export type PersistedDoc<T> = {
   ensureLoaded(): Promise<T | null>
   /** True once a read has SETTLED, so we know what is actually stored. */
   isLoadConfirmed(): boolean
-  /** Persists `value`. Refuses to write before a confirmed read (wipe guard). */
-  save(value: T): Promise<void>
+  /**
+   * Persists `value`. Refuses to write before a confirmed read (wipe guard).
+   * Writes are SERIALIZED: overlapping calls (shift end racing a player-leave
+   * checkpoint) queue in order instead of racing two full-document PUTs where
+   * the older snapshot could land last. Resolves true only when the value hit
+   * the backend — callers use false to keep their dirty flag set for a retry.
+   */
+  save(value: T): Promise<boolean>
   /** Live health snapshot — surfaced in-world so failures can't stay silent. */
   status(): DocStatus
 }
@@ -151,6 +157,44 @@ export function createPersistedDoc<T>(
     }
   }
 
+  async function doSave(value: T): Promise<boolean> {
+    if (!loadConfirmed) {
+      console.log(`[STORE:${key}] skipping save — load not yet confirmed`)
+      return false
+    }
+    if (isEmpty(value)) {
+      console.log(`[STORE:${key}] skipping save — document is empty (wipe guard)`)
+      return false
+    }
+    try {
+      const body = JSON.stringify(value)
+      // Size watch. These documents hold one record per player forever, so they
+      // grow with the playerbase rather than with activity — fine at hundreds,
+      // a problem at thousands (external stores cap request size, and every
+      // shift end rewrites the WHOLE document). Warn early enough to act
+      // before a write starts failing in production.
+      if (body.length >= SIZE_WARN_BYTES) {
+        console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
+          `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
+      }
+      await write(value)
+      lastSaveOk = true
+      lastSaveMs = Date.now()
+      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
+      return true
+    } catch (e) {
+      lastSaveOk = false
+      lastSaveMs = Date.now()
+      console.log(`[STORE:${key}] ERROR: save failed:`, e)
+      return false
+    }
+  }
+
+  // Write serialization — each save waits for the previous one to settle, so
+  // two checkpoints can never have PUTs in flight simultaneously (last-write-
+  // wins on the backend would otherwise let the OLDER snapshot land last).
+  let saveChain: Promise<boolean> = Promise.resolve(true)
+
   return {
     ensureLoaded(): Promise<T | null> {
       if (!loadPromise) loadPromise = load()
@@ -159,35 +203,9 @@ export function createPersistedDoc<T>(
 
     isLoadConfirmed: () => loadConfirmed,
 
-    async save(value: T): Promise<void> {
-      if (!loadConfirmed) {
-        console.log(`[STORE:${key}] skipping save — load not yet confirmed`)
-        return
-      }
-      if (isEmpty(value)) {
-        console.log(`[STORE:${key}] skipping save — document is empty (wipe guard)`)
-        return
-      }
-      try {
-        const body = JSON.stringify(value)
-        // Size watch. These documents hold one record per player forever, so they
-        // grow with the playerbase rather than with activity — fine at hundreds,
-        // a problem at thousands (external stores cap request size, and every
-        // shift end rewrites the WHOLE document). Warn early enough to act
-        // before a write starts failing in production.
-        if (body.length >= SIZE_WARN_BYTES) {
-          console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
-            `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
-        }
-        await write(value)
-        lastSaveOk = true
-        lastSaveMs = Date.now()
-        console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
-      } catch (e) {
-        lastSaveOk = false
-        lastSaveMs = Date.now()
-        console.log(`[STORE:${key}] ERROR: save failed:`, e)
-      }
+    save(value: T): Promise<boolean> {
+      saveChain = saveChain.then(() => doSave(value))
+      return saveChain
     },
 
     status(): DocStatus {

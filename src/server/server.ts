@@ -1,8 +1,8 @@
 import { engine, Entity, Name, Transform, executeTask, GltfContainer, ColliderLayer } from '@dcl/sdk/ecs'
 import { Quaternion } from '@dcl/sdk/math'
 import { syncEntity } from '@dcl/sdk/network'
-import { Storage, EnvVar } from '@dcl/sdk/server'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { createPersistedDoc } from './persistence'
 import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
@@ -12,7 +12,7 @@ import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onP
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
-  ensureProgressLoaded, registerProgressPlayer, getProgress, awardShift,
+  ensureProgressLoaded, registerProgressPlayer, getProgress, peekProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
   progressStorageStatus, setCareersRestoredHandler, bumpKindCount,
 } from './playerProgress'
@@ -21,136 +21,44 @@ import {
 interface LeaderboardEntry { displayName: string; total: number }
 const leaderboard = new Map<string, LeaderboardEntry>()  // address → entry
 
-// Single-promise guard — ensures loadLeaderboard() only ever runs once,
-// even if ensureLeaderboardLoaded() is called concurrently by multiple handlers.
-let leaderboardLoadPromise: Promise<void> | null = null
-
-function ensureLeaderboardLoaded(): Promise<void> {
-  if (!leaderboardLoadPromise) leaderboardLoadPromise = loadLeaderboard()
-  return leaderboardLoadPromise
-}
-
-// True once we've confirmed (via a settled read) what's actually in storage. Until
-// then we must NOT save — a write before a confirmed read can overwrite good data.
-let leaderboardLoadConfirmed = false
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
-
 type LbRecord = { address: string; displayName: string; total: number }
 
-// ── Persistence backend ───────────────────────────────────────────────────────
-// Decentraland Worlds have a server-storage bug: `Storage` is scoped per DEPLOY
-// (content hash), not per location, so after a republish the server reads a fresh,
-// EMPTY bucket and can never see the previous deploy's data (the owner CLI can,
-// because it reads the latest deploy's bucket). Confirmed in production: 90s of
-// retried reads all 404'd while the CLI read the data instantly. Retrying can't fix
-// a scope problem — the data simply isn't in the bucket the server is allowed to read.
-//
-// Fix: persist to an EXTERNAL store the server can read consistently across deploys.
-// When LEADERBOARD_BIN_ID + LEADERBOARD_BIN_KEY are set (server EnvVars), we use
-// jsonbin.io; otherwise we fall back to DCL `Storage` (which works fine on LAND).
-let binCfg: { id: string; key: string } | null = null
-let binCfgLoaded = false
-async function getBinCfg(): Promise<{ id: string; key: string } | null> {
-  if (!binCfgLoaded) {
-    binCfgLoaded = true
-    try {
-      const id  = await EnvVar.get('LEADERBOARD_BIN_ID')
-      const key = await EnvVar.get('LEADERBOARD_BIN_KEY')
-      binCfg = id && key ? { id, key } : null
-    } catch (e) {
-      console.log('[SERVER] EnvVar read failed — using DCL Storage for leaderboard:', e)
-      binCfg = null
+// ONE persistence implementation for everything. The leaderboard predates
+// createPersistedDoc and carried its own duplicate jsonbin/Storage backend —
+// with weaker wipe guards, no write serialization and no status reporting.
+// Same env vars (LEADERBOARD_BIN_ID/KEY) and same storage key, so this reads
+// and writes the exact document it always did. The Worlds-storage history and
+// backend selection rules live in persistence.ts.
+const leaderboardDoc = createPersistedDoc<LbRecord[]>(
+  'leaderboard',
+  'LEADERBOARD',
+  (records) => !records || records.length === 0,
+)
+
+let lbLoadStarted = false
+let lbMergeDone = false
+function ensureLeaderboardLoaded(): Promise<void> {
+  lbLoadStarted = true
+  return leaderboardDoc.ensureLoaded().then((stored) => {
+    if (lbMergeDone) return
+    lbMergeDone = true
+    if (!stored) return
+    for (const r of stored) {
+      if (!r || typeof r.address !== 'string' || typeof r.total !== 'number') continue
+      // Additive over any pre-load session entry (same boot race as careers):
+      // cleans that landed before the read settled stack on the stored total
+      // instead of being overwritten by it.
+      const existing = leaderboard.get(r.address)
+      leaderboard.set(r.address, {
+        displayName: existing?.displayName || r.displayName || '',
+        total: (existing?.total ?? 0) + Math.max(0, Math.floor(r.total)),
+      })
     }
-    console.log(binCfg
-      ? '[SERVER] Leaderboard persistence: external store (jsonbin)'
-      : '[SERVER] Leaderboard persistence: DCL Storage (no LEADERBOARD_BIN_* env vars)')
-  }
-  return binCfg
-}
-
-// Read stored records. Returns [] for a confirmed-empty store, or null when the read
-// couldn't be completed (treated as "unknown" → keep retrying, never overwrite).
-async function loadRecords(): Promise<LbRecord[] | null> {
-  const cfg = await getBinCfg()
-  if (cfg) {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}/latest`, {
-      headers: { 'X-Master-Key': cfg.key },
-    })
-    if (res.status === 404) return []                       // empty/new bin
-    if (!res.ok) throw new Error(`jsonbin read ${res.status}`)
-    const json: any = await res.json()
-    const rec = json?.record
-    return Array.isArray(rec) ? (rec as LbRecord[]) : []
-  }
-  // DCL Storage fallback — Storage.get returns null on not-found (404).
-  const raw = await Storage.get<string>('leaderboard')
-  return raw ? (JSON.parse(raw) as LbRecord[]) : null
-}
-
-async function saveRecords(records: LbRecord[]): Promise<void> {
-  const cfg = await getBinCfg()
-  if (cfg) {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}`, {
-      method: 'PUT',
-      headers: {
-        'X-Master-Key':     cfg.key,
-        'Content-Type':     'application/json',
-        'X-Bin-Versioning': 'false',   // overwrite in place, don't pile up versions
-      },
-      body: JSON.stringify(records),
-    })
-    if (!res.ok) throw new Error(`jsonbin write ${res.status}`)
-    return
-  }
-  await Storage.set('leaderboard', JSON.stringify(records))
-}
-
-// ── Load / save ───────────────────────────────────────────────────────────────
-// We still retry the read (network resilience + the DCL-Storage fallback's cold
-// start), but with the external store a 404 means "empty bin" and confirms instantly,
-// so this no longer stalls a fresh deploy. We only keep retrying a genuinely failed
-// (thrown) or null read, never overwriting before a settled read.
-const READ_RETRY_MS  = 4_000    // gap between read attempts
-const READ_WINDOW_MS = 30_000   // total time we'll keep trying before giving up
-async function loadLeaderboard(): Promise<void> {
-  const deadline = Date.now() + READ_WINDOW_MS
-  let attempt = 0
-  while (true) {
-    attempt++
-    try {
-      const records = await loadRecords()
-      if (records !== null) {
-        for (const r of records) leaderboard.set(r.address, { displayName: r.displayName, total: r.total })
-        console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players (attempt ${attempt})`)
-        leaderboardLoadConfirmed = true
-        return
-      }
-      // null = read couldn't be completed (DCL-Storage 404). Keep trying to the deadline.
-      if (Date.now() >= deadline) {
-        console.log(`[SERVER] No leaderboard data after ${attempt} attempts — starting fresh`)
-        leaderboardLoadConfirmed = true
-        return
-      }
-    } catch (e) {
-      console.log(`[SERVER] leaderboard load attempt ${attempt} failed:`, e)
-      if (Date.now() >= deadline) throw e   // give up → saves stay blocked (no wipe)
-    }
-    await sleep(READ_RETRY_MS)
-  }
+    console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+  })
 }
 
 async function saveLeaderboard(): Promise<void> {
-  // Never persist before a confirmed read, and never overwrite stored data with an
-  // empty map — both are wipe signatures, not legitimate saves.
-  if (!leaderboardLoadConfirmed) {
-    console.log('[SERVER] Skipping save — leaderboard load not yet confirmed')
-    return
-  }
-  if (leaderboard.size === 0) {
-    console.log('[SERVER] Skipping save — leaderboard is empty (guarding against wipe)')
-    return
-  }
   // Drop scoreless rows — registerPlayer creates an entry with total 0 for
   // everyone who walks in, so without this the document accumulates a record
   // per visitor rather than per player. Anyone who has cleaned even one item is
@@ -158,17 +66,9 @@ async function saveLeaderboard(): Promise<void> {
   const records = [...leaderboard.entries()]
     .filter(([, e]) => e.total > 0)
     .map(([address, e]) => ({ address, ...e }))
-  if (records.length === 0) {
-    console.log('[SERVER] Skipping save — no scoring players yet')
-    return
-  }
-  console.log(`[SERVER] Saving leaderboard: ${records.length} players`)
-  try {
-    await saveRecords(records)
-    console.log(`[SERVER] Saved leaderboard OK (${records.length} players)`)
-  } catch (e) {
-    console.log('[SERVER] ERROR: leaderboard SAVE failed:', e)
-  }
+  // Unconfirmed-load and empty-document wipe guards, write serialization and
+  // failure logging all live in the shared doc layer.
+  await leaderboardDoc.save(records)
 }
 
 // ── Leaderboard categories (V2) ───────────────────────────────────────────────
@@ -496,6 +396,29 @@ function vacuumExtraFor(address: string): number {
   return upgradeValue('vacuum', rec.upgrades?.vacuum ?? 0)
 }
 
+function buildCarryPublic(address: string) {
+  const load = carriedRubbish.get(address)
+  return {
+    address,
+    total:       (load?.general ?? 0) + (load?.recycle ?? 0),
+    capacity:    carryCapacityFor(address),
+    hauling:     haulingBy.get(address)?.stream ?? '',
+    haulStage:   haulingBy.get(address)?.stage ?? '',
+    haulBinName: haulingBy.get(address)?.binName ?? '',
+  }
+}
+
+// Last broadcast public state per player. carryPublic goes to EVERY peer, and
+// sendCarried also runs on reject/resync paths — without this cache one spammed
+// no-op message per inbound (300/s allowed) became one room-wide broadcast,
+// enough for a single hostile client to saturate every peer's receive budget.
+const lastCarryPublicKey = new Map<string, string>()
+
+/** Replay another player's current carry visual to one recipient (late join). */
+function sendCarryPublicTo(subject: string, recipient: string): void {
+  room.send('carryPublic', buildCarryPublic(subject), { to: [recipient] })
+}
+
 function sendCarried(address: string): void {
   const load = carriedRubbish.get(address)
   room.send(
@@ -513,23 +436,13 @@ function sendCarried(address: string): void {
   )
   // Public subset for everyone else — drives the box/bin on this player's
   // avatar as seen by OTHERS (the emote replicates via the platform; the prop
-  // must be replicated by us).
-  room.send('carryPublic', {
-    address,
-    total:     (load?.general ?? 0) + (load?.recycle ?? 0),
-    capacity:  carryCapacityFor(address),
-    hauling:   haulingBy.get(address)?.stream ?? '',
-    haulStage: haulingBy.get(address)?.stage ?? '',
-  })
-}
-
-/** Hide or restore a hauled bin at its station (server-authoritative). */
-function setBinAtStation(binName: string, present: boolean): void {
-  const bin = serverBins.get(binName)
-  if (!bin) return
-  const tf = Transform.getMutableOrNull(bin.entity)
-  if (!tf) return
-  tf.scale = present ? { ...bin.base } : { x: 0.001, y: 0.001, z: 0.001 }
+  // must be replicated by us). Broadcast only on CHANGE — the p2p resync above
+  // is unconditional, but the room doesn't need to hear about no-ops.
+  const pub = buildCarryPublic(address)
+  const key = `${pub.total}|${pub.capacity}|${pub.hauling}|${pub.haulStage}|${pub.haulBinName}`
+  if (lastCarryPublicKey.get(address) === key) return
+  lastCarryPublicKey.set(address, key)
+  room.send('carryPublic', pub)
 }
 
 // ── Shift contracts ───────────────────────────────────────────────────────────
@@ -667,7 +580,7 @@ export function initServer() {
   // CLUTTER_DEFS items — new entities created by the server
   for (const def of CLUTTER_DEFS) {
     const entity = engine.addEntity()
-    ClutterSync.create(entity, { itemId: def.id, isCleaned: false, cleanedAt: 0, cleanedBy: '' })
+    ClutterSync.create(entity, { itemId: def.id, isCleaned: false })
     syncEntity(entity, [ClutterSync.componentId], enumId++)
     itemEntities.set(def.id, entity)
   }
@@ -689,7 +602,7 @@ export function initServer() {
     ...discoverStickyPatches(),
   ]) {
     const syncEnt = engine.addEntity()
-    ClutterSync.create(syncEnt, { itemId, isCleaned: false, cleanedAt: 0, cleanedBy: '' })
+    ClutterSync.create(syncEnt, { itemId, isCleaned: false })
     syncEntity(syncEnt, [ClutterSync.componentId], enumId++)
     itemEntities.set(itemId, syncEnt)
 
@@ -801,7 +714,7 @@ export function initServer() {
     // activation (delete-then-recreate forces the explorer to actually load the
     // new model; an in-place src swap does not reliably reload). Its componentId
     // is still registered for sync below so those later adds replicate.
-    ClutterSync.create(entity, { itemId: id, isCleaned: true, cleanedAt: 0, cleanedBy: '' })
+    ClutterSync.create(entity, { itemId: id, isCleaned: true })
     syncEntity(entity, [Transform.componentId, GltfContainer.componentId, ClutterSync.componentId], enumId++)
     itemEntities.set(id, entity)
   }
@@ -816,7 +729,9 @@ export function initServer() {
     pileB:  themeModelSrc('bigRubbishBag'),
     pileC:  themeModelSrc('bigRubbishBag'),
     stain:  'assets/scene/Models/StickyPatchBB/StickyPatchBB.glb',
-    polish: 'assets/scene/Models/StickyPatchB/StickyPatchB.glb',
+    // StickyPatch (not the B stub — that GLB is a 160-byte empty file) so the
+    // polish pass reads as a lighter patch than the BB stain it follows.
+    polish: 'assets/scene/Models/StickyPatch/StickyPatch.glb',
   }
   for (const stage of DISASTER_STAGES) {
     const id = `${DISASTER_PREFIX}0_${stage}`
@@ -825,7 +740,7 @@ export function initServer() {
       position: { x: 8, y: -50, z: 8 },
       scale: { x: 0.001, y: 0.001, z: 0.001 },
     })
-    ClutterSync.create(entity, { itemId: id, isCleaned: true, cleanedAt: 0, cleanedBy: '' })
+    ClutterSync.create(entity, { itemId: id, isCleaned: true })
     syncEntity(entity, [Transform.componentId, GltfContainer.componentId, ClutterSync.componentId], enumId++)
     itemEntities.set(id, entity)
   }
@@ -1097,8 +1012,8 @@ export function initServer() {
     portableUsed.clear()
     binFill.general = 0
     binFill.recycle = 0
-    // Any bin still in someone's hands snaps home for the fresh shift.
-    for (const [, haul] of haulingBy) setBinAtStation(haul.binName, true)
+    // Any bin still in someone's hands snaps home for the fresh shift — clients
+    // restore station bins themselves from the carryPublic below going empty.
     haulingBy.clear()
     streamHauler.clear()
     haulBonuses.clear()   // unbanked haul pay dies with the old round
@@ -1231,9 +1146,13 @@ export function initServer() {
 
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
   // ensureLeaderboardLoaded() guarantees only one load ever runs, even if registerPlayer
-  // fires concurrently before this completes.
+  // fires concurrently before this completes. Failure is survivable (the board
+  // just starts empty-looking and saves stay wipe-guarded) — never let the
+  // rejection escape the task.
   executeTask(async () => {
-    await ensureLeaderboardLoaded()
+    await ensureLeaderboardLoaded().catch((e) => {
+      console.log('[SERVER] leaderboard boot load failed:', e)
+    })
   })
 
   // Track which session IDs are currently counted as "in scene".
@@ -1259,7 +1178,10 @@ export function initServer() {
     // their arrival (veterans don't trigger it, START NOW bypasses it, and it
     // can't stack beyond the newest first-timer's window).
     try {
-      if (getProgress(sessionId).shifts === 0) {
+      // peek, not get: getProgress creates-on-read, and this presence path runs
+      // for every session id that ever enters — each stub it created was a dead
+      // row the boot-race merge then had to repair. No record = first-timer.
+      if ((peekProgress(sessionId)?.shifts ?? 0) === 0) {
         introHoldUntil = Math.max(introHoldUntil, Date.now() + INTRO_READ_HOLD_MS)
         console.log(`[ROUND] first-time player ${sessionId} — holding auto-start for intro`)
       }
@@ -1307,8 +1229,11 @@ export function initServer() {
     if (haul) {
       haulingBy.delete(sessionId)
       streamHauler.delete(haul.stream)
-      setBinAtStation(haul.binName, true)
+      // Broadcasts the cleared haul so every client restores the station bin.
+      sendCarried(sessionId)
     }
+    // Forget the last-broadcast carry key so a rejoin always re-announces.
+    lastCarryPublicKey.delete(sessionId)
     onPlayerLeave()
 
     // Last player out → checkpoint. The runtime shuts the server down ~2min
@@ -1371,10 +1296,7 @@ export function initServer() {
   // never disagree about what "cleaned" means. Callers own sendCarried — one
   // update after the whole click (sweep included), not one per item.
   function applyAcceptedClean(address: string, itemId: string, entity: Entity): void {
-    const cs = ClutterSync.getMutable(entity)
-    cs.isCleaned = true
-    cs.cleanedAt = Date.now()
-    cs.cleanedBy = address
+    ClutterSync.getMutable(entity).isCleaned = true
 
     // Attribute this clean to the player for end-of-shift wages. Counted here, at
     // the point the server ACCEPTS the clean, so respawns during the round can't
@@ -1391,9 +1313,9 @@ export function initServer() {
     bumpContract(address, contractKindsFor(itemId))
 
     // Update all-time leaderboard score for this player.
-    // Only runs after the leaderboard has loaded (leaderboardLoadPromise resolved).
+    // Only runs once the leaderboard load has been kicked off.
     // scheduleLbUpdate() debounces rapid back-to-back saves — one disk write per burst.
-    if (leaderboardLoadPromise !== null) {
+    if (lbLoadStarted) {
       const entry = leaderboard.get(address)
       if (entry) {
         entry.total += 1
@@ -1450,10 +1372,7 @@ export function initServer() {
       onSceneItemCleaned(itemId, () => {
         const e = itemEntities.get(itemId)
         if (!e) return
-        const cs2 = ClutterSync.getMutable(e)
-        cs2.isCleaned = false
-        cs2.cleanedAt = 0
-        cs2.cleanedBy = ''
+        ClutterSync.getMutable(e).isCleaned = false
         const orig = sceneItemScales.get(itemId)
         if (orig) {
           const t2 = Transform.getMutableOrNull(e)
@@ -1495,9 +1414,43 @@ export function initServer() {
     for (const c of candidates.slice(0, budget)) applyAcceptedClean(address, c.itemId, c.entity)
   }
 
+  // ── Per-sender action pacing ────────────────────────────────────────────────
+  // The server never learns player positions (player entities don't replicate
+  // to this runtime), so proximity checks are impossible — pacing is the
+  // platform-compliant defence against scripted farming and message floods.
+  // Floors sit ABOVE anything reachable in normal play (fast play peaks around
+  // 4 accepted cleans/s) but far below the 300 msgs/s a hostile client may
+  // send. Over-pace messages are dropped SILENTLY: replying to spam is how a
+  // flood turns into amplified outbound traffic.
+  // Also refreshes presence: any real message proves the player is here, which
+  // stops deposit-only stretches from reading as a timeout mid-shift.
+  const lastActionAt = new Map<string, number>()   // "address|action" → ms
+  function paced(address: string, action: string, minIntervalMs: number): boolean {
+    heartbeat(address)
+    const key = `${address}|${action}`
+    const now = Date.now()
+    if (now - (lastActionAt.get(key) ?? 0) < minIntervalMs) return false
+    lastActionAt.set(key, now)
+    return true
+  }
+
+  // Purchases are checkpoints (money left the wallet), but a save PER purchase
+  // was also an unthrottled backend PUT — enough spam could crowd the 40
+  // in-flight host-call budget. Trailing debounce: the last purchase in a
+  // burst triggers one save shortly after. Shift-end and empty-club
+  // checkpoints still await their saves directly.
+  let progressSaveTimer: ReturnType<typeof setTimeout> | null = null
+  function scheduleProgressSave(delayMs = 3_000): void {
+    if (progressSaveTimer) clearTimeout(progressSaveTimer)
+    progressSaveTimer = setTimeout(() => {
+      progressSaveTimer = null
+      executeTask(async () => { await saveProgress() })
+    }, delayMs)
+  }
+
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
-    heartbeat(context.from)   // any message proves presence, not just pings
+    if (!paced(context.from, 'clean', 125)) return   // 8/s ceiling, silent
     if (getPhase() !== 'playing') {   // reject during lobby/countdown and intermission
       room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
       return
@@ -1555,6 +1508,7 @@ export function initServer() {
   room.onMessage('signUpNext', (_data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'signup', 500)) return
     // Already cleaning — nothing to queue. Re-send so a stale client corrects itself.
     if (!activePlayers.has(address)) signedUp.add(address)
     sendParticipation(address)
@@ -1562,6 +1516,7 @@ export function initServer() {
 
   room.onMessage('cancelSignUp', (_data, context) => {
     if (!context) return
+    if (!paced(context.from, 'signup', 500)) return
     signedUp.delete(context.from)
     sendParticipation(context.from)
   })
@@ -1582,6 +1537,7 @@ export function initServer() {
 
   room.onMessage('depositRubbish', (data, context) => {
     if (!context) return
+    if (!paced(context.from, 'deposit', 400)) return   // a real deposit needs a walk to the bin
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
     // Overflowed stream refuses deposits — the client pre-empts with a toast;
     // this resync corrects any stale client that sent anyway.
@@ -1609,6 +1565,7 @@ export function initServer() {
   room.onMessage('takeFullBag', (data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'haul', 500)) return
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
     const bin = serverBins.get(data.binName)
     if (getPhase() !== 'playing' || !activePlayers.has(address)) return
@@ -1620,7 +1577,6 @@ export function initServer() {
     if (carriedTotal(address) > 0) { sendCarried(address); return }
     haulingBy.set(address, { stream, binName: data.binName, stage: 'out' })
     streamHauler.set(stream, address)
-    setBinAtStation(data.binName, false)
     sendCarried(address)
     console.log(`[CARRY] ${address.slice(0, 8)} took bin '${data.binName}' — off to the dumpster`)
   })
@@ -1631,6 +1587,7 @@ export function initServer() {
   room.onMessage('dumpsterEmpty', (_data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'haul', 500)) return
     const haul = haulingBy.get(address)
     if (!haul || haul.stage !== 'out') { sendCarried(address); return }
     haul.stage = 'back'
@@ -1646,10 +1603,10 @@ export function initServer() {
   room.onMessage('returnBin', (_data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'haul', 500)) return
     const haul = haulingBy.get(address)
     if (!haul || haul.stage !== 'back') { sendCarried(address); return }
     haulingBy.delete(address)
-    setBinAtStation(haul.binName, true)
     haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
     bumpKindCount(address, 'haulcompleted')
     sendCarried(address)
@@ -1662,6 +1619,7 @@ export function initServer() {
   room.onMessage('portableEmpty', (_data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'portable', 500)) return
     if (carriedTotal(address) <= 0 || portableLeftFor(address) <= 0) {
       sendCarried(address)   // resync so a stale client button corrects itself
       return
@@ -1677,13 +1635,30 @@ export function initServer() {
   })
 
   // Any player can start a match from the lobby (begins the shared countdown).
-  room.onMessage('startMatch', (_data, _context) => {
+  room.onMessage('startMatch', (_data, context) => {
+    if (!context) return
+    if (!paced(context.from, 'start', 1_000)) return
     onStartMatch()
   })
+
+  // Names come from the client and are re-broadcast to every peer (ranksUpdate,
+  // leaderboardUpdate) AND persisted — an unbounded string here can breach the
+  // ~13KB synced-message cap for the whole room and bloat the stored doc, so
+  // cap length and strip control characters before the name touches anything.
+  const MAX_NAME_LEN = 24
+  const sanitizeDisplayName = (raw: unknown): string => {
+    const cleaned = String(raw ?? '')
+      .replace(/[\u0000-\u001f\u007f]/g, '')
+      .trim()
+      .slice(0, MAX_NAME_LEN)
+    return cleaned.length > 0 ? cleaned : 'Cleaner'
+  }
 
   room.onMessage('registerPlayer', (data, context) => {
     if (!context) return
     const address = context.from
+    if (!paced(address, 'register', 1_500)) return   // also blocks rename spam
+    const displayName = sanitizeDisplayName(data.displayName)
 
     // Fallback enter-trigger for players who teleport directly into the scene
     // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
@@ -1697,34 +1672,51 @@ export function initServer() {
     })
 
     executeTask(async () => {
-      // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,
-      // so concurrent registerPlayer calls never start a second disk read.
-      await ensureLeaderboardLoaded()
-      const existing = leaderboard.get(address)
-      if (existing) {
-        existing.displayName = data.displayName
-      } else {
-        leaderboard.set(address, { displayName: data.displayName, total: 0 })
+      // The leaderboard is decoration — a failed read must never block the
+      // career path below. ensureLeaderboardLoaded() caches a REJECTED promise
+      // after its retry window, so an unguarded await here used to kill every
+      // subsequent join (no career, no participation, no carry chip) for the
+      // server's whole lifetime after one bad read.
+      try {
+        // ensureLeaderboardLoaded() returns the in-flight Promise if already loading,
+        // so concurrent registerPlayer calls never start a second disk read.
+        await ensureLeaderboardLoaded()
+        const existing = leaderboard.get(address)
+        if (existing) {
+          existing.displayName = displayName
+        } else {
+          leaderboard.set(address, { displayName, total: 0 })
+        }
+        // NOTE: no save here on purpose. Writing the whole leaderboard on every join is
+        // unnecessary churn and an extra wipe surface; the display name persists on the
+        // player's next score change (scheduleLbUpdate). Just broadcast the current top-10.
+        broadcastLeaderboard([address])
+      } catch (e) {
+        console.log(`[LB] load failed during registerPlayer — joining without leaderboard: ${e}`)
       }
-      // NOTE: no save here on purpose. Writing the whole leaderboard on every join is
-      // unnecessary churn and an extra wipe surface; the display name persists on the
-      // player's next score change (scheduleLbUpdate). Just broadcast the current top-10.
-      broadcastLeaderboard([address])
 
       // Career state, so the HUD shows the right title and balance from the moment
-      // they arrive rather than only after their first shift ends.
-      await ensureProgressLoaded()
-      registerProgressPlayer(address, data.displayName)
+      // they arrive rather than only after their first shift ends. A failed load
+      // degrades to a session-only career (the wipe guards already prevent an
+      // unconfirmed session from overwriting the stored doc).
+      await ensureProgressLoaded().catch(() => {})
+      registerProgressPlayer(address, displayName)
       sendProgress(address)
       // Tells a joining player whether they're cleaning or spectating, which drives
       // the sign-up prompt on their first frame rather than after a round boundary.
       sendParticipation(address)
       // Carry state, so the HUD chip shows the right capacity from the first frame.
       sendCarried(address)
+      // carryPublic now only broadcasts on CHANGE, so a late joiner would miss
+      // everyone's standing carry visuals (a full box, a bin mid-haul) until
+      // the next pickup. Replay the room's current state to the newcomer.
+      for (const other of activeSessions) {
+        if (other !== address) sendCarryPublicTo(other, address)
+      }
       // Everyone (including the joiner) needs the updated roster for plates.
       broadcastRanks()
 
-      console.log(`[SERVER] registerPlayer: ${data.displayName} (${address})`)
+      console.log(`[SERVER] registerPlayer: ${displayName} (${address})`)
     })
   })
 
@@ -1749,7 +1741,7 @@ export function initServer() {
       if (data.upgradeId === 'carryCapacity' || data.upgradeId === 'portableBin') sendCarried(address)
       // Purchases are a checkpoint too: money left the wallet, and losing that to a
       // server shutdown would be worse than losing an unsaved shift.
-      await saveProgress()
+      scheduleProgressSave()
     })
   })
 
@@ -1792,7 +1784,7 @@ export function initServer() {
       console.log(`[SERVER] adminGrant: +$${data.money} +${data.xp}xp → ${address}${promotedTo ? ` (${promotedTo})` : ''}`)
       sendProgress(address, undefined, promotedTo)
       broadcastRanks()   // an admin rank grant changes the plate
-      await saveProgress()
+      scheduleProgressSave()
     })
   })
 }

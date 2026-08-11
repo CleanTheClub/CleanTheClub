@@ -17,10 +17,10 @@ import {
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3 } from '@dcl/sdk/math'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS } from '../shared/config'
 import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { SYNC_POLL_S } from './phaseGate'
+import { gameState } from './phaseGate'
+import { onClutterPoll } from './clutterWatcher'
 
 // ── Particle enum values ──────────────────────────────────────────────────────
 // These are 'const enum' in @dcl/ecs internals — not re-exported from @dcl/sdk/ecs.
@@ -187,15 +187,8 @@ export function initStinkSystem() {
   // Skips updates during party mode (phase = 'open') — stink is frozen then.
   let partyMode = false
 
-  let syncAcc = 0
-  engine.addSystem((dt: number) => {
-    syncAcc += dt
-    if (syncAcc < SYNC_POLL_S) return
-    syncAcc = 0
-    for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
-      const state = ClutterSync.get(syncEnt)
-      const { itemId, isCleaned } = state
-
+  onClutterPoll((entries) => {
+    for (const { itemId, isCleaned } of entries) {
       if (lastCleaned.get(itemId) === isCleaned) continue
       lastCleaned.set(itemId, isCleaned)
 
@@ -215,26 +208,24 @@ export function initStinkSystem() {
   // Phase watcher — freeze all stink during party mode, resume on new round.
   let lastPhase = ''
   engine.addSystem(() => {
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      if (gs.phase === lastPhase) return
-      const prev = lastPhase
-      lastPhase  = gs.phase
-      partyMode  = gs.phase === 'open'
+    const gs = gameState()
+    if (!gs || gs.phase === lastPhase) return
+    const prev = lastPhase
+    lastPhase  = gs.phase
+    partyMode  = gs.phase === 'open'
 
-      if (gs.phase === 'open') {
-        // Party mode — pause every emitter regardless of clean state
-        for (const emitter of emitterFor.values()) pauseEmitter(emitter)
-        console.log('[STINK] Party mode — all emitters paused')
-      } else if (prev === 'open') {
-        // New round started — ClutterSync changes that arrived during party mode
-        // were skipped by the per-frame watcher (partyMode guard), so lastCleaned
-        // can be stale. Clear it entirely and resume every emitter; the watcher
-        // will re-pause any that are genuinely still cleaned on its first tick.
-        lastCleaned.clear()
-        for (const emitter of emitterFor.values()) resumeEmitter(emitter)
-        console.log('[STINK] Round started — all emitters resumed')
-      }
-      return
+    if (gs.phase === 'open') {
+      // Party mode — pause every emitter regardless of clean state
+      for (const emitter of emitterFor.values()) pauseEmitter(emitter)
+      console.log('[STINK] Party mode — all emitters paused')
+    } else if (prev === 'open') {
+      // New round started — ClutterSync changes that arrived during party mode
+      // were skipped by the watcher (partyMode guard), so lastCleaned can be
+      // stale. Clear it entirely and resume every emitter; the watcher will
+      // re-pause any that are genuinely still cleaned on its first tick.
+      lastCleaned.clear()
+      for (const emitter of emitterFor.values()) resumeEmitter(emitter)
+      console.log('[STINK] Round started — all emitters resumed')
     }
   })
 }

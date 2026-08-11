@@ -7,9 +7,10 @@
 
 import { engine, Transform, AvatarLocomotionSettings, timers } from '@dcl/sdk/ecs'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 import { discoverStickyPatches } from '../shared/glassDiscovery'
 import { playSquelchSound } from './soundManager'
+import { reapplyMovementSpeed } from './upgradeEffects'
 
 // ── Config ────────────────────────────────────────────────────
 const SLOW_DURATION_MS = 4_000   // how long the player stays slowed
@@ -46,11 +47,15 @@ export function initStickyHazardSystem(): void {
   }
 
   let isSlowed = false
+  let slowTimer: number | undefined
   const occupiedPatches = new Set<string>()  // patches the player hasn't left yet
 
   function restoreSpeed(): void {
     isSlowed = false
-    AvatarLocomotionSettings.deleteFrom(engine.PlayerEntity)
+    if (slowTimer !== undefined) { timers.clearTimeout(slowTimer); slowTimer = undefined }
+    // Back to the player's upgraded baseline — upgradeEffects owns the
+    // component. deleteFrom here would wipe a purchased speed upgrade.
+    reapplyMovementSpeed()
   }
 
   // On scene re-entry the slow timer may have been cancelled (fired while the player
@@ -61,12 +66,16 @@ export function initStickyHazardSystem(): void {
     if (isSlowed) restoreSpeed()
   })
 
-  engine.addSystem(() => {
+  // 10 Hz is plenty: at max run speed (10 m/s) a player moves ≤1m between
+  // polls, and the patch geometry guarantees ≥2 samples inside DETECT_RADIUS
+  // on any path across a patch. Was a full patch loop every frame.
+  let pollAcc = 0
+  engine.addSystem((dt: number) => {
+    pollAcc += dt
+    if (pollAcc < 0.1) return
+    pollAcc = 0
     // ── Release on round end ──────────────────────────────────
-    let phase = 'playing'
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
-      phase = gs.phase; break
-    }
+    const phase = gameState()?.phase ?? 'playing'
     if (phase !== 'playing') {
       if (isSlowed) restoreSpeed()
       return
@@ -117,7 +126,8 @@ export function initStickyHazardSystem(): void {
         runSpeed:  SLOW_RUN_SPEED,
       })
 
-      timers.setTimeout(restoreSpeed, SLOW_DURATION_MS)
+      if (slowTimer !== undefined) timers.clearTimeout(slowTimer)
+      slowTimer = timers.setTimeout(restoreSpeed, SLOW_DURATION_MS)
       break
     }
   })

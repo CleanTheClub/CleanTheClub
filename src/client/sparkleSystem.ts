@@ -33,6 +33,8 @@ interface BurstSlot {
 }
 
 const pool: BurstSlot[] = []
+// In-flight count — lets the physics system skip the pool scan while idle.
+let activeSparkles = 0
 
 function makeSparkleEntity(): Entity {
   const e = engine.addEntity()
@@ -66,6 +68,7 @@ export function initSparkleSystem(): void {
   }
 
   engine.addSystem((dt: number) => {
+    if (activeSparkles === 0) return   // idle guard, same pattern as confetti
     for (const s of pool) {
       if (!s.active) continue
 
@@ -77,6 +80,7 @@ export function initSparkleSystem(): void {
 
       if (s.lifeMs >= s.maxLifeMs) {
         s.active = false
+        activeSparkles--
         Transform.getMutable(s.entity).scale = { x: 0.001, y: 0.001, z: 0.001 }
         continue
       }
@@ -113,6 +117,7 @@ export function playSparkle(pos: { x: number; y: number; z: number }): void {
     const speed     = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN)
 
     s.active    = true
+    activeSparkles++
     s.lifeMs    = 0
     s.maxLifeMs = LIFE_BASE_MS + Math.random() * LIFE_VARY_MS
     s.pos       = { x: pos.x, y: pos.y + SPAWN_Y, z: pos.z }

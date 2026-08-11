@@ -20,10 +20,10 @@ import {
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { getPlatform } from '@dcl/sdk/platform'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { ClutterSync, GameState } from '../shared/schemas'
 import { room } from '../shared/messages'
 import { setupClickProxy } from '../shared/sceneItemHelpers'
-import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { onClutterPoll } from './clutterWatcher'
 import { playHoverSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { showCleanedToast, showNarrativeToast } from '../ui'
@@ -66,11 +66,6 @@ type ItemState = {
 // Cleaning is disabled while the club is in the 'open' (intermission) phase so
 // players get a clear round → intermission → round cadence.  Mirrors the gate in
 // collectibleSystem.ts / InteractionManager.ts.
-function getPhase(): string {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
-  return 'playing'
-}
-
 const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
 let lastOpenPhaseToastMs = 0
 function maybeShowOpenPhaseToast() {
@@ -175,7 +170,7 @@ function enableClick(s: ItemState) {
   pointerEventsSystem.onPointerDown(
     { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: POINTER_MAX_DIST } },
     () => {
-      if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+      if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (s.pendingClean) return
       s.pendingClean = true
       disableClick(s)
@@ -309,23 +304,17 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   }
   engine.addSystem(discoverSystem)
 
-  // ── Authoritative ClutterSync watcher — one system covers all restore props ──
-  // Polled at SYNC_POLL_S rather than every frame.
-  let syncAcc = 0
-  engine.addSystem((dt: number) => {
-    syncAcc += dt
-    if (syncAcc < SYNC_POLL_S) return
-    syncAcc = 0
-    for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
-      const state = ClutterSync.get(syncEnt)
-      const s     = states.get(state.itemId)
+  // ── Authoritative ClutterSync watcher — rides the shared poll ────────────────
+  onClutterPoll((entries) => {
+    for (const { itemId, isCleaned } of entries) {
+      const s = states.get(itemId)
       if (!s) continue
-      if (s.lastSyncCleaned === state.isCleaned) continue
-      s.lastSyncCleaned = state.isCleaned
+      if (s.lastSyncCleaned === isCleaned) continue
+      s.lastSyncCleaned = isCleaned
       if (!s.allFound) continue   // initial sync handled once discovery completes
 
       s.pendingClean = false
-      if (state.isCleaned) {
+      if (isCleaned) {
         if (s.pendingAnimSwapTimer === undefined) showCleanInstant(s)
       } else {
         showDirty(s)

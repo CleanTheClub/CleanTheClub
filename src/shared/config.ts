@@ -159,13 +159,6 @@ export const THEME_SMALL_MODELS = new Set([
   'brokenGlass', 'reallyBrokenGlass', 'glassesBroken',
 ])
 
-// Multi-tap collection: model-name fragment → taps required. EMPTY for now —
-// v1 failed playtest on two counts: it only applied to THEMED spawns (scene
-// popcorn stayed one-click — interactions must follow the item TYPE, not the
-// spawn source) and had no visual feedback ("no feedback or anything to tell
-// me"). Superseded by Rhythm Pop below; machinery kept in case other models
-// ever want plain multi-tap.
-export const TAP_TAP_MODELS: Record<string, number> = {}
 
 // ── Rhythm Pop (popcorn) ──────────────────────────────────────────────────────
 // Clicking ANY popcorn — scene-placed or theme-spawned, one rule per item type —
@@ -304,7 +297,7 @@ export const THEME_DEFS: RoundThemeDef[] = [
     blurb: 'Deep clean! Management wants every inch of this club mopped.',
     categories: ['sticky'],
     contractKinds: ['sticky'],
-    spawns: { models: ['StickyPatch', 'StickyPatchB'], countMin: 14, countMax: 18 },
+    spawns: { models: ['StickyPatch', 'StickyPatchBB'], countMin: 14, countMax: 18 },
   },
 ]
 

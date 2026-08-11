@@ -1,9 +1,8 @@
 // Quick-click-to-clean system for the Rubbish group.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
+import { Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
-import { ClutterSync, GameState } from '../shared/schemas'
 import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
 import { room } from '../shared/messages'
@@ -13,7 +12,8 @@ import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { onClutterPoll } from './clutterWatcher'
 import { startPopRhythm } from './InteractionManager'
 import { POP_NAME_PART } from '../shared/config'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
@@ -23,15 +23,6 @@ import { PICKUP_TOUCH_MS } from '../shared/config'
 const pendingCleans     = new Set<string>()
 const pendingVisualHide = new Set<string>()
 const lastState         = new Map<string, boolean>()
-
-// ── Open-phase cleaning gate ───────────────────────────────────────────────────
-// Cleaning is disabled while the club is in the 'open' (intermission) phase so
-// players get a clear round → intermission → round cadence.  Mirrors the gate in
-// collectibleSystem.ts / InteractionManager.ts.
-function getPhase(): string {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
-  return 'playing'
-}
 
 const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
 let lastOpenPhaseToastMs = 0
@@ -128,7 +119,7 @@ function enableClick(itemId: string) {
       },
     },
     () => {
-      if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+      if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (isCarryFull()) { maybeShowFullToast(); pulseCarryBox(); return }
       if (pendingCleans.has(itemId)) return
       const pos = Transform.getOrNull(containerEntity)?.position
@@ -140,7 +131,7 @@ function enableClick(itemId: string) {
         startPopRhythm(itemId, (hits) => {
           if (hits === 0) return   // blank run — popcorn stays, click to retry
           if (pendingCleans.has(itemId) || lastState.get(itemId) === true) return
-          if (getPhase() === 'open' || isCarryFull()) return
+          if (currentPhase() === 'open' || isCarryFull()) return
           performClean()
         })
         return
@@ -214,26 +205,21 @@ export function initRubbishSystem() {
     lastState.clear()
   })
 
-  // ── Authoritative state watcher (polled at SYNC_POLL_S, not every frame) ──────
-  let syncAcc = 0
-  engine.addSystem((dt: number) => {
-    syncAcc += dt
-    if (syncAcc < SYNC_POLL_S) return
-    syncAcc = 0
-    for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
-      const state = ClutterSync.get(syncEnt)
-      if (!state.itemId.startsWith(RUBBISH_ID_PREFIX)) continue
-      if (lastState.get(state.itemId) === state.isCleaned) continue
-      lastState.set(state.itemId, state.isCleaned)
-      pendingCleans.delete(state.itemId)
+  // ── Authoritative state watcher — rides the shared ClutterSync poll ───────────
+  onClutterPoll((entries) => {
+    for (const { itemId, isCleaned } of entries) {
+      if (!itemId.startsWith(RUBBISH_ID_PREFIX)) continue
+      if (lastState.get(itemId) === isCleaned) continue
+      lastState.set(itemId, isCleaned)
+      pendingCleans.delete(itemId)
 
-      if (state.isCleaned) {
-        disableClick(state.itemId)
-        if (!pendingVisualHide.has(state.itemId)) setVisible(state.itemId, false)
+      if (isCleaned) {
+        disableClick(itemId)
+        if (!pendingVisualHide.has(itemId)) setVisible(itemId, false)
       } else {
-        pendingVisualHide.delete(state.itemId)
-        setVisible(state.itemId, true)
-        enableClick(state.itemId)
+        pendingVisualHide.delete(itemId)
+        setVisible(itemId, true)
+        enableClick(itemId)
       }
     }
   })

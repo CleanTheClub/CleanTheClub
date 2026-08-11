@@ -9,7 +9,7 @@
 
 import { engine, Transform } from '@dcl/sdk/ecs'
 import { movePlayerTo } from '~system/RestrictedActions'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 
 // Centre of SpawnArea1 in scene.json, facing the centre of the scene.
 const ENTRANCE_POS    = { x: 16, y: 0, z: 28.67 }
@@ -32,8 +32,7 @@ function nearEntrance(): boolean {
 export function initLobbyTeleport(): void {
   let lastPhase = ''
   engine.addSystem(() => {
-    let phase = ''
-    for (const [, gs] of engine.getEntitiesWith(GameState)) { phase = gs.phase; break }
+    const phase = gameState()?.phase ?? ''
     if (phase === '' || phase === lastPhase) return
     const prev = lastPhase
     lastPhase = phase

@@ -11,7 +11,7 @@
 
 import { engine, Entity, Transform, AudioSource, EasingFunction } from '@dcl/sdk/ecs'
 import { timers } from '@dcl/sdk/ecs'
-import { GameState } from '../shared/schemas'
+import { gameState } from './phaseGate'
 import { tweenValue } from './tween'
 
 // ── Track paths ───────────────────────────────────────────────────────────────
@@ -94,8 +94,11 @@ function stop(entity: Entity) {
 }
 
 export function initMusicManager(): void {
+  // All three tracks are parented to the player entity, so they ride along for
+  // free — the old approach wrote three Transforms EVERY FRAME to chase the
+  // player's position for consistent volume.
   townEntity = engine.addEntity()
-  Transform.create(townEntity, { position: MUSIC_POS })
+  Transform.create(townEntity, { parent: engine.PlayerEntity })
   AudioSource.create(townEntity, {
     audioClipUrl: SND_TOWN,
     playing:      true,
@@ -104,7 +107,7 @@ export function initMusicManager(): void {
   })
 
   partyEntity = engine.addEntity()
-  Transform.create(partyEntity, { position: MUSIC_POS })
+  Transform.create(partyEntity, { parent: engine.PlayerEntity })
   AudioSource.create(partyEntity, {
     audioClipUrl: SND_PARTY,
     playing:      false,
@@ -113,7 +116,7 @@ export function initMusicManager(): void {
   })
 
   finaleEntity = engine.addEntity()
-  Transform.create(finaleEntity, { position: MUSIC_POS })
+  Transform.create(finaleEntity, { parent: engine.PlayerEntity })
   AudioSource.create(finaleEntity, {
     audioClipUrl: SND_FINALE,
     playing:      false,
@@ -128,21 +131,14 @@ export function initMusicManager(): void {
 
   console.log('[Music] Manager ready — Town playing')
 
-  // Keep both music entities at the player's position so volume stays
-  // consistent regardless of where in the scene the player is standing.
-  engine.addSystem(() => {
-    const pos = Transform.getOrNull(engine.PlayerEntity)?.position ?? MUSIC_POS
-    Transform.getMutable(townEntity).position   = { x: pos.x, y: pos.y, z: pos.z }
-    Transform.getMutable(partyEntity).position  = { x: pos.x, y: pos.y, z: pos.z }
-    Transform.getMutable(finaleEntity).position = { x: pos.x, y: pos.y, z: pos.z }
-  })
-
   // Phase watcher — also reacts to the finale flag so the doors-open celebration
   // music depends on whether this is a regular intermission or the finale.
   let lastPhase  = ''
   let lastFinale = false
   engine.addSystem(() => {
-    for (const [, gs] of engine.getEntitiesWith(GameState)) {
+    const gs = gameState()
+    if (!gs) return
+    {
       if (gs.phase === lastPhase && gs.isFinale === lastFinale) return
       const prev       = lastPhase
       const prevFinale = lastFinale

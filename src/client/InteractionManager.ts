@@ -3,7 +3,7 @@ import { isMobile } from '@dcl/sdk/platform'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
-import { ClutterSync, GameState } from '../shared/schemas'
+import { ClutterSync } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType, POP_BEATS, POP_BEAT_MS, POP_HIT_T, POP_FIRST_GRACE_MS } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
@@ -12,7 +12,8 @@ import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, SYNC_POLL_S } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { onClutterPoll, clutterEntry } from './clutterWatcher'
 import { registerSpreeHit } from './spreeSystem'
 
 const pendingCleans     = new Set<string>()
@@ -102,11 +103,6 @@ function judgeRhythmTap(): void {
 const OPEN_PHASE_TOAST_COOLDOWN_MS = 3_000
 let lastOpenPhaseToastMs = 0
 
-function getPhase(): string {
-  for (const [, gs] of engine.getEntitiesWith(GameState)) return gs.phase ?? 'playing'
-  return 'playing'
-}
-
 function maybeShowOpenPhaseToast() {
   const now = Date.now()
   if (now - lastOpenPhaseToastMs < OPEN_PHASE_TOAST_COOLDOWN_MS) return
@@ -124,6 +120,9 @@ function maybeShowTooFarToast() {
 }
 
 function findClutterEntity(itemId: string): Entity | undefined {
+  // Shared-watcher snapshot first (O(1)); full scan only before its first poll.
+  const cached = clutterEntry(itemId)
+  if (cached) return cached.entity
   for (const [entity] of engine.getEntitiesWith(ClutterSync)) {
     if (ClutterSync.get(entity).itemId === itemId) return entity
   }
@@ -162,7 +161,7 @@ function enableClick(id: string) {
         if (pendingCleans.has(id) || activeHold || activeRhythm) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
-        if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+        if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         // Reach gate — pointer rays pass through pointer-layer-free walls/floors,
         // so a patch upstairs was moppable from below. Real distance check instead.
         if (!withinReach(itemPos(id))) {
@@ -196,7 +195,7 @@ function enableClick(id: string) {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
-        if (getPhase() === 'open') { maybeShowOpenPhaseToast(); return }
+        if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
 
         playCleanSound()               // instant audio feedback on click
         pendingCleans.add(id)
@@ -473,42 +472,37 @@ export function initInteractionManager(
   }
   engine.addSystem(enableOnSync)
 
-  // Watch ClutterSync → apply authoritative state + manage click availability
-  // (polled at SYNC_POLL_S, not every frame).
-  let syncAcc = 0
-  engine.addSystem((dt: number) => {
-    syncAcc += dt
-    if (syncAcc < SYNC_POLL_S) return
-    syncAcc = 0
-    for (const [syncEnt] of engine.getEntitiesWith(ClutterSync)) {
-      const state = ClutterSync.get(syncEnt)
-      if (lastState.get(state.itemId) === state.isCleaned) continue
-      lastState.set(state.itemId, state.isCleaned)
+  // Watch ClutterSync → apply authoritative state + manage click availability.
+  // Rides the shared poll (same cadence as before).
+  onClutterPoll((entries) => {
+    for (const { itemId, isCleaned } of entries) {
+      if (lastState.get(itemId) === isCleaned) continue
+      lastState.set(itemId, isCleaned)
 
-      pendingCleans.delete(state.itemId)
+      pendingCleans.delete(itemId)
 
-      if (state.isCleaned) {
-        if (activeHold?.id === state.itemId) {
-          showHoldBar(state.itemId, false)
+      if (isCleaned) {
+        if (activeHold?.id === itemId) {
+          showHoldBar(itemId, false)
           activeHold = null
         }
-        disableClick(state.itemId)
+        disableClick(itemId)
         // If a pickup timer is pending, let it apply the visual at the touch moment.
         // For hold items the timer is never set, so this branch is a no-op for them.
-        if (!pendingVisualHide.has(state.itemId)) {
-          applyCleanState(state.itemId, true)
+        if (!pendingVisualHide.has(itemId)) {
+          applyCleanState(itemId, true)
         }
       } else {
         // Round reset / first appearance — cancel any pending visual hide, then
         // stagger the pop-in: spawnInRef pops the patch in once its GLB + collider
         // are ready and enables clicks at that point (fixes round-1 click races and
         // adds a satisfying pop).  Falls back to instant restore if no director.
-        pendingVisualHide.delete(state.itemId)
+        pendingVisualHide.delete(itemId)
         if (spawnInRef) {
-          spawnInRef(state.itemId, () => enableClick(state.itemId))
+          spawnInRef(itemId, () => enableClick(itemId))
         } else {
-          enableClick(state.itemId)
-          applyCleanState(state.itemId, false)
+          enableClick(itemId)
+          applyCleanState(itemId, false)
         }
       }
     }

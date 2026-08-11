@@ -77,23 +77,38 @@ export function discoverByName(names: string[], idPrefix: string): SceneItemDef[
   return result
 }
 
-// Convenience wrappers — merge parent-group children with any loose named entities
-export const discoverGlasses = () => [
+// Convenience wrappers — merge parent-group children with any loose named
+// entities. MEMOIZED (project cleanup): five systems call these at init, and
+// each un-cached call was a full engine Name + Transform scan plus a duplicate
+// "[SCENE] discovered N items" log line. The composite is static after load,
+// so the first result is the result.
+const discoveryCache = new Map<string, SceneItemDef[]>()
+function cached(key: string, compute: () => SceneItemDef[]): SceneItemDef[] {
+  let hit = discoveryCache.get(key)
+  if (!hit) {
+    hit = compute()
+    // An empty result may just mean we ran before the composite finished
+    // loading — don't cache it, let the next caller retry.
+    if (hit.length > 0) discoveryCache.set(key, hit)
+  }
+  return hit
+}
+export const discoverGlasses = () => cached('glasses', () => [
   ...discoverChildren('Glasses', GLASS_ID_PREFIX),
   ...discoverByName(LOOSE_GLASS_NAMES, GLASS_ID_PREFIX),
-]
-export const discoverBottles = () => [
+])
+export const discoverBottles = () => cached('bottles', () => [
   ...discoverChildren('Bottles', BOTTLE_ID_PREFIX),
   ...discoverByName(LOOSE_BOTTLE_NAMES, BOTTLE_ID_PREFIX),
-]
-export const discoverRubbish = () => [
+])
+export const discoverRubbish = () => cached('rubbish', () => [
   ...discoverChildren('Rubbish', RUBBISH_ID_PREFIX),
   ...discoverByName(LOOSE_RUBBISH_NAMES, RUBBISH_ID_PREFIX),
-]
-export const discoverStickyPatches = () => [
+])
+export const discoverStickyPatches = () => cached('sticky', () => [
   ...discoverChildren('StickyPatches', STICKY_ID_PREFIX),
   ...discoverByName(LOOSE_STICKY_NAMES, STICKY_ID_PREFIX),
-]
+])
 
 // Legacy type alias — keeps glassSystem.ts import happy during migration
 export type GlassDef = SceneItemDef & { glassId: string }
