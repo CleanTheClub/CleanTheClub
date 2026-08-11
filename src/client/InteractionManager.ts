@@ -71,7 +71,6 @@ type ActiveRhythm = {
   onDone: (hits: number) => void
 }
 let activeRhythm: ActiveRhythm | null = null
-export const isRhythmActive = (): boolean => activeRhythm !== null
 
 /** Starts the pop rhythm for an item. False = another minigame is running. */
 export function startPopRhythm(id: string, onDone: (hits: number) => void): boolean {
@@ -171,8 +170,8 @@ function enableClick(id: string) {
         playStickySound()
         const { zoneStart, zoneEnd } = rollSkillZone()
         activeHold = { id, startMs: Date.now(), zoneStart, zoneEnd }
-        showHoldBarRef(id, true)
-        updateHoldBarRef(id, 0)
+        showHoldBarRef(true)
+        updateHoldBarRef(0)
         setHoldBarZone(zoneStart, zoneEnd)
 
         // Mopping emote — same step-to-item + emote logic as the pickup animation,
@@ -291,8 +290,8 @@ export function unregisterDynamicHold(itemId: string) {
 // (avoids threading callbacks through every helper)
 
 let applyCleanStateRef: (id: string, isCleaned: boolean) => void = () => {}
-let showHoldBarRef:     (id: string, visible: boolean) => void   = () => {}
-let updateHoldBarRef:   (id: string, progress: number) => void   = () => {}
+let showHoldBarRef:     (visible: boolean) => void   = () => {}
+let updateHoldBarRef:   (progress: number) => void   = () => {}
 // Optional staggered spawn-in: when set, an uncleaned item is popped in by the
 // spawn director (clicks enabled on pop-complete) instead of snapping visible.
 let spawnInRef:         ((id: string, onPopped: () => void) => void) | null = null
@@ -302,8 +301,8 @@ let spawnInRef:         ((id: string, onPopped: () => void) => void) | null = nu
 export function initInteractionManager(
   dirtyEntities:     Map<string, Entity>,
   applyCleanState:   (id: string, isCleaned: boolean) => void,
-  showHoldBar:       (id: string, visible: boolean) => void,
-  updateHoldBar:     (id: string, progress: number) => void,
+  showHoldBar:       (visible: boolean) => void,
+  updateHoldBar:     (progress: number) => void,
   sceneHoldEntities?: Map<string, Entity>,
   spawnIn?: (id: string, onPopped: () => void) => void,
 ) {
@@ -316,7 +315,7 @@ export function initInteractionManager(
   // treats every item as freshly unseen and correctly re-enables uncleaned ones.
   onEnterSceneObservable.add(() => {
     if (activeHold) {
-      showHoldBar(activeHold.id, false)
+      showHoldBar(false)
       stopStickySound()
       activeHold = null
     }
@@ -354,8 +353,8 @@ export function initInteractionManager(
     activeHold = null
     cancelEmote()
     stopStickySound()
-    showHoldBar(id, false)
-    updateHoldBar(id, 0)
+    showHoldBar(false)
+    updateHoldBar(0)
 
     if (at >= zoneStart && at <= zoneEnd) {
       perfectStreak++
@@ -445,12 +444,12 @@ export function initInteractionManager(
     // Read live, not captured at hold-start: the Mopping Speed upgrade shortens
     // this, and the bar, the completion check and the emote must all agree.
     const progress = heldMs / holdDurationMs()
-    updateHoldBar(activeHold.id, Math.min(1, progress))
+    updateHoldBar(Math.min(1, progress))
 
     if (progress >= 1) {
       const { id } = activeHold
       activeHold = null
-      showHoldBar(id, false)
+      showHoldBar(false)
       playCleanSound()
       const holdPos = itemPos(id)
       if (holdPos) playSparkle(holdPos)
@@ -483,7 +482,7 @@ export function initInteractionManager(
 
       if (isCleaned) {
         if (activeHold?.id === itemId) {
-          showHoldBar(itemId, false)
+          showHoldBar(false)
           activeHold = null
         }
         disableClick(itemId)
@@ -521,7 +520,7 @@ export function initInteractionManager(
       // Leaving 'playing' (intermission/finale) — kill any in-progress hold so it
       // can't complete while cleaning is disabled, then turn off all pointer events.
       if (activeHold) {
-        showHoldBarRef(activeHold.id, false)
+        showHoldBarRef(false)
         stopStickySound()
         activeHold = null
       }
@@ -539,7 +538,7 @@ export function initInteractionManager(
     pendingCleans.delete(data.itemId)
     pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
     if (activeHold?.id === data.itemId) {
-      showHoldBar(data.itemId, false)
+      showHoldBar(false)
       activeHold = null
     }
     // Restore dirty visual immediately in case the timer already fired and hid the item.

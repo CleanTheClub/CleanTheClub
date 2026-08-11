@@ -1,0 +1,26 @@
+# Files excluded from deployments (they never reach the content server).
+# Without this file, sdk-commands falls back to defaults and packs several MB
+# of editor/tooling artifacts into every deploy.
+
+# Creator Hub asset-browser thumbnail cache (~2.7MB of 300x300 PNGs)
+thumbnails/
+# SDK docs kept locally for AI-assistant context
+dclcontext/
+# Local data snapshots
+backups/
+# Editor / assistant / tooling configuration
+.claude/
+.editor/
+.vscode/
+.idea/
+cursor.config
+cursorignore
+CLAUDE.md
+LICENSE
+# Build & dependency trees (also in the default ignore, kept explicit)
+node_modules/
+bin/*.map
+.dclcache/
+*.tsbuildinfo
+.DS_Store
+*.log

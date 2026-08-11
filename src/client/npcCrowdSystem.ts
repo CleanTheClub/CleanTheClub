@@ -17,9 +17,10 @@
 //
 // Avatars are clothed via base-wearable URNs and given varied skin / hair colours.
 
-import { engine, Entity, Transform, AvatarShape, Name, timers } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, AvatarShape, Name } from '@dcl/sdk/ecs'
 import { Quaternion, Color3 } from '@dcl/sdk/math'
 import { getPlatform, isMobile } from '@dcl/sdk/platform'
+import { platformSettled } from './platformWait'
 import { gameState } from './phaseGate'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,9 +56,6 @@ const MAX_SITTERS_MOBILE  = 4
 const MAX_DANCERS_MOBILE  = 4
 
 const SIT_DISCOVERY_TIMEOUT_MS = 10_000
-// Cap on waiting for the SDK to resolve the platform before building the roster
-// (getPlatform() is null until an async explorer round-trip lands).
-const PLATFORM_WAIT_MS = 5_000
 const SITTER_BODY_CYCLE = [FEMALE, MALE]
 
 // Fraction of the crowd that stays as "residents" between rounds (open, non-finale).
@@ -232,25 +230,6 @@ function ensureEntity(npc: Npc) {
   npc.stamp  = 1
 }
 
-// ── Hairstyle warm-up ───────────────────────────────────────────────────────────
-// DCL's avatar hair uses "wiggle bones" (secondary motion) that initialise the first
-// time each hairstyle is instantiated — which makes the very first crowd (round 1)
-// show funky hair, while every later round is fine. We pre-instantiate one avatar per
-// unique hairstyle at scene load (hidden behind the boot lobby scrim) so that cold
-// start happens before anyone's watching, then destroy them.
-const HAIR_WARMUP_MS = 3_000
-function warmUpHairstyles() {
-  const seenHair = new Set<string>()
-  const warm: Entity[] = []
-  for (const spec of specs) {
-    const hair = spec.wearables[0]
-    if (seenHair.has(hair)) continue
-    seenHair.add(hair)
-    warm.push(createAvatarEntity(spec, spec.position.y))   // at the spot so it renders + warms
-  }
-  console.log(`[NPC] Warming ${warm.length} hairstyles`)
-  timers.setTimeout(() => { for (const e of warm) engine.removeEntity(e) }, HAIR_WARMUP_MS)
-}
 
 // Re-fire the held emote (used when a pooled avatar pops back in so it resumes its
 // dance/sit pose instead of standing idle).
@@ -288,7 +267,7 @@ export function initNpcCrowdSystem(): void {
   const discoverSitSpots = () => {
     // Crowd size depends on the platform, which resolves asynchronously — build
     // nothing until it is known, or a phone would get the full desktop crowd.
-    if (getPlatform() === null && Date.now() - startMs < PLATFORM_WAIT_MS) return
+    if (!platformSettled()) return
 
     // ── Dancer specs — fixed floor coordinates ─────────────────────────────────
     if (!dancersBuilt) {
@@ -342,7 +321,6 @@ export function initNpcCrowdSystem(): void {
     if (usedSpots.size >= maxSitters || Date.now() - startMs > SIT_DISCOVERY_TIMEOUT_MS) {
       buildRoster()
       console.log(`[NPC] Crowd ready (${getPlatform() ?? 'unknown'}) — ${dancerCount()} dancers + ${usedSpots.size} sitters (${roster.filter(n => n.resident).length} residents)`)
-      // warmUpHairstyles()   // re-enable if wiggle-bone hair glitch returns on first crowd
       engine.removeSystem(discoverSitSpots)
     }
   }

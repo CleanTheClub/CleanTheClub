@@ -7,7 +7,6 @@
 // FRENZY: during the round's final seconds each clean counts double toward the
 // spree, turning the wind-down into a rush.
 
-import { engine } from '@dcl/sdk/ecs'
 import { gameState } from './phaseGate'
 import { flashSpree } from '../ui'
 import { playSpreeSound } from './soundManager'

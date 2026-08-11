@@ -14,14 +14,15 @@ import { getUserData } from '~system/UserIdentity'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
+import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { DUMPSTER_PREFIX, BIN_STREAM_CAPACITY, BIN_STINK_FRACTION, themeModelSrc } from '../shared/config'
 import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST, gameState } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty } from './progressionStore'
-import { playPickupEmote, setCarryPose } from './emoteManager'
+import { setCarryPose } from './emoteManager'
+import { PSB_ALPHA } from './particleEnums'
 
 // REAL bin models, discovered by name prefix — the placeholder cubes are gone.
 // The scene ships four stations (two per floor), each pairing a Bin_General_N
@@ -335,7 +336,7 @@ function refreshCarriedBag(): void {
       },
       texture:   { src: FULL_STINK_TEXTURE },
       billboard: true,
-      blendMode: 0,   // PSB_ALPHA (const enum not re-exported)
+      blendMode: PSB_ALPHA,
       loop: true,
       prewarm: true,
       active: true,
@@ -685,7 +686,7 @@ export function initCarrySystem(): void {
       },
       texture:   { src: FULL_STINK_TEXTURE },
       billboard: true,
-      blendMode: 0,
+      blendMode: PSB_ALPHA,
       loop: true,
       prewarm: true,
       active: true,
@@ -784,7 +785,11 @@ export function initCarrySystem(): void {
         stationStinks[i] = null
       }
       if (stationStinks[i] !== null) {
-        ParticleSystem.getMutable(stationStinks[i]!).rate = Math.round(1 + 7 * frac)
+        const rate = Math.round(1 + 7 * frac)
+        // Mutate only on change — getMutable marks the component dirty.
+        if (ParticleSystem.get(stationStinks[i]!).rate !== rate) {
+          ParticleSystem.getMutable(stationStinks[i]!).rate = rate
+        }
       }
     }
   })

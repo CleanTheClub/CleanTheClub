@@ -20,7 +20,6 @@ export const OPEN_DISPLAY_MS    = DEBUG ? 20_000 : 20_000   // normal intermissi
 // dragged ("round 5 big celebration doesn't match our V2 path"); 30s lets the
 // crowd + confetti + music land and then gets everyone back to work.
 export const FINALE_DISPLAY_MS  = DEBUG ? 30_000 : 30_000   // milestone celebration window
-export const NEXT_ROUND_LOCK_MS = DEBUG ? 5_000  :  8_000   // min before early-start unlocks
 export const CLUTTER_RESPAWN_MS = DEBUG ? 10_000 : 120_000  // base respawn (was 90s — eased)
 export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was 45s — eased)
 

@@ -13,7 +13,6 @@ export const Messages = {
    * Admin-gated server-side.
    */
   adminForceTheme:  Schemas.Map({ themeId: Schemas.String }),
-  startNextRound:   Schemas.Map({ dummy: Schemas.Boolean }),  // any player (no-op)
   startMatch:       Schemas.Map({ dummy: Schemas.Boolean }),  // any player — start a match from the lobby
   /** Sent on join so the server can map address → display name for the leaderboard. */
   registerPlayer:   Schemas.Map({ displayName: Schemas.String }),

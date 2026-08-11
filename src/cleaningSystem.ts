@@ -1,7 +1,7 @@
 import { Entity, Transform } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math'
 import { discoverStickyPatches } from './shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy } from './shared/sceneItemHelpers'
+import { findGltfEntity, setupClickProxy } from './client/sceneItemHelpers'
 import { initInteractionManager, updateSceneHoldGltf } from './client/InteractionManager'
 import { requestSpawn, requestSetup } from './client/spawnDirector'
 import { setHoldBarVisible, setHoldBarProgress } from './ui'
@@ -35,15 +35,12 @@ export function applyCleanState(id: string, isCleaned: boolean) {
 }
 
 // ─── Hold-to-clean progress bar ────────────────────────────────────────────────
-// The bar is now a screen-space UI element (see ui.tsx) so it can never be
-// occluded by the avatar — the previous in-world billboard could hide behind the
-// player when standing over a floor patch.  These thin wrappers keep the
-// InteractionManager call signatures unchanged.  The `id` arg is unused: only one
-// hold can be active at a time, so a single shared UI bar is sufficient.
-export function showHoldBar(_id: string, visible: boolean) {
+// The bar is a screen-space UI element (see ui.tsx) so it can never be occluded
+// by the avatar. Only one hold can be active at a time, so one shared bar.
+export function showHoldBar(visible: boolean) {
   setHoldBarVisible(visible)
 }
-export function updateHoldBar(_id: string, progress: number) {
+export function updateHoldBar(progress: number) {
   setHoldBarProgress(progress)
 }
 

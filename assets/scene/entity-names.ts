@@ -166,6 +166,7 @@ export enum EntityNames {
   Stool_2 = "Stool_2",
   Text_Sign = "Text_Sign",
   Text_Title = "Text_Title",
+  Vacuum_glb = "Vacuum.glb",
   Video_Screen = "Video Screen",
   Wine_Glass = "Wine Glass",
   Wine_Glass_10 = "Wine Glass_10",

@@ -231,9 +231,17 @@ export function ensureProgressLoaded(): Promise<unknown> {
 }
 
 /**
- * Whether this address belongs to a guest account. Read from the engine's own
- * PlayerIdentityData rather than anything the client sends, since a client claiming
- * not to be a guest would otherwise get a permanent slot for a throwaway address.
+ * Whether this address belongs to a guest account.
+ *
+ * FIELD-VERIFIED LIMITATION: PlayerIdentityData does NOT reliably replicate to
+ * the SERVER runtime (see the heartbeat-presence note in server.ts), so on the
+ * server this scan is usually empty and returns false — in practice guests DO
+ * get persisted. That is the accepted trade-off: a guest wrongly persisted
+ * costs one dead record (isWorthKeeping prunes never-played rows), while a
+ * real player wrongly skipped loses their career (this happened — the deployed
+ * explorer once misflagged the signed-in OWNER as a guest). The override
+ * branches below only matter if/when the platform starts replicating identity
+ * server-side; they are kept as cheap insurance for that day.
  */
 export function detectGuest(address: string): boolean {
   const target = address.toLowerCase()

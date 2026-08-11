@@ -9,9 +9,7 @@
 //  round end     — fires when doors open (phase → 'open'), outcome-flavoured
 
 import { engine, timers } from '@dcl/sdk/ecs'
-import { GameState } from '../shared/schemas'
 import { gameState } from './phaseGate'
-import { MILESTONE_EVERY, THEME_DEFS } from '../shared/config'
 import { showNarrativeToast, triggerRoundStartIntro } from '../ui'
 import { playPartyEmote } from './emoteManager'
 import { playCrowdSound } from './soundManager'
@@ -19,20 +17,6 @@ import { playCrowdSound } from './soundManager'
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Messages — edit these ────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Round-start messages — indexed by roundNumber (0-based).
-// Falls back to DEFAULT if the round index isn't listed.
-const ROUND_START: Record<number, string> & { DEFAULT: string } = {
-  0:         "The club's a mess, let's clean it!",
-  1:         "Round 2: the crowd expects better!",
-  2:         "Round 3: no excuses, make it shine!",
-  3:         "Round 4: you're on fire, keep going!",
-  DEFAULT:   "New round: keep it up!",
-}
-
-// Rounds loop forever now — there is no "final round". Every MILESTONE_EVERY-th
-// round (5, 10, 15, …) is a milestone with its own celebration hold instead.
-const MILESTONE_ROUND_START = "Milestone round — give it everything you've got!"
 
 // Cleanliness milestones — fires once per round when pct crosses the threshold.
 // Keys are percentages (0–100). Add or remove entries freely.
@@ -75,7 +59,6 @@ const FINALE_EMOTE_REPEATS     = 6
 // Delay (ms) after phase changes before the narrative toast fires.
 // A small gap lets the confetti / outcome banner land first.
 const ROUND_END_DELAY_MS   = 3_000
-const ROUND_START_DELAY_MS = 600
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -83,7 +66,6 @@ const ROUND_START_DELAY_MS = 600
 
 export function initNarrativeSystem(): void {
   let lastPhase       = ''
-  let lastRoundNumber = -1
 
   // Milestone tracking — reset each round
   const firedMilestones = new Set<number>()
@@ -102,11 +84,9 @@ export function initNarrativeSystem(): void {
     const gs = gameState()
     const pct         = gs ? Math.min(1, gs.cleanedCount / Math.max(1, gs.totalCount)) : 0
     const phase       = gs?.phase ?? 'playing'
-    const roundNumber = gs?.roundNumber ?? 0
     const secondsLeft = gs?.secondsLeft ?? 0
     const outcome     = gs?.outcome ?? ''
     const isFinale    = gs?.isFinale ?? false
-    const theme       = gs?.theme ?? ''
     const lastCall    = gs?.lastCall ?? false
 
     // ── Last call — 100% early close announcement (once per round) ─────────────
@@ -154,11 +134,9 @@ export function initNarrativeSystem(): void {
       }
     }
 
-    // ── Round-number change → round start message ──────────────────────────────
-    // Round-start toasts retired entirely: the roulette story card (ui.tsx)
-    // now plays on EVERY round — classic included — and holds the screen far
-    // longer than a toast. Two surfaces saying "new round" was distraction.
-    lastRoundNumber = roundNumber
+    // Round-start toasts are retired: the roulette story card (ui.tsx) plays on
+    // EVERY round — classic included — and holds the screen far longer than a
+    // toast. Two surfaces saying "new round" was distraction.
 
     // ── Cleanliness milestones ─────────────────────────────────────────────────
     if (phase === 'playing') {

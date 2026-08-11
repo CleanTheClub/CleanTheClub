@@ -261,19 +261,25 @@ let cycleAcc = 0
 let headerNameEntity:  Entity | undefined
 let headerScoreEntity: Entity | undefined
 
+// Write a TextShape only when the text actually changed — getMutable marks the
+// component dirty, and this renderer re-runs on every category cycle tick.
+function setText(entity: Entity, text: string): void {
+  if (TextShape.get(entity).text !== text) TextShape.getMutable(entity).text = text
+}
+
 function renderCategory(cat: LbCategory | undefined): void {
   if (headerNameEntity !== undefined) {
-    TextShape.getMutable(headerNameEntity).text = cat ? cat.title : LB_HEADER_NAME
+    setText(headerNameEntity, cat ? cat.title : LB_HEADER_NAME)
   }
   if (headerScoreEntity !== undefined) {
-    TextShape.getMutable(headerScoreEntity).text = cat ? cat.scoreHeader : LB_HEADER_SCORE
+    setText(headerScoreEntity, cat ? cat.scoreHeader : LB_HEADER_SCORE)
   }
   for (let i = 0; i < LB_ENTRIES; i++) {
     const entry = cat?.entries[i]
     const { name, score } = getLabels(i)
     if (!name || !score) continue
-    TextShape.getMutable(name).text  = entry ? `${i + 1}.  ${entry.displayName}` : ''
-    TextShape.getMutable(score).text = entry ? entry.score : ''
+    setText(name,  entry ? `${i + 1}.  ${entry.displayName}` : '')
+    setText(score, entry ? entry.score : '')
   }
 }
 

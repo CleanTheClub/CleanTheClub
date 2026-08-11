@@ -25,6 +25,11 @@ import { getSafeArea, pct } from './safeArea'
 // per-frame sines force a UI update per node per frame even when idle.
 const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
 
+// Upgrades whose underlying mechanic doesn't exist yet are hidden rather than
+// shown disabled — advertising something unbuyable is worse than not listing
+// it. Static, so filtered once instead of per frame while the shop is open.
+const VISIBLE_UPGRADES = UPGRADES.filter((u) => u.implemented)
+
 const WHITE  = theme.colors.white
 const SUBTLE = theme.text.subtle
 const PANEL  = Color4.create(0, 0, 0, 0.82)
@@ -79,8 +84,6 @@ export const setShopOpen = (open: boolean): void => {
   if (open && !shopOpen) shopOpenedMs = Date.now()
   shopOpen = open
 }
-export const closeShop = (): void => { shopOpen = false }
-
 const SHOP_SLIDE_MS = 250
 /** 0→1 eased progress of the panel slide-in since the shop opened. */
 function shopSlideEase(): number {
@@ -317,7 +320,6 @@ export function ShiftPayoutPanel(
   // streak rows, so its zoom is its own constant rather than the shop's.
   const Z = S * PAYOUT_ZOOM
 
-  const font  = Math.round(22 * Z)
   const small = Math.round(16 * Z)
   const pad   = Math.round(14 * Z)
 
@@ -766,9 +768,7 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
 function ShopBody({ S, rowWidth, titleSize }: { S: number; rowWidth: number; titleSize: number }) {
   const c = getCareerOrEmpty()
 
-  // Upgrades whose underlying mechanic doesn't exist yet are hidden rather than
-  // shown disabled — advertising something unbuyable is worse than not listing it.
-  const visible = UPGRADES.filter((u) => u.implemented)
+  const visible = VISIBLE_UPGRADES
 
   return (
     <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
@@ -810,7 +810,7 @@ function CloseX({ Z, onClose }: { Z: number; onClose?: () => void }) {
         borderRadius: Math.round(size / 2),   // circular close, standard affordance
       }}
       uiBackground={{ color: Color4.create(1, 1, 1, 0.16) }}
-      onMouseDown={() => (onClose ? onClose() : (shopOpen = false))}
+      onMouseDown={() => (onClose ? onClose() : setShopOpen(false))}
     >
       <Label value="X" fontSize={Math.round(30 * Z)} color={WHITE} />
     </UiEntity>

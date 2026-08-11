@@ -28,9 +28,6 @@ const VOL_FINALE = 1.0
 // When false (default), the finale track plays on its own.
 const FINALE_LAYER_PARTY = false
 
-// ── Position — centre of the parcel, slightly elevated ───────────────────────
-const MUSIC_POS = { x: 16, y: 3, z: 16 }
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 let townEntity:   Entity

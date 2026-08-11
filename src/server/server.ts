@@ -8,7 +8,7 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_STREAM_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onNextRoundRequest, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
 import {
@@ -286,7 +286,7 @@ const haulBonuses  = new Map<string, number>()        // address → banked haul
 const binStreamFull = (s: RubbishType): boolean => binFill[s] >= BIN_STREAM_CAPACITY
 // Scene bin models, discovered server-side so their Transforms can be hidden/
 // restored authoritatively (CRDT propagates the vanish to every client).
-const serverBins = new Map<string, { entity: Entity; type: RubbishType; base: { x: number; y: number; z: number } }>()
+const serverBins = new Map<string, { entity: Entity; type: RubbishType }>()
 
 // itemId → stream, classified from the scene Name at discovery (see initServer).
 const rubbishTypes = new Map<string, RubbishType>()
@@ -569,7 +569,6 @@ export function initServer() {
   console.log('[SERVER] started')
 
   const itemEntities    = new Map<string, Entity>()
-  const sceneItemScales = new Map<string, { x: number; y: number; z: number }>()
   // Every hand-placed sample for theme spawn scales. `model` (GLB src basename)
   // is the reliable identity; `name` (entity Name) is the legacy fallback.
   const themeScaleSamples: Array<{ name: string; model?: string; scale: { x: number; y: number; z: number } }> = []
@@ -606,11 +605,7 @@ export function initServer() {
     syncEntity(syncEnt, [ClutterSync.componentId], enumId++)
     itemEntities.set(itemId, syncEnt)
 
-    // Record original scale (read from the visual composite entity) for round reset
     const tf = Transform.getOrNull(entity)
-    sceneItemScales.set(itemId, tf
-      ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z }
-      : { x: 1, y: 1, z: 1 })
     if (tf) {
       sceneItemPositions.set(itemId, { x: tf.position.x, y: tf.position.y, z: tf.position.z })
     }
@@ -688,11 +683,7 @@ export function initServer() {
     const t: RubbishType | null =
       n.startsWith('Bin_General') ? 'general' : n.startsWith('Bin_Recycling') ? 'recycle' : null
     if (!t) continue
-    const tf = Transform.getOrNull(entity)
-    serverBins.set(n, {
-      entity, type: t,
-      base: tf ? { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } : { x: 1, y: 1, z: 1 },
-    })
+    serverBins.set(n, { entity, type: t })
   }
   console.log(`[SERVER] tracked ${serverBins.size} bin models for the haul loop`)
 
@@ -770,17 +761,7 @@ export function initServer() {
   })
   syncEntity(gameStateEntity, [GameState.componentId], enumId)
 
-  // Restores original Transform scales for all scene items (called on round reset)
-  function restoreSceneItemScales() {
-    for (const [itemId, origScale] of sceneItemScales) {
-      const e = itemEntities.get(itemId)
-      if (!e) continue
-      const tf = Transform.getMutableOrNull(e)
-      if (tf) tf.scale = { x: origScale.x, y: origScale.y, z: origScale.z }
-    }
-  }
-
-  initRoundManager(itemEntities, gameStateEntity, restoreSceneItemScales, itemCategoryFor, (itemId) => itemNames.get(itemId) ?? '')
+  initRoundManager(itemEntities, gameStateEntity, itemCategoryFor, (itemId) => itemNames.get(itemId) ?? '')
   setStartHold(() => Date.now() < introHoldUntil)
 
   // Crew power = average total upgrade levels across the ACTIVE crew. Drives
@@ -813,7 +794,14 @@ export function initServer() {
   // every anchor is a spot already validated by having an item placed there, so
   // random spawns can't land inside furniture. Small jitter + random yaw keep
   // repeat themes from looking identical.
+  // Handle for the cross-tick GltfContainer recreate below. An aborted round
+  // (admin reset, or a fast re-roll) used to leave the old timer in flight, so
+  // it re-created models on slots the NEW roll had already parked — and two
+  // rolls' timers could interleave on the same slot ids.
+  let slotModelTimer: ReturnType<typeof setTimeout> | null = null
+
   setThemeSpawnRoller((themeId) => {
+    if (slotModelTimer) { clearTimeout(slotModelTimer); slotModelTimer = null }
     // Park everything and DELETE the GltfContainer — the explorer does not
     // reliably reload a GltfContainer whose src merely swaps in place (the bin
     // watchdog learned this the hard way: delete + recreate forces a fresh
@@ -972,7 +960,8 @@ export function initServer() {
 
     // Fresh GltfContainers one beat after the deletes above — never a same-tick
     // src swap. The round-start intro holds for seconds, so the delay is unseen.
-    setTimeout(() => {
+    slotModelTimer = setTimeout(() => {
+      slotModelTimer = null
       for (const id of ids) {
         const entity = itemEntities.get(id)
         const model  = themeSlotModels.get(id)
@@ -1136,12 +1125,15 @@ export function initServer() {
     })
   })
 
-  // Career-storage health → clients (admin panel line). Broadcast is fine: the
-  // payload is tiny and only admins render it.
+  // Career-storage health → the admin panel line. Sent only to admins actually
+  // in the room — nobody else renders it, so a room-wide broadcast was noise.
   function broadcastStorageStatus(address?: string): void {
     const payload = { statusJson: JSON.stringify(progressStorageStatus()) }
-    if (address) room.send('storageStatus', payload, { to: [address] })
-    else room.send('storageStatus', payload)
+    // Session ids may arrive mixed-case; ADMIN_ADDRESSES is lowercase.
+    const to = address
+      ? [address]
+      : [...activeSessions].filter((s) => ADMIN_ADDRESSES.includes(s.toLowerCase()))
+    if (to.length > 0) room.send('storageStatus', payload, { to })
   }
 
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
@@ -1363,21 +1355,14 @@ export function initServer() {
 
     const isSceneItem = SCENE_ITEM_PREFIXES.some(p => itemId.startsWith(p))
     if (isSceneItem) {
-      // Hide the item by collapsing its scale — server is HOST so CRDT propagates to all clients
-      const tf = Transform.getMutableOrNull(entity)
-      if (tf) tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
-      // Decay: restore the item after CLUTTER_RESPAWN_MS, same as regular clutter.
-      // The callback flips isCleaned and restores the original scale so clients
-      // pick it up via ClutterSync and re-enable clicks automatically.
+      // Scene items sync a LOGICAL entity carrying only ClutterSync — visibility
+      // is entirely client-side (each client hides/restores its own composite
+      // copy from the isCleaned flag). The old Transform writes here targeted
+      // the logical entity, which has no Transform: verified no-ops, deleted.
       onSceneItemCleaned(itemId, () => {
         const e = itemEntities.get(itemId)
         if (!e) return
         ClutterSync.getMutable(e).isCleaned = false
-        const orig = sceneItemScales.get(itemId)
-        if (orig) {
-          const t2 = Transform.getMutableOrNull(e)
-          if (t2) t2.scale = { x: orig.x, y: orig.y, z: orig.z }
-        }
       })
     } else {
       const def = CLUTTER_DEFS.find(d => d.id === itemId)
@@ -1628,10 +1613,6 @@ export function initServer() {
     carriedRubbish.set(address, { general: 0, recycle: 0 })
     bumpKindCount(address, 'portableempty')
     sendCarried(address)
-  })
-
-  room.onMessage('startNextRound', (_data, _context) => {
-    onNextRoundRequest()
   })
 
   // Any player can start a match from the lobby (begins the shared countdown).

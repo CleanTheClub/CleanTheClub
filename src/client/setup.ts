@@ -10,7 +10,8 @@ import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
 import { engine, Transform, LightSource } from '@dcl/sdk/ecs'
 import { Color3 } from '@dcl/sdk/math'
-import { getPlatform, isMobile } from '@dcl/sdk/platform'
+import { isMobile } from '@dcl/sdk/platform'
+import { platformSettled } from './platformWait'
 
 // ── Mobile player light ───────────────────────────────────────────────────────
 // The mobile renderer resolves the club much darker than desktop (playtest:
@@ -18,7 +19,7 @@ import { getPlatform, isMobile } from '@dcl/sdk/platform'
 // resolves asynchronously, so a one-shot system waits for it.
 function initMobilePlayerLight(): void {
   const waitForPlatform = () => {
-    if (getPlatform() === null) return
+    if (!platformSettled()) return
     engine.removeSystem(waitForPlatform)
     if (!isMobile()) return
     const light = engine.addEntity()

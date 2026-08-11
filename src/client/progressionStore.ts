@@ -93,7 +93,6 @@ export const getLastPromotion = (): { title: string; rank: number; ms: number } 
 
 export const getCareer      = (): CareerState | null => state
 export const getCareerOrEmpty = (): CareerState => state ?? EMPTY
-export const hasCareer      = (): boolean => state !== null
 export const getLastPayoutMs = (): number => lastPayoutMs
 
 export function upgradeLevel(id: UpgradeId): number {

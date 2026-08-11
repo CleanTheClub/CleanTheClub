@@ -45,8 +45,6 @@ export type DocStatus = {
 export type PersistedDoc<T> = {
   /** Loads once; concurrent callers share the same in-flight promise. */
   ensureLoaded(): Promise<T | null>
-  /** True once a read has SETTLED, so we know what is actually stored. */
-  isLoadConfirmed(): boolean
   /**
    * Persists `value`. Refuses to write before a confirmed read (wipe guard).
    * Writes are SERIALIZED: overlapping calls (shift end racing a player-leave
@@ -201,7 +199,6 @@ export function createPersistedDoc<T>(
       return loadPromise
     },
 
-    isLoadConfirmed: () => loadConfirmed,
 
     save(value: T): Promise<boolean> {
       saveChain = saveChain.then(() => doSave(value))

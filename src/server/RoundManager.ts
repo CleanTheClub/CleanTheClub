@@ -308,7 +308,6 @@ function syncGameState() {
   gs.secondsLeft   = secondsLeft
   gs.roundNumber   = roundNumber
   gs.outcome       = currentOutcome
-  gs.canStartEarly = false   // early start disabled — intermission is no longer skippable
   gs.isFinale      = isFinale
   gs.playersIn     = playerCount
   gs.starting      = starting
@@ -320,14 +319,10 @@ function clearAllRespawns() {
   for (const [id, t] of respawnTimers) { clearTimeout(t); respawnTimers.delete(id) }
 }
 
-let onRestoreScales: (() => void) | undefined
-
 function resetClutter() {
   for (const [, entity] of itemEntities) {
-    const cs = ClutterSync.getMutable(entity)
-    cs.isCleaned = false
+    ClutterSync.getMutable(entity).isCleaned = false
   }
-  onRestoreScales?.()
 }
 
 // ── Spawn-in beat ─────────────────────────────────────────────────────────────
@@ -552,14 +547,6 @@ export function onSceneItemCleaned(itemId: string, onRespawn: () => void, fast =
   syncGameState()
 }
 
-// Early start is intentionally disabled — players asked for a fixed
-// round → intermission → round cadence with no way to skip the intermission
-// (the intermission is the payoff moment).  The intermission always runs its
-// full countdown; this handler is now a no-op kept for message compatibility.
-export function onNextRoundRequest() {
-  // no-op: intermission is no longer skippable
-}
-
 function logScaling() {
   const idx    = Math.min(Math.max(playerCount - 1, 0), RESPAWN_SCALE_FACTORS.length - 1)
   const factor = RESPAWN_SCALE_FACTORS[idx]
@@ -602,13 +589,11 @@ export function onAdminReset() {
 export function initRoundManager(
   entities: Map<string, Entity>,
   gsEntity: Entity,
-  restoreScales?: () => void,
   itemCategoryFor?: (itemId: string) => ItemCategory,
   itemNameFor?: (itemId: string) => string,
 ) {
   itemEntities    = entities
   gameStateEntity = gsEntity
-  onRestoreScales = restoreScales
   categoryFor     = itemCategoryFor
   nameFor         = itemNameFor
 

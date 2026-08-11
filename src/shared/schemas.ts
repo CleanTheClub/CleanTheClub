@@ -17,7 +17,6 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   secondsLeft:  Schemas.Int,
   roundNumber:   Schemas.Int,      // 0-indexed; final round = ROUND_DURATIONS_MS.length - 1
   outcome:       Schemas.String,   // '' | 'perfect' | 'optimal' | 'adequate' | 'suboptimal'
-  canStartEarly: Schemas.Boolean,  // true once NEXT_ROUND_LOCK_MS has elapsed during open phase
   isFinale:      Schemas.Boolean,  // true during the open phase that follows the final round (victory hold)
   playersIn:     Schemas.Int,      // live player count — shown in the lobby
   starting:      Schemas.Boolean,  // true during the lobby pre-match countdown (secondsLeft is the countdown)

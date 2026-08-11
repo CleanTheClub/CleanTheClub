@@ -5,7 +5,7 @@ import { Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, Glt
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { SceneItemDef } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy } from '../shared/sceneItemHelpers'
+import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'

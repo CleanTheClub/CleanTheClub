@@ -18,10 +18,10 @@ import {
   Transform, timers,
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
-import { getPlatform } from '@dcl/sdk/platform'
+import { platformSettled } from './platformWait'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
-import { setupClickProxy } from '../shared/sceneItemHelpers'
+import { setupClickProxy } from './sceneItemHelpers'
 import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { playHoverSound, playCleanSound } from './soundManager'
@@ -235,14 +235,10 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
   let remaining = defs.length   // items still waiting for all 3 GLBs
   const discoverStartMs = Date.now()
 
-  // setupClickProxy picks its collider shape from the platform, which the SDK
-  // resolves asynchronously — getPlatform() is null until it lands. Discovery would
-  // otherwise complete first and hand every phone the desktop colliders. Capped so
-  // an unresolved platform degrades to desktop rather than never discovering.
-  const PLATFORM_WAIT_MS = 5_000
-
+  // setupClickProxy picks its collider shape from the platform — wait for the
+  // shared gate so phones don't silently get desktop colliders.
   const discoverSystem = () => {
-    if (getPlatform() === null && Date.now() - discoverStartMs < PLATFORM_WAIT_MS) return
+    if (!platformSettled()) return
 
     for (const [e] of engine.getEntitiesWith(Name)) {
       const n     = Name.get(e).value

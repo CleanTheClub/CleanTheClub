@@ -25,7 +25,21 @@ import { engine, UiCanvasInformation } from '@dcl/sdk/ecs'
 type CanvasInfo = { width: number; height: number; interactableArea?: { top: number; left: number; right: number; bottom: number } }
 let loggedSource = ''
 
+// 100ms memo — this is called from ~6 UI sites per RENDER (and the fallback
+// path is a full component scan). The canvas only changes on resize / chat
+// toggle, so sub-frame freshness buys nothing.
+let cachedInfo: CanvasInfo | null = null
+let cachedInfoAtMs = 0
+
 export function readCanvasInfo(): CanvasInfo | null {
+  const now = Date.now()
+  if (now - cachedInfoAtMs < 100) return cachedInfo
+  cachedInfoAtMs = now
+  cachedInfo = readCanvasInfoFresh()
+  return cachedInfo
+}
+
+function readCanvasInfoFresh(): CanvasInfo | null {
   const root = UiCanvasInformation.getOrNull(engine.RootEntity)
   if (root && root.width > 0 && root.height > 0) {
     if (loggedSource !== 'root') { loggedSource = 'root'; console.log('[UI] canvas info via RootEntity') }
@@ -65,7 +79,18 @@ const FALLBACK: SafeArea = { top: 0.12, left: 0.26, right: 0.02, bottom: 0.12, k
  * render (single component read); the renderer re-runs continuously, so anchors
  * built from this track the explorer UI live.
  */
+let cachedArea: SafeArea = FALLBACK
+let cachedAreaAtMs = 0
+
 export function getSafeArea(): SafeArea {
+  const now = Date.now()
+  if (now - cachedAreaAtMs < 100) return cachedArea
+  cachedAreaAtMs = now
+  cachedArea = computeSafeArea()
+  return cachedArea
+}
+
+function computeSafeArea(): SafeArea {
   const info = readCanvasInfo()
   if (!info || !info.interactableArea) return FALLBACK
 

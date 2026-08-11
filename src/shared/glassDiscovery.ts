@@ -54,9 +54,7 @@ export function discoverChildren(parentName: string, idPrefix: string): SceneIte
 // Entities placed directly in the scene without a parent group.
 // Add names here as you place more loose items in Creator Hub.
 
-export const LOOSE_BOTTLE_NAMES: string[] = [
-  'Bottle_Test',
-]
+export const LOOSE_BOTTLE_NAMES: string[] = []
 
 export const LOOSE_GLASS_NAMES:   string[] = []
 export const LOOSE_RUBBISH_NAMES: string[] = []
@@ -110,5 +108,3 @@ export const discoverStickyPatches = () => cached('sticky', () => [
   ...discoverByName(LOOSE_STICKY_NAMES, STICKY_ID_PREFIX),
 ])
 
-// Legacy type alias — keeps glassSystem.ts import happy during migration
-export type GlassDef = SceneItemDef & { glassId: string }

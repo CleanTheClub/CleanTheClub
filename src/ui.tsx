@@ -1,5 +1,5 @@
 import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
-import { engine, EasingFunction, UiCanvasInformation, timers } from '@dcl/sdk/ecs'
+import { engine, EasingFunction, timers } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
@@ -11,7 +11,7 @@ import { theme } from './client/theme'
 import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
-import { getCarried, getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
+import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
@@ -30,6 +30,10 @@ import { TITLE_XP, rankForXp } from './shared/progression'
 // A smaller virtual canvas restores it, on every display density at once (the dpr
 // divide already removed the per-display variation, so a single constant is right
 // for all desktops).
+//
+// CALIBRATED AGAINST SDK 7.25.1 (auth-server build). If a future SDK changes UI
+// scaling again, RE-CHECK this constant before tuning anything downstream of it —
+// the whole HUD size derives from it.
 //
 // TUNE HERE: raise UI_ZOOM toward 2.0 if the HUD still reads too small on your
 // monitor; lower it toward 1.2 if it's now too big.
@@ -103,11 +107,7 @@ const METER_FONT_SIZE     = 13
 const LABEL_MARGIN_SMALL  = 4       // bottom margin under round label
 
 // Next-round controls (shown when phase === 'open')
-const NEXT_FONT_SIZE      = 15
-const PCT_FONT_SIZE       = 44      // achieved-cleanliness % shown under the outcome / finale card
-const BTN_WIDTH           = 240
 const BTN_HEIGHT          = 48
-const BTN_FONT_SIZE       = 16
 
 // Timer colour thresholds — countdown text shifts white → yellow → orange → red.
 // Rather than hard-snapping at each boundary, we ease between bands with
@@ -450,11 +450,106 @@ export function triggerRoundStartIntro() {
 // careers on every republish — this line makes the failure visible in-world.
 let storageStatus: { backend: string; loadConfirmed: boolean; lastSaveOk: boolean | null; lastSaveMs: number } | null = null
 
+// ── UI state system ───────────────────────────────────────────────────────────
+// Render is a pure read: phase-edge detection, the letterbox re-config, the
+// shop auto-open and the colour-band tween triggers all used to run INSIDE
+// uiBody() — state mutation, engine.removeSystem calls and a renderer
+// re-configure from within the render callback (a re-entrancy hazard). This
+// system owns all of it now; uiBody just renders what it left behind.
+let letterboxAcc = 0
+function uiStateSystem(dt: number): void {
+  // Keep the virtual canvas matched to the real screen aspect so there's no
+  // letterbox to skew centred content (see currentVirtualW above). Clamped so a
+  // portrait or extreme aspect can't drive fixed-width elements off-canvas; the
+  // >=8px guard avoids re-setting on sub-pixel jitter. 4 Hz — this only
+  // changes on resize/orientation/chat toggle.
+  letterboxAcc += dt
+  if (letterboxAcc >= 0.25) {
+    letterboxAcc = 0
+    const canvasInfo = readCanvasInfo()
+    if (canvasInfo) {
+      const desired = Math.max(720, Math.min(2400, Math.round(VIRTUAL_H * (canvasInfo.width / canvasInfo.height))))
+      if (Math.abs(desired - currentVirtualW) >= 8) {
+        currentVirtualW = desired
+        ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: VIRTUAL_H })
+      }
+    }
+  }
+
+  const gs      = getGameState()
+  const isOpen  = (gs?.phase ?? 'lobby') === 'open'
+  const pct     = Math.min(1, (gs?.cleanedCount ?? 0) / Math.max(1, gs?.totalCount ?? 1))
+  const seconds = gs?.secondsLeft ?? 0
+
+  // ── Round-transition detection ──────────────────────────────────────────────
+  if (isOpen && !prevIsOpen) {
+    // Round just ended — tween outcome image from normal position to centre.
+    outcomeStartMs = Date.now()
+    introStartMs   = -1   // cancel any pending player-entry intro
+  }
+  // Round-start intro is triggered explicitly via triggerRoundStartIntro() from
+  // narrativeSystem — more reliable than edge detection for button-click starts.
+  prevIsOpen = isOpen
+
+  // ── Shift-end shop surfacing (desktop) ──────────────────────────────────────
+  // Playtest: many players never found the UPGRADES button. When the payout lands
+  // during the intermission and the player can afford at least one upgrade, the
+  // side panel opens itself — the celebration stays visible behind it, and closing
+  // it sticks for the rest of the intermission (this fires once per payout).
+  // Mobile keeps the payout card's CTA instead: the modal would cover the payout.
+  //
+  // SEQUENCED, not simultaneous (playtest round 2: banner + card + panel landing
+  // together meant a promotion "didn't catch my attention at all"): a fresh
+  // promotion banner plays solo first, then the card pops at true centre, and
+  // only after its beat does the panel slide in.
+  const payoutMs = getLastPayoutMs()
+  if (isOpen && !isMobile() && payoutMs > 0 && payoutMs !== autoOpenedPayoutMs) {
+    const promo     = getLastPromotion()
+    const promoHold = promo !== null && promo.ms >= payoutMs ? PROMO_BANNER_MS : 0
+    if (Date.now() - payoutMs > promoHold + SHOP_AUTO_OPEN_DELAY_MS) {
+      autoOpenedPayoutMs = payoutMs
+      if (!isShopOpen() && affordableUpgradeCount() > 0) setShopOpen(true)
+    }
+  }
+
+  // ── Bar fill colour — ease between bands as cleanliness crosses 50 % / 80 % ──
+  if (!isOpen) {
+    const band = barBandOf(pct)
+    if (band !== lastBarBand) {
+      lastBarBand = band
+      if (activeBarTween) engine.removeSystem(activeBarTween)
+      activeBarTween = tweenColor(
+        currentBarColor,
+        BAR_BAND_COLORS[band],
+        BAR_COLOR_TWEEN_S,
+        (v) => { currentBarColor = v },
+        () => { activeBarTween = null },
+        EasingFunction.EF_EASEOUTCUBIC,
+      )
+    }
+    // ── Countdown colour — ease between bands instead of hard-snapping ────────
+    const tBand = timerBandOf(seconds)
+    if (tBand !== lastTimerBand) {
+      lastTimerBand = tBand
+      if (activeTimerTween) engine.removeSystem(activeTimerTween)
+      activeTimerTween = tweenColor(
+        currentTimerColor,
+        TIMER_BAND_COLORS[tBand],
+        TIMER_COLOR_TWEEN_S,
+        (v) => { currentTimerColor = v },
+        () => { activeTimerTween = null },
+        EasingFunction.EF_EASEOUTCUBIC,
+      )
+    }
+  }
+}
+
 export function setupUi() {
   checkAdmin()
   room.onMessage('storageStatus', (data) => {
     try { storageStatus = JSON.parse(data.statusJson) } catch { storageStatus = null }
   })
+  engine.addSystem(uiStateSystem)
   ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: VIRTUAL_W, virtualHeight: VIRTUAL_H })
 }
 
@@ -609,20 +704,15 @@ const ui = () => (
   </ScreenInsetArea>
 )
 
-const uiBody = () => {
-  // Keep the virtual canvas matched to the real screen aspect so there's no
-  // letterbox to skew centred content (see currentVirtualW above). Clamped so a
-  // portrait or extreme aspect can't drive fixed-width elements off-canvas; the
-  // >=8px guard avoids re-setting on sub-pixel jitter.
-  const canvasInfo = readCanvasInfo()
-  if (canvasInfo) {
-    const desired = Math.max(720, Math.min(2400, Math.round(VIRTUAL_H * (canvasInfo.width / canvasInfo.height))))
-    if (Math.abs(desired - currentVirtualW) >= 8) {
-      currentVirtualW = desired
-      ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: VIRTUAL_H })
-    }
-  }
+// Hoisted render literals — rebuilt per frame otherwise.
+const FULL_SCREEN_SCRIM_C = { width: '100%' as const, height: '100%' as const }
+const FULL_WIDTH_ROW_C = {
+  width: '100%' as const,
+  flexDirection: 'row' as const,
+  justifyContent: 'center' as const,
+}
 
+const uiBody = () => {
   const gs            = getGameState()
   const cleaned       = gs?.cleanedCount ?? 0
   const total         = Math.max(1, gs?.totalCount ?? 1)
@@ -642,40 +732,6 @@ const uiBody = () => {
   const starting      = gs?.starting ?? false
   const playersIn     = gs?.playersIn ?? 0
   const waiting       = isWaitingForMatch()
-
-  // ── Round-transition detection ────────────────────────────────────────────────
-  // Runs every render call but only acts when isOpen changes value.
-  if (isOpen && !prevIsOpen) {
-    // Round just ended — tween outcome image from normal position to centre.
-    outcomeStartMs = Date.now()
-    introStartMs   = -1   // cancel any pending player-entry intro
-  }
-  // Round-start intro is triggered explicitly via triggerRoundStartIntro() from
-  // narrativeSystem — more reliable than render-loop detection for button-click starts.
-  prevIsOpen = isOpen
-
-  // ── Shift-end shop surfacing (desktop) ────────────────────────────────────────
-  // Playtest: many players never found the UPGRADES button. When the payout lands
-  // during the intermission and the player can afford at least one upgrade, the
-  // side panel opens itself — the celebration stays visible behind it, and closing
-  // it sticks for the rest of the intermission (this fires once per payout).
-  // Mobile keeps the payout card's CTA instead: the modal would cover the payout.
-  //
-  // SEQUENCED, not simultaneous (playtest round 2: banner + card + panel landing
-  // together meant a promotion "didn't catch my attention at all"): a fresh
-  // promotion banner plays solo first, then the card pops at true centre, and
-  // only after its beat does the panel slide in.
-  {
-    const payoutMs = getLastPayoutMs()
-    if (isOpen && !isMobile() && payoutMs > 0 && payoutMs !== autoOpenedPayoutMs) {
-      const promo     = getLastPromotion()
-      const promoHold = promo !== null && promo.ms >= payoutMs ? PROMO_BANNER_MS : 0
-      if (Date.now() - payoutMs > promoHold + SHOP_AUTO_OPEN_DELAY_MS) {
-        autoOpenedPayoutMs = payoutMs
-        if (!isShopOpen() && affordableUpgradeCount() > 0) setShopOpen(true)
-      }
-    }
-  }
 
   // isMobile() resolves asynchronously — returns false until the client reports
   // its platform, after which the renderer re-runs and picks up the correct values.
@@ -749,9 +805,7 @@ const uiBody = () => {
   const depEase    = 1 - Math.pow(1 - Math.min(1, depElapsed / 250), 3)
   const depFont    = Math.round(lerp(26, 46, depEase) * S)
   const depAlpha   = depElapsed < 400 ? 1 : Math.max(0, 1 - (depElapsed - 400) / (PERFECT_FLASH_MS - 400))
-  const btnW         = Math.round(BTN_WIDTH          * S)
   const btnH         = Math.round(BTN_HEIGHT         * S)
-  const btnFont      = Math.round(BTN_FONT_SIZE      * S)
   const toastW       = mobile ? TOAST_W_MOBILE : TOAST_W_DESKTOP
   const toastH       = mobile ? TOAST_H_MOBILE : TOAST_H_DESKTOP
   const toastOverlap = -Math.round(toastH * TOAST_OVERLAP)
@@ -776,43 +830,9 @@ const uiBody = () => {
   // Mobile toasts anchor at top:9% — already above the banner — no offset needed.
   // introHolding is computed after elapsedS/introActive below and factored in there.
 
-  // ── Bar fill colour — ease between bands as cleanliness crosses 50 % / 80 % ──
-  if (!isOpen) {
-    const band = barBandOf(pct)
-    if (band !== lastBarBand) {
-      lastBarBand = band
-      if (activeBarTween) engine.removeSystem(activeBarTween)
-      activeBarTween = tweenColor(
-        currentBarColor,
-        BAR_BAND_COLORS[band],
-        BAR_COLOR_TWEEN_S,
-        (v) => { currentBarColor = v },
-        () => { activeBarTween = null },
-        EasingFunction.EF_EASEOUTCUBIC,
-      )
-    }
-  }
+  // Colour bands + phase edges are advanced by uiStateSystem (render is a pure
+  // read); barColor/timerColor just render whatever it left behind.
   const barColor = currentBarColor
-
-  // ── Countdown colour — ease between bands instead of hard-snapping ────────────
-  // Only react while actively counting down (playing phase).  When the band
-  // changes we cancel any in-flight tween and start a new ease toward the new
-  // band colour; `currentTimerColor` is what the Label actually renders.
-  if (!isOpen) {
-    const band = timerBandOf(seconds)
-    if (band !== lastTimerBand) {
-      lastTimerBand = band
-      if (activeTimerTween) engine.removeSystem(activeTimerTween)
-      activeTimerTween = tweenColor(
-        currentTimerColor,
-        TIMER_BAND_COLORS[band],
-        TIMER_COLOR_TWEEN_S,
-        (v) => { currentTimerColor = v },
-        () => { activeTimerTween = null },
-        EasingFunction.EF_EASEOUTCUBIC,
-      )
-    }
-  }
   // Gold during last call — the countdown is a victory lap, not a deadline.
   const timerColor = lastCall ? { r: 1, g: 0.82, b: 0.25, a: 1 } : currentTimerColor
 
@@ -873,15 +893,11 @@ const uiBody = () => {
   // leaving the scene visible in bands beside a dark panel, reported as "there's
   // a gray layout when waiting for a match". Percentages resolve against the real
   // screen and always cover it.
-  const FULL_SCREEN_SCRIM = { width: '100%' as const, height: '100%' as const }
+  const FULL_SCREEN_SCRIM = FULL_SCREEN_SCRIM_C
   // Rows that centre their content across the full screen. justifyContent:'center'
   // needs a definite width to centre within; '100%' gives it one that matches the
   // scrim, so text stays centred on the actual screen rather than on the 1920 box.
-  const FULL_WIDTH_ROW = {
-    width: '100%' as const,
-    flexDirection: 'row' as const,
-    justifyContent: 'center' as const,
-  }
+  const FULL_WIDTH_ROW = FULL_WIDTH_ROW_C
 
   // ── HUD backdrop geometry — tracks the banner wherever it is ─────────────────
   // The backdrop follows the banner image's CURRENT rect so the scrim moves WITH

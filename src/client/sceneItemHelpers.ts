@@ -34,26 +34,14 @@ import { isMobile } from '@dcl/sdk/platform'
 const MOBILE_TAP_SCALE = 1.4
 
 // ── Tap proxy vs hover outline ────────────────────────────────────────────────
-// The explorer highlights whatever the pointer ray hits — including under the
-// MOBILE reticle, not just a desktop mouse. A proxy box has no renderable, so
-// when it wins the ray there is nothing to outline: that is why the bins (mesh
-// takes the ray) glowed on mobile while rubbish and cushions did not.
+// DECISION (2026-08-03 device test): mobile gets enlarged proxy boxes; desktop
+// aims at the visible mesh. Small items proved hard to tap on a phone even
+// after the reach-gate and pointer-maxDistance fixes.
 //
-// The proxy was added for the iOS "dance floor items can't always be clicked"
-// reports — but two later fixes addressed the actual causes of those misses:
-// pointer maxDistance was refusing interactions from the third-person camera
-// distance, and the reach gate was measuring from the wrong entity. So the
-// proxy is now OFF, every platform aims at the visible mesh, and every
-// interactive item highlights.
-//
-// DECISION (2026-08-03 device test): proxies are BACK ON for mobile. Even with
-// the reach and maxDistance fixes, small items proved hard to tap AND hard to
-// see on a phone. The native outline still cannot survive a proxy (the ray must
-// hit the visible mesh, and GltfNodeModifiers — which would let us fake the
-// outline by overriding the GLB material — does not exist in SDK 7.25.1), so
-// mobile gets a MANUAL substitute instead: a glow disc under each proxied item
-// (see createMobileTapTarget) that brightens while the reticle hovers it.
-// Desktop is untouched and keeps the true toon outline everywhere.
+// The cost is the native hover outline: the explorer highlights whatever the
+// ray HITS, and a proxy box has no renderable — which is why bins (mesh takes
+// the ray) glow on mobile and proxied items do not. Accepted; desktop keeps the
+// true toon outline everywhere.
 const USE_MOBILE_TAP_PROXY = true
 
 // ── Blender-baked placements ──────────────────────────────────────────────────
@@ -225,8 +213,12 @@ export function setupClickProxy(gltfEnt: Entity, addBox = true): Entity {
   watchGlb(gltfEnt)
 
   if (!applyPointerMask(gltfEnt, useMobileProxy)) {
-    const waitForGltf = () => {
-      if (applyPointerMask(gltfEnt, useMobileProxy)) engine.removeSystem(waitForGltf)
+    // Bounded: a GLB that never loads must not leak a per-frame system forever
+    // (the watchdog handles the reload story; 30s covers any honest stream).
+    let waitedS = 0
+    const waitForGltf = (dt: number) => {
+      waitedS += dt
+      if (applyPointerMask(gltfEnt, useMobileProxy) || waitedS > 30) engine.removeSystem(waitForGltf)
     }
     engine.addSystem(waitForGltf)
   }

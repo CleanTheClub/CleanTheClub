@@ -3,13 +3,9 @@
 // Emitters live at independent world-space positions (NOT parented to scene
 // entities) so they are unaffected when items are hidden via scale = zero.
 //
-// HISTORY (2026-08-03/04): briefly ported to billboarded mesh planes when
-// particles vanished from a deployed build — but the Foundation confirmed the
-// component works, a minimal diagnostic emitter rendered fine locally, and the
-// mesh wisps rendered oversized/white next to the original. Restored to the
-// original ParticleSystem implementation; the deployed disappearance remains
-// unexplained (suspect: stale explorer build that day) — if it recurs, check a
-// minimal emitter FIRST before blaming this config.
+// If particles ever vanish in a DEPLOYED build again (2026-08-03 incident):
+// test a minimal diagnostic emitter FIRST before blaming this config — last
+// time it was a stale explorer build, not the ParticleSystem.
 
 import {
   engine, Entity, Transform,
@@ -22,14 +18,7 @@ import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatche
 import { gameState } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 
-// ── Particle enum values ──────────────────────────────────────────────────────
-// These are 'const enum' in @dcl/ecs internals — not re-exported from @dcl/sdk/ecs.
-// Values are stable and documented in PBParticleSystem_BlendMode/PlaybackState.
-// PBParticleSystem_BlendMode:     PSB_ALPHA = 0 | PSB_ADD = 1 | PSB_MULTIPLY = 2
-// PBParticleSystem_PlaybackState: PS_PLAYING = 0 | PS_PAUSED = 1 | PS_STOPPED = 2
-const PSB_ALPHA  = 0
-const PS_PLAYING = 0
-const PS_STOPPED = 2
+import { PSB_ALPHA, PS_PLAYING, PS_STOPPED } from './particleEnums'
 
 // ── Pool config ───────────────────────────────────────────────────────────────
 const MAX_STINK_EMITTERS = 100  // hard cap on emitter entities (scene currently has ~83 items)
@@ -127,22 +116,6 @@ function resumeEmitter(e: Entity) {
   if (tf) tf.position = { ...tf.position, y: tf.position.y + PAUSE_SINK_M }
 }
 
-// ── Public registration — for sceneGlb items whose position is discovered at runtime ──
-// Call once after the scene entity's Transform is available (e.g. after GLB discovery).
-// Safe to call before or after initStinkSystem — the per-frame watcher picks it up automatically.
-export function registerStinkEmitter(itemId: string, pos: { x: number; y: number; z: number }) {
-  if (emitterFor.has(itemId)) return   // already registered
-  if (emitterFor.size >= MAX_STINK_EMITTERS) {
-    console.log(`[STINK] Pool full — cannot register emitter for "${itemId}"`)
-    return
-  }
-  const emitter = createEmitter(pos)
-  emitterFor.set(itemId, emitter)
-  // Respect current clean state if already known
-  const cleaned = lastCleaned.get(itemId)
-  if (cleaned === true) pauseEmitter(emitter)
-  console.log(`[STINK] Registered scene GLB emitter for "${itemId}"`)
-}
 
 // ── Public init ───────────────────────────────────────────────────────────────
 export function initStinkSystem() {
