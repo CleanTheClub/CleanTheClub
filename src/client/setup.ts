@@ -3,6 +3,7 @@ import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
+import { initPreload } from './preload'
 import { initGlassSystem } from './glassSystem'
 import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
@@ -11,15 +12,26 @@ import { initThemeSpawnSystem } from './themeSpawnSystem'
 import { engine, Transform, LightSource } from '@dcl/sdk/ecs'
 import { Color3 } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
-import { platformSettled } from './platformWait'
+import { platformKnown } from './platformWait'
 
 // ── Mobile player light ───────────────────────────────────────────────────────
 // The mobile renderer resolves the club much darker than desktop (playtest:
 // "it's too dark"). One warm point light rides the local player. Platform
 // resolves asynchronously, so a one-shot system waits for it.
 function initMobilePlayerLight(): void {
-  const waitForPlatform = () => {
-    if (!platformSettled()) return
+  // Waits for a REAL platform answer rather than the shared degrade-to-desktop
+  // gate: an unknown platform means "no light", not "desktop", so timing out
+  // here silently costs mobile players the light entirely.
+  let waitedS = 0
+  const waitForPlatform = (dt: number) => {
+    waitedS += dt
+    if (!platformKnown()) {
+      if (waitedS > 30) {
+        console.log('[LIGHT] platform never resolved — skipping mobile player light')
+        engine.removeSystem(waitForPlatform)
+      }
+      return
+    }
     engine.removeSystem(waitForPlatform)
     if (!isMobile()) return
     const light = engine.addEntity()
@@ -71,6 +83,7 @@ export function initClient() {
   initLobbyTeleport()  // return players to the entrance when a match ends
   initSoundManager()
   initMusicManager()
+  initPreload()
   initEmoteManager()
   setupUi()
   onEnterSceneObservable.add(() => resetIntro())

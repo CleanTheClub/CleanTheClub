@@ -64,6 +64,13 @@ const CLEAN_POOL_SIZE = 3
 const cleanPool: Entity[] = []
 let   cleanIdx  = 0
 
+// Same problem, same cure: the Rhythm Pop beats land 700ms apart and the
+// notification clip runs longer, so the 2nd and 3rd pops silently no-op'd on
+// the single shared entity (playtest: "the 2nd popcorn click has no sound").
+const POP_POOL_SIZE = 3
+const popPool: Entity[] = []
+let   popIdx    = 0
+
 // Retriggers playback. Every SFX entity is PARENTED to the player (positional
 // audio at zero distance ≈ global, and it works on every client — true
 // `global:` audio is DCL 2.0 desktop-only), so there is no per-play position
@@ -102,6 +109,13 @@ export function initSoundManager() {
   notificationEntity = engine.addEntity()
   Transform.create(notificationEntity, { parent: engine.PlayerEntity })
   AudioSource.create(notificationEntity, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.7, pitch: 1.0 })
+
+  for (let i = 0; i < POP_POOL_SIZE; i++) {
+    const e = engine.addEntity()
+    Transform.create(e, { parent: engine.PlayerEntity })
+    AudioSource.create(e, { audioClipUrl: SND_NOTIFICATION, playing: false, loop: false, volume: 0.9 })
+    popPool.push(e)
+  }
 
   moneyEntity = engine.addEntity()
   Transform.create(moneyEntity, { parent: engine.PlayerEntity })
@@ -146,10 +160,13 @@ export function playCleanSound()  {
  * streak stays musical rather than becoming a squeak.
  */
 export function playPerfectSound(streak: number) {
-  const src = AudioSource.getMutable(notificationEntity)
+  // Round-robin so consecutive beats never fight over one entity.
+  const e = popPool[popIdx % POP_POOL_SIZE]
+  popIdx++
+  const src = AudioSource.getMutable(e)
   src.pitch  = 1.15 + 0.08 * Math.min(Math.max(1, streak), 8)
   src.volume = 0.9
-  playAt(notificationEntity)
+  playAt(e)
 }
 
 /**

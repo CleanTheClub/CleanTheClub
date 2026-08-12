@@ -1,11 +1,11 @@
 // Generic system for scene-item groups that are collected (hidden) on click.
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
-import { Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
+import { Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { SceneItemDef } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
+import { findGltfEntity, setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
@@ -85,6 +85,8 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   function setVisible(itemId: string, visible: boolean) {
     const rec = gltfRecords.get(itemId)
     if (!rec) return
+    // See rubbishSystem.setVisible — hidden means NOT RENDERED, not just tiny.
+    VisibilityComponent.createOrReplace(rec.containerEntity, { visible })
     const tf = Transform.getMutable(rec.containerEntity)
     if (visible) {
       if (rec.originalScale !== null) {
@@ -107,6 +109,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   function disableClick(itemId: string) {
     const rec = gltfRecords.get(itemId)
     if (!rec) return
+    setHoverHighlight(findGltfEntity(rec.containerEntity), false)
     pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
     pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
     PointerEvents.deleteFrom(rec.clickEntity)
@@ -116,8 +119,16 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
     const rec = gltfRecords.get(itemId)
     if (!rec) return
+    // Invariant: clickable implies visible (see rubbishSystem).
+    VisibilityComponent.createOrReplace(rec.containerEntity, { visible: true })
     const { clickEntity, containerEntity } = rec
-    pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
+    pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => {
+      playHoverSound()
+      setHoverHighlight(findGltfEntity(containerEntity), true)
+    })
+    pointerEventsSystem.onPointerHoverLeave({ entity: clickEntity }, () => {
+      setHoverHighlight(findGltfEntity(containerEntity), false)
+    })
     pointerEventsSystem.onPointerDown(
       // Glasses and bottles are glass — they fill the recycling pouch, and the
       // prompt says so, so the carry chip's green number can't be a mystery.

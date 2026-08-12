@@ -22,8 +22,10 @@ export const GameState = engine.defineComponent('partypad:GameState', {
   starting:      Schemas.Boolean,  // true during the lobby pre-match countdown (secondsLeft is the countdown)
   theme:         Schemas.String,   // '' = classic round, else a ThemeId from THEME_DEFS
   lastCall:      Schemas.Boolean,  // true during the 100%-early-close grace window (secondsLeft counts it down)
-  binFillGeneral: Schemas.Int,     // deposits into the general stream this round (visual fill + full at BIN_STREAM_CAPACITY)
-  binFillRecycle: Schemas.Int,     // ditto for the recycling stream
+  // Per-bin fill levels, "name:count" pairs (e.g. "Bin_General:7,Bin_Recycling_2:3").
+  // Name-keyed rather than positional so server and client can't disagree about
+  // ordering; absent name = empty. Well inside the message cap at 8 bins.
+  binFills:     Schemas.String,
 })
 
 ClutterSync.validateBeforeChange((v) => v.senderAddress === AUTH_SERVER_PEER_ID)

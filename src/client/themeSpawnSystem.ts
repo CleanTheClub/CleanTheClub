@@ -11,7 +11,7 @@
 // covers late joiners for free. The local shrinkAndHide below is only the
 // instant-response layer in front of the server's authoritative hide.
 
-import { engine, Entity, Transform, GltfContainer, GltfContainerLoadingState, LoadingState, pointerEventsSystem, PointerEvents, InputAction, TextShape, Billboard, BillboardMode } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, GltfContainer, GltfContainerLoadingState, LoadingState, pointerEventsSystem, PointerEvents, InputAction, TextShape, Billboard, BillboardMode, VisibilityComponent } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { ClutterSync } from '../shared/schemas'
 import { THEME_SLOT_PREFIX, DISASTER_PREFIX, DISASTER_BONUS, PICKUP_TOUCH_MS, POP_NAME_PART } from '../shared/config'
@@ -278,6 +278,9 @@ export function initThemeSpawnSystem() {
       lastState.set(itemId, isCleaned)
       pendingCleans.delete(itemId)
 
+      // Parked/cleaned slots stop RENDERING, not just shrink: 30 spawn slots
+      // plus 5 disaster stages sit dormant through every classic round.
+      VisibilityComponent.createOrReplace(entity, { visible: !isCleaned })
       if (isCleaned) {
         disableClick(itemId)
       } else {

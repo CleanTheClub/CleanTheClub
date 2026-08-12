@@ -14,6 +14,15 @@ const TIMEOUT_MS = 5_000
 let firstAskMs = 0
 let loggedTimeout = false
 
+/**
+ * True ONLY when the platform is genuinely known — never satisfied by the
+ * timeout. Use this when "unknown" must not be treated as desktop: the mobile
+ * player light was skipped forever when the shared gate timed out first,
+ * because isMobile() reports false for the unknown state (playtest: "I noticed
+ * the light once but haven't seen it since").
+ */
+export const platformKnown = (): boolean => getPlatform() !== null
+
 /** True once the platform is known — or once the shared timeout has passed. */
 export function platformSettled(): boolean {
   if (getPlatform() !== null) return true

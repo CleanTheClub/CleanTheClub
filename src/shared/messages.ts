@@ -31,7 +31,7 @@ export const Messages = {
    * Empty carried rubbish into a bin. binType is 'general' or 'recycle' — the
    * bin only accepts its own stream, so only that type's count resets.
    */
-  depositRubbish:   Schemas.Map({ binType: Schemas.String }),
+  depositRubbish:   Schemas.Map({ binType: Schemas.String, binName: Schemas.String }),
   /** Empty on the spot via the Portable Bin upgrade (limited uses per shift). */
   portableEmpty:    Schemas.Map({ dummy: Schemas.Boolean }),
   /** Pick up an overflowing BIN itself (empty hands only) — the named bin
@@ -60,6 +60,10 @@ export const Messages = {
     capacity:  Schemas.Int,
     hauling:   Schemas.String,
     haulStage: Schemas.String,
+    /** Carry container model NAME (Janitor Gear) — server-resolved from this
+     *  player's upgrades, so remote clients can't be told to render gear the
+     *  player hasn't bought. Empty = fall back to the default box. */
+    gear:      Schemas.String,
     // Which station bin the haul took — clients hide/show that bin themselves.
     // (The server's old Transform write on the bin never replicated: composite
     // entities aren't syncEntity'd, so remote players saw the bin stay put.)

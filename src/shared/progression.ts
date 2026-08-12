@@ -244,6 +244,33 @@ export const UPGRADES: UpgradeDef[] = [
   },
 ]
 
+// ── Janitor Gear ──────────────────────────────────────────────────────────────
+// The carry CONTAINER a player is seen holding, derived from what they've
+// bought. Shared so the owner's client, every remote client and the server all
+// resolve the same model — a client can't show itself gear it hasn't earned,
+// because the server sends this value for remote players.
+//
+// Names resolve to assets/scene/Models/<name>/<name>.glb. Every gear model must
+// share the Box_Wearable convention: origin at the base, centred on X/Z, so the
+// rig's offset and the fill-scaling work unchanged.
+export const GEAR_DEFAULT = 'Box_Wearable'
+
+export function carryGearModel(upgrades: Partial<Record<UpgradeId, number>> | undefined): string {
+  // HIGHEST OWNED WINS, ordered by how far into the career the upgrade sits, so
+  // the thing in your hands is always your proudest purchase:
+  //
+  //   Box  →  Milk Crate  →  Janitor Caddy  →  Gold Wheelie Bin  →  Vacuum
+  //
+  // Every step is a real milestone rather than a cosmetic, and other players
+  // read your rank off your hands at a glance.
+  const strength = upgrades?.carryCapacity ?? 0
+  if ((upgrades?.vacuum ?? 0) > 0)     return 'Vacuum'            // rank 7, the top tool
+  if ((upgrades?.portableBin ?? 0) > 0) return 'Gold_Wheelie_Bin' // rank 5 — you carry your own bin
+  if (strength >= 3)                    return 'Janitor_Caddy'    // Strength 3-4
+  if (strength >= 1)                    return 'Milk_Crate'       // Strength 1-2
+  return GEAR_DEFAULT                                             // the free starter box
+}
+
 export const UPGRADE_BY_ID: Record<string, UpgradeDef> = UPGRADES.reduce(
   (acc, u) => { acc[u.id] = u; return acc },
   {} as Record<string, UpgradeDef>,

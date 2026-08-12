@@ -183,7 +183,11 @@ export const POP_FIRST_GRACE_MS = 150 // the click that STARTED the rhythm can't
 // hauler is paid on the shift payout.
 // 18 (was 30 — too high vs the ~40-item stream census: one late haul at best).
 // Now the first haul lands mid-round; themed nights with extras get two.
-export const BIN_STREAM_CAPACITY = 18
+// Capacity of ONE bin. The club has 4 general + 4 recycling bins across 4
+// stations and each fills independently, so a full bin is a routing decision
+// ("next station") or an invitation to haul it — never a hard stop. TUNE HERE:
+// lower = more hauling and more walking between stations.
+export const BIN_CAPACITY = 12
 export const HAUL_BONUS          = 15
 export const DUMPSTER_PREFIX     = 'Dumpster'
 // Bins start stinking at this fill fraction; the stink RATE then ramps with
@@ -230,7 +234,7 @@ export const THEME_DEFS: RoundThemeDef[] = [
     blurb: 'Cocktail night got out of hand — glasses as far as the eye can see.',
     categories: ['glasses', 'recycle', 'sticky'],
     contractKinds: ['glasses', 'recycle'],
-    spawns: { models: ['drink', 'brokenBottle'], countMin: 18, countMax: 26 },
+    spawns: { models: ['drink', 'brokenBottle', 'Gin', 'Martini', 'Negroni'], countMin: 18, countMax: 26 },
   },
   {
     id: 'movieNight',
@@ -238,22 +242,34 @@ export const THEME_DEFS: RoundThemeDef[] = [
     blurb: 'Film night. The popcorn went everywhere except mouths.',
     categories: ['general', 'recycle', 'sticky'],
     contractKinds: ['general'],
-    spawns: { models: ['popcorn'], countMin: 18, countMax: 26 },
+    spawns: { models: ['popcorn', 'Smoothie', 'CosmicLatte', 'DCLCan'], countMin: 18, countMax: 26 },
     keepRubbishNames: ['popcorn', 'drink', 'napkin'],
   },
   {
     id: 'henStagDo',
     title: 'HEN & STAG NIGHT',
-    blurb: "Two parties collided. Don't ask about the ties.",
-    categories: null,   // chaos IS the theme
-    contractKinds: null,
+    blurb: "Two parties collided. Clothes and photos everywhere — don't ask about the ties.",
+    // Previously unfiltered ("chaos IS the theme"): it kept all 104 base items
+    // AND added spawns — making it strictly HARDER than a classic round (83
+    // demand / 8 bin trips solo, vs 68/6). That inverted the whole point of
+    // themes: narrow the mix so one action can be mastered. Now it keeps the
+    // party's own debris — clothes and litter — and hands glassware to
+    // cocktail night and mopping to spring cleaning.
+    categories: ['general', 'recycle'],
+    // Restricted from null: 'glasses' and 'sticky' contracts would be
+    // impossible now that those categories are masked out.
+    contractKinds: ['general', 'recycle', 'deposits', 'disaster'],
     spawns: { models: ['tie', 'bra', 'sock', 'sockB', 'polaroidA', 'polaroidB'], countMin: 16, countMax: 24 },
   },
   {
     id: 'walkout',
     title: 'THE WALKOUT',
-    blurb: 'The last crew walked out mid-shift. Everything, everywhere, all at once.',
-    categories: null,
+    blurb: 'The last crew walked out mid-shift. Bags everywhere and the furniture left as-is.',
+    // Previously unfiltered, same problem as henStagDo (77 demand / 7 trips solo).
+    // Keeps the abandoned-shift story: sacks of general waste plus the props
+    // the crew never put back, which also gives the round its own texture
+    // (quick pickups + a few hold-to-restore props) rather than everything.
+    categories: ['general', 'reset'],
     // Walkout always spawns a disaster, so its contract pool can lean on it.
     contractKinds: ['deposits', 'disaster'],
     spawns: { models: ['bigRubbishBag'], countMin: 10, countMax: 14 },
@@ -336,3 +352,81 @@ export const CLUTTER_DEFS: ClutterDef[] = [
   { id: 'sofa_cushion_2', position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 16.6,  y: 7.2,  z: 22.72 } },
   { id: 'sofa_cushion_3', position: { x: 16, y: 0, z: 16 }, type: 'reset', sceneGlb: true, stinkPos: { x: 25.45, y: 7.2,  z: 23.31 } },
 ]
+
+// ── Mini-item sizing ──────────────────────────────────────────────────────────
+// MEASURED longest axis, in metres, of each item model's own mesh (colliders
+// excluded). These vary wildly by author — phone is 2.19m in mesh space while a
+// polaroid is 0.61m — which is invisible in the world (every placement carries
+// its Creator Hub scale) but made the carry-box minis render at wildly
+// different sizes off one flat multiplier: the phone came out ~3.5x a polaroid.
+//
+// Minis now scale to ITEM_MINI_TARGET_M / <this>, so every item reads the same
+// size in the hand whatever its author did.
+//
+// REGENERATE after adding or re-exporting an item model — an entry that's
+// missing falls back to the old flat scale and logs once.
+export const MODEL_SIZE_M: Record<string, number> = {
+  Bin_General: 1.103,
+  Bin_Recycling: 1.103,
+  Bins_Stand: 1.794,
+  Box_Wearable: 0.411,
+  CosmicLatte: 0.441,
+  DCLCan: 0.427,
+  Disco_Ball: 0.452,
+  Gin: 0.46,
+  Gold_Dustpan: 0.701,
+  Gold_Platter: 0.52,
+  Gold_Wheelie_Bin: 0.834,
+  Ice_Bucket: 0.381,
+  Janitor_Caddy: 0.562,
+  Martini: 0.518,
+  Milk_Crate: 0.385,
+  Negroni: 0.631,
+  Smoothie: 0.662,
+  SofaCushionAnim_1: 0.704,
+  SofaCushionAnim_2: 0.797,
+  SofaCushionAnim_3: 0.665,
+  StickyPatch: 1.121,
+  StickyPatchBB: 1.765,
+  Vacuum: 0.51,
+  bigRubbishBag: 1.0,
+  bra: 1.398,
+  brokenBottle: 1.589,
+  brokenGlass: 1.413,
+  brokenShoe: 0.8,
+  camera: 0.817,
+  cleanBarStool: 0.94,
+  cleanBarStoolAnim: 0.94,
+  cleanChaiseCushion: 0.643,
+  cleanChaiseCushionAnim: 0.762,
+  cleanSofaCushion: 0.714,
+  cleanSofaCushion2: 0.663,
+  cleanSofaCushion3: 0.665,
+  dirtyBarStool: 0.94,
+  dirtyChaiseCushion: 0.762,
+  dirtySofaCushion: 0.704,
+  dirtySofaCushion2: 0.797,
+  dirtySofaCushion3: 0.665,
+  drink: 1.309,
+  glasses: 0.815,
+  glassesBroken: 0.873,
+  keys: 0.884,
+  napkinA: 0.619,
+  napkinB: 0.622,
+  phone: 2.194,
+  pizza: 1.113,
+  pizzaEaten: 1.025,
+  polaroidA: 0.612,
+  polaroidB: 0.612,
+  polaroidC: 0.612,
+  polaroidD: 0.612,
+  polaroidE: 0.612,
+  popcorn: 1.664,
+  reallyBrokenGlass: 1.502,
+  sock: 1.777,
+  sockB: 1.777,
+  tie: 1.59,
+}
+
+/** Longest axis a carried mini should occupy in the hand, in metres. TUNE HERE. */
+export const ITEM_MINI_TARGET_M = 0.16

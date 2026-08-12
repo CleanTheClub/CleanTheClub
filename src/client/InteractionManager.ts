@@ -419,8 +419,17 @@ export function initInteractionManager(
   })
 
   // Frame system: drives hold progress + fires on completion
+  let barIsShown = false
   engine.addSystem(() => {
-    if (!activeHold) return
+    if (!activeHold) {
+      // INVARIANT: no hold in progress means no bar. Several paths clear
+      // activeHold (server clean, phase change, scene re-entry) and any that
+      // forgets to hide the bar strands it on screen — reported on mobile as
+      // "the scrub UI gets stuck". Cheaper to guarantee than to audit.
+      if (barIsShown) { barIsShown = false; showHoldBar(false); updateHoldBar(0) }
+      return
+    }
+    barIsShown = true
     const heldMs = Date.now() - activeHold.startMs
 
     // The skill input differs by platform. DESKTOP: release the held button —

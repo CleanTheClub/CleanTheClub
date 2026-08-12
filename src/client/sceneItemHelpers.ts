@@ -1,7 +1,6 @@
 import {
   engine, Entity, Transform, GltfContainer, GltfContainerLoadingState,
-  LoadingState, Name, MeshCollider, ColliderLayer,
-} from '@dcl/sdk/ecs'
+  LoadingState, Name, MeshCollider, ColliderLayer, GltfNodeModifiers } from '@dcl/sdk/ecs'
 import { isMobile } from '@dcl/sdk/platform'
 
 // ── Mobile tap targets ────────────────────────────────────────────────────────
@@ -34,15 +33,68 @@ import { isMobile } from '@dcl/sdk/platform'
 const MOBILE_TAP_SCALE = 1.4
 
 // ── Tap proxy vs hover outline ────────────────────────────────────────────────
-// DECISION (2026-08-03 device test): mobile gets enlarged proxy boxes; desktop
-// aims at the visible mesh. Small items proved hard to tap on a phone even
-// after the reach-gate and pointer-maxDistance fixes.
+// OFF (2026-08-11 playtest): "hover outline is visible on some items on mobile
+// but not all — we want it visible on all".
 //
-// The cost is the native hover outline: the explorer highlights whatever the
-// ray HITS, and a proxy box has no renderable — which is why bins (mesh takes
-// the ray) glow on mobile and proxied items do not. Accepted; desktop keeps the
-// true toon outline everywhere.
+// The proxy WAS the reason. The explorer highlights whatever the pointer ray
+// HITS, and a proxy box has no renderable, so proxied items could never glow —
+// while theme/disaster spawns, which never used a proxy, always did. That split
+// also broke the one-rule-per-item-TYPE principle: the same model behaved
+// differently depending on where it came from.
+//
+// Turning it off restores the outline everywhere and makes every item aim at
+// its own mesh. The proxy originally existed for iOS "can't always tap the
+// dance floor items", but the ACTUAL causes of those misses were found and
+// fixed separately afterwards (pointer maxDistance was refusing interactions
+// from the third-person camera distance, and the reach gate measured from the
+// wrong entity), so this is the experiment those fixes earned.
+//
+// Side effect, and an improvement: a GLB that fails to stream now has NO
+// collider at all instead of an invisible full-size tap box, so the "invisible
+// but still clickable and collectible" item can't happen.
+//
+// REVERT to true if small items become hard to tap again — it is one flag.
 const USE_MOBILE_TAP_PROXY = true
+
+// ── Hover highlight (the "outline" for proxied items) ────────────────────────
+// The native toon outline follows whatever the pointer ray HITS, and on mobile
+// that's the proxy box — which has no renderable, so proxied items could never
+// glow. Rather than choose between a big tap target and visible feedback, we
+// draw our own: GltfNodeModifiers with an EMPTY path applies a material
+// override to ALL nodes of a GLB (protocol: "if the path of the first modifier
+// is an empty string the configuration will affect all of the GLTF Nodes"), so
+// a hovered item lights up whatever its mesh hierarchy looks like — no
+// per-model node names needed.
+//
+// The override replaces the authored material, so a hovered item reads as a
+// bright tinted silhouette rather than its texture. On a phone that's a CLEARER
+// selection cue than a hairline outline, and it lasts only while aimed at.
+// Desktop keeps the real outline (no proxy there, so the ray hits the mesh).
+// OFF returns mobile to platform-standard behaviour: no highlight at all on
+// proxied items (the native outline needs the ray to hit the mesh, which the
+// proxy intercepts by design). ON substitutes our own. One switch either way.
+const MOBILE_HOVER_TINT = true
+const HOVER_TINT = { r: 1, g: 0.93, b: 0.55 }
+
+export function setHoverHighlight(gltfEnt: Entity | undefined, on: boolean): void {
+  if (gltfEnt === undefined || !MOBILE_HOVER_TINT || !USE_MOBILE_TAP_PROXY || !isMobile()) return
+  if (!on) { GltfNodeModifiers.deleteFrom(gltfEnt); return }
+  GltfNodeModifiers.createOrReplace(gltfEnt, {
+    modifiers: [{
+      path: '',                      // empty = every node in the GLB
+      material: {
+        material: {
+          $case: 'pbr' as const,
+          pbr: {
+            albedoColor:       { ...HOVER_TINT, a: 1 },
+            emissiveColor:     HOVER_TINT,
+            emissiveIntensity: 0.85,
+          },
+        },
+      },
+    }],
+  })
+}
 
 // ── Blender-baked placements ──────────────────────────────────────────────────
 // 20 of the scene's GLBs (MainStructure, Elevator, the cushions, stools, chaise,

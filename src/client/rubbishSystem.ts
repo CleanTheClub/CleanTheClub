@@ -1,10 +1,10 @@
 // Quick-click-to-clean system for the Rubbish group.
 
-import { Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer } from '@dcl/sdk/ecs'
+import { Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
+import { findGltfEntity, setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
@@ -76,6 +76,13 @@ const popcornIds = new Set<string>()
 function setVisible(itemId: string, visible: boolean) {
   const rec = gltfRecords.get(itemId)
   if (!rec) return
+  // VisibilityComponent, not just a zeroed scale: a 0.001-scaled entity is
+  // still RENDERED (and still counts toward the scene's triangle budget), which
+  // is dead weight for the ~110 base items a themed round masks out for its
+  // whole duration. visible:false skips it in the renderer while the entity
+  // stays in the engine, so waking it costs no reload (the documented way to
+  // hide scene content). Scale is still zeroed so the pickup shrink reads.
+  VisibilityComponent.createOrReplace(rec.containerEntity, { visible })
   const tf = Transform.getMutable(rec.containerEntity)
   if (visible) {
     if (rec.originalScale !== null) {
@@ -96,6 +103,7 @@ function setVisible(itemId: string, visible: boolean) {
 function disableClick(itemId: string) {
   const rec = gltfRecords.get(itemId)
   if (!rec) return
+  setHoverHighlight(rec.gltfEntity, false)   // never leave an item lit
   pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
   pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
   PointerEvents.deleteFrom(rec.clickEntity)
@@ -105,8 +113,17 @@ function enableClick(itemId: string) {
   if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
   const rec = gltfRecords.get(itemId)
   if (!rec) return
+  // Invariant: clickable implies visible. Cheap insurance against any path that
+  // restores an item without going through setVisible.
+  VisibilityComponent.createOrReplace(rec.containerEntity, { visible: true })
   const { clickEntity, containerEntity } = rec
-  pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => {
+    playHoverSound()
+    setHoverHighlight(rec.gltfEntity, true)
+  })
+  pointerEventsSystem.onPointerHoverLeave({ entity: clickEntity }, () => {
+    setHoverHighlight(rec.gltfEntity, false)
+  })
   pointerEventsSystem.onPointerDown(
     {
       entity: clickEntity,

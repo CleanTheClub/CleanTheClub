@@ -9,6 +9,7 @@ import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch, gameState } from './client/phaseGate'
+import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
@@ -332,10 +333,20 @@ let adminThemeIdx = 0
 // Admin hold-test: audition placed models on the carry rig (0 = off).
 // Names must match the Creator Hub entities exactly.
 const HOLD_TEST_MODELS = [
-  'Disco_Ball', 'Gold_Dustpan', 'Gold_Platter', 'Gold_Wheelie_Bin',
+  'Vacuum', 'Disco_Ball', 'Gold_Dustpan', 'Gold_Platter', 'Gold_Wheelie_Bin',
   'Ice_Bucket', 'Janitor_Caddy', 'Milk_Crate',
 ]
 let adminHoldIdx = 0
+// Admin confetti test — cycles the four celebration strengths, then OFF.
+// Purely local: confetti is a client effect, so there's no server round-trip
+// and it can be fired in any phase (playtest: "I didn't see confetti").
+const CONFETTI_TEST: Array<{ label: string; outcome: 'suboptimal' | 'adequate' | 'optimal'; finale: boolean }> = [
+  { label: 'weak',    outcome: 'suboptimal', finale: false },
+  { label: 'ok',      outcome: 'adequate',   finale: false },
+  { label: 'optimal', outcome: 'optimal',    finale: false },
+  { label: 'FINALE',  outcome: 'optimal',    finale: true  },
+]
+let adminConfettiIdx = 0
 // When the themed-round story card started showing (round start / scene entry).
 // Long hold + late fade: reading time first, THEN the screen declutters.
 let themeStoryStartMs   = -1
@@ -1804,6 +1815,21 @@ const uiBody = () => {
             onMouseDown={() => {
               adminHoldIdx = (adminHoldIdx + 1) % (HOLD_TEST_MODELS.length + 1)
               setCarryHoldTest(adminHoldIdx === 0 ? null : HOLD_TEST_MODELS[adminHoldIdx - 1])
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <Button
+            value={`Confetti: ${adminConfettiIdx === 0 ? 'OFF' : CONFETTI_TEST[adminConfettiIdx - 1].label}`}
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              adminConfettiIdx = (adminConfettiIdx + 1) % (CONFETTI_TEST.length + 1)
+              if (adminConfettiIdx === 0) {
+                stopCelebrationNow()
+              } else {
+                const t = CONFETTI_TEST[adminConfettiIdx - 1]
+                launchCelebration(t.outcome, t.finale)
+              }
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />

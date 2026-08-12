@@ -6,11 +6,11 @@ import { createPersistedDoc } from './persistence'
 import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_STREAM_CAPACITY, HAUL_BONUS } from '../shared/config'
+import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
-import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, UpgradeId } from '../shared/progression'
+import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, UpgradeId } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, peekProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
@@ -273,17 +273,23 @@ type CarriedLoad = { general: number; recycle: number }
 const carriedRubbish = new Map<string, CarriedLoad>()   // address → pieces in hand
 
 // ── Dumpster haul loop ────────────────────────────────────────────────────────
-// Per-stream deposit tally for the round; at BIN_STREAM_CAPACITY that stream's
-// bins overflow and refuse deposits until someone hauls A BIN to a dumpster.
+// Per-BIN deposit tally for the round, keyed by scene Name. Each of the 8 bins
+// fills independently, so a full bin is a routing decision ("next station") or
+// an invitation to haul it — never a hard stop. It used to be one counter per
+// STREAM, which meant all 4 bins of that stream refused at once and only one
+// player could hold the bag: a second player carrying that stream had no legal
+// move at all until the hauler reached a dumpster (playtest 2026-08-11).
+//
 // The haul is a physical round trip: the clicked bin VANISHES from its station
-// into the hauler's hands ('out'), gets emptied at the dumpster (stream
-// unlocks), then must be carried home ('back') — the bonus banks on return.
-const binFill = { general: 0, recycle: 0 }
+// into the hauler's hands ('out'), is emptied at the dumpster (that bin resets
+// to zero), then must be carried home ('back') — the bonus banks on return.
+const binFill = new Map<string, number>()
 type Haul = { stream: RubbishType; binName: string; stage: 'out' | 'back' }
 const haulingBy    = new Map<string, Haul>()          // address → haul in progress
-const streamHauler = new Map<RubbishType, string>()   // stream → who took its bin
+const binHauler    = new Map<string, string>()        // bin name → who took it
 const haulBonuses  = new Map<string, number>()        // address → banked haul pay
-const binStreamFull = (s: RubbishType): boolean => binFill[s] >= BIN_STREAM_CAPACITY
+const binFillOf   = (name: string): number  => binFill.get(name) ?? 0
+const binIsFull   = (name: string): boolean => binFillOf(name) >= BIN_CAPACITY
 // Scene bin models, discovered server-side so their Transforms can be hidden/
 // restored authoritatively (CRDT propagates the vanish to every client).
 const serverBins = new Map<string, { entity: Entity; type: RubbishType }>()
@@ -405,6 +411,7 @@ function buildCarryPublic(address: string) {
     hauling:     haulingBy.get(address)?.stream ?? '',
     haulStage:   haulingBy.get(address)?.stage ?? '',
     haulBinName: haulingBy.get(address)?.binName ?? '',
+    gear:        carryGearModel(getProgress(address).upgrades),
   }
 }
 
@@ -439,7 +446,7 @@ function sendCarried(address: string): void {
   // must be replicated by us). Broadcast only on CHANGE — the p2p resync above
   // is unconditional, but the room doesn't need to hear about no-ops.
   const pub = buildCarryPublic(address)
-  const key = `${pub.total}|${pub.capacity}|${pub.hauling}|${pub.haulStage}|${pub.haulBinName}`
+  const key = `${pub.total}|${pub.capacity}|${pub.hauling}|${pub.haulStage}|${pub.haulBinName}|${pub.gear}`
   if (lastCarryPublicKey.get(address) === key) return
   lastCarryPublicKey.set(address, key)
   room.send('carryPublic', pub)
@@ -571,7 +578,7 @@ export function initServer() {
   const itemEntities    = new Map<string, Entity>()
   // Every hand-placed sample for theme spawn scales. `model` (GLB src basename)
   // is the reliable identity; `name` (entity Name) is the legacy fallback.
-  const themeScaleSamples: Array<{ name: string; model?: string; scale: { x: number; y: number; z: number } }> = []
+  const themeScaleSamples: Array<{ name: string; model?: string; cleanable: boolean; scale: { x: number; y: number; z: number } }> = []
   // Discovery-time positions of scene items, for the vacuum's proximity sweep.
   const sceneItemPositions = new Map<string, { x: number; y: number; z: number }>()
   let enumId = 1
@@ -619,7 +626,13 @@ export function initServer() {
     // Collect every hand-placed item's name + scale; the theme spawner derives
     // per-model spawn scales from these after the loop.
     if (tf && sceneName) {
-      themeScaleSamples.push({ name: sceneName, scale: { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z } })
+      const s = (GltfContainer.getOrNull(entity)?.src ?? '').toLowerCase()
+      themeScaleSamples.push({
+        name:  sceneName,
+        model: s.split('/').pop()?.replace('.glb', '').replace('.gltf', '') || undefined,
+        cleanable: true,          // discovered inside a cleanable group
+        scale: { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z },
+      })
     }
   }
 
@@ -638,6 +651,7 @@ export function initServer() {
     themeScaleSamples.push({
       name:  (Name.getOrNull(entity)?.value ?? '').toLowerCase(),
       model: base,
+      cleanable: false,           // scenery / props that merely share the GLB
       scale: { x: tf.scale.x, y: tf.scale.y, z: tf.scale.z },
     })
   }
@@ -662,6 +676,17 @@ export function initServer() {
       // Exact GLB identity first; entity-name substring only as a fallback.
       let matches = themeScaleSamples.filter((s) => s.model === m)
       if (matches.length === 0) matches = themeScaleSamples.filter((s) => norm(s.name).includes(m))
+      // A spawn is a piece of MESS, so take its size from placements that are
+      // themselves cleanable mess. Sampling every placement of the GLB was
+      // deliberate (it catches a mis-named cleanable, e.g. the brokenGlass
+      // placed as "Wine Glass_2"), but it also picks up scenery that merely
+      // shares the model: 'Fixed View Camera' sits at the scene root at scale
+      // 1 next to the rubbish camera at 0.5, and the median of those spawned
+      // cameras at DOUBLE size (playtest: "a giant camera on lost property
+      // night"). Scenery is still the fallback when a model has no cleanable
+      // twin at all.
+      const cleanableOnly = matches.filter((s) => s.cleanable)
+      if (cleanableOnly.length > 0) matches = cleanableOnly
       if (matches.length === 0) {
         report.push(`${model}=EXCLUDED`)
         console.log(`[SERVER] ⚠ theme model '${model}' has NO Creator Hub placement to take its scale from — it will NOT spawn. Place one instance in CH to enable it.`)
@@ -672,7 +697,7 @@ export function initServer() {
         y: median(matches.map((s) => s.scale.y)),
         z: median(matches.map((s) => s.scale.z)),
       })
-      report.push(`${model}=${themeModelScales.get(model)!.x.toFixed(2)}(CH×${matches.length})`)
+      report.push(`${model}=${themeModelScales.get(model)!.x.toFixed(2)}(CH×${matches.length}${matches.every((s) => s.cleanable) ? '' : ' scenery'})`)
     }
     console.log(`[SERVER] theme model scales: ${report.join(' ')}`)
   }
@@ -999,12 +1024,11 @@ export function initServer() {
     // bags mid-haul — and tell everyone, so the carry chip resets immediately.
     carriedRubbish.clear()
     portableUsed.clear()
-    binFill.general = 0
-    binFill.recycle = 0
+    binFill.clear()
     // Any bin still in someone's hands snaps home for the fresh shift — clients
     // restore station bins themselves from the carryPublic below going empty.
     haulingBy.clear()
-    streamHauler.clear()
+    binHauler.clear()
     haulBonuses.clear()   // unbanked haul pay dies with the old round
     syncBinFull()
     for (const address of activeSessions) sendCarried(address)
@@ -1220,7 +1244,7 @@ export function initServer() {
     const haul = haulingBy.get(sessionId)
     if (haul) {
       haulingBy.delete(sessionId)
-      streamHauler.delete(haul.stream)
+      binHauler.delete(haul.binName)
       // Broadcasts the cleared haul so every client restores the station bin.
       sendCarried(sessionId)
     }
@@ -1515,30 +1539,34 @@ export function initServer() {
   // the fields it knows, so these persist between its ticks). Levels, not
   // booleans: clients render the junk piling up and the pre-overflow stink.
   function syncBinFull(): void {
+    // Only non-empty bins are listed — absent means zero.
+    const packed = [...binFill.entries()]
+      .filter(([, n]) => n > 0)
+      .map(([name, n]) => `${name}:${n}`)
+      .join(',')
     const gs = GameState.getMutable(gameStateEntity)
-    gs.binFillGeneral = binFill.general
-    gs.binFillRecycle = binFill.recycle
+    if (gs.binFills !== packed) gs.binFills = packed
   }
 
   room.onMessage('depositRubbish', (data, context) => {
     if (!context) return
     if (!paced(context.from, 'deposit', 400)) return   // a real deposit needs a walk to the bin
     const stream: RubbishType = data.binType === 'recycle' ? 'recycle' : 'general'
-    // Overflowed stream refuses deposits — the client pre-empts with a toast;
-    // this resync corrects any stale client that sent anyway.
-    if (binStreamFull(stream)) {
-      sendCarried(context.from)
-      return
-    }
+    const bin = serverBins.get(data.binName)
+    // Unknown bin, or wrong stream for it — resync and ignore.
+    if (!bin || bin.type !== stream) { sendCarried(context.from); return }
+    // THIS bin is full: the player takes its bag instead (takeFullBag). Other
+    // bins of the same stream still accept, so nobody is ever stuck.
+    if (binIsFull(data.binName)) { sendCarried(context.from); return }
     const load = getLoad(context.from)
     // A real (non-empty) deposit advances the deposits contract.
     if (load[stream] > 0) {
       bumpContract(context.from, ['deposits'])
       bumpKindCount(context.from, 'deposit')
-      binFill[stream] += load[stream]
+      binFill.set(data.binName, binFillOf(data.binName) + load[stream])
       syncBinFull()   // every deposit — clients render the pile growing
-      if (binStreamFull(stream)) {
-        console.log(`[CARRY] ${stream} bins FULL (${binFill[stream]}) — haul needed`)
+      if (binIsFull(data.binName)) {
+        console.log(`[CARRY] bin '${data.binName}' FULL (${binFillOf(data.binName)}) — haul available`)
       }
     }
     load[stream] = 0
@@ -1555,13 +1583,26 @@ export function initServer() {
     const bin = serverBins.get(data.binName)
     if (getPhase() !== 'playing' || !activePlayers.has(address)) return
     if (!bin || bin.type !== stream) { sendCarried(address); return }
-    if (!binStreamFull(stream) || haulingBy.has(address) || streamHauler.has(stream)) {
+    // That specific bin must be full and unclaimed; one haul per player.
+    if (!binIsFull(data.binName) || haulingBy.has(address) || binHauler.has(data.binName)) {
       sendCarried(address)
       return
     }
-    if (carriedTotal(address) > 0) { sendCarried(address); return }
+    // Tip whatever is in the player's arms into the bag as they lift it.
+    // Requiring EMPTY hands here DEADLOCKED the loop: a full bin refuses
+    // deposits, so "hands full + bin full" left the player with no legal
+    // action at all until the round ended (playtest 2026-08-11 — the bin just
+    // blipped "nope"). The load is bound for the dumpster either way.
+    const load = getLoad(address)
+    if (load.general + load.recycle > 0) {
+      load.general = 0
+      load.recycle = 0
+      // Stat only: the dumpster run already credits the deposits contract, so
+      // crediting here too would pay one trip twice.
+      bumpKindCount(address, 'deposit')
+    }
     haulingBy.set(address, { stream, binName: data.binName, stage: 'out' })
-    streamHauler.set(stream, address)
+    binHauler.set(data.binName, address)
     sendCarried(address)
     console.log(`[CARRY] ${address.slice(0, 8)} took bin '${data.binName}' — off to the dumpster`)
   })
@@ -1576,8 +1617,8 @@ export function initServer() {
     const haul = haulingBy.get(address)
     if (!haul || haul.stage !== 'out') { sendCarried(address); return }
     haul.stage = 'back'
-    streamHauler.delete(haul.stream)
-    binFill[haul.stream] = 0
+    binHauler.delete(haul.binName)
+    binFill.set(haul.binName, 0)
     syncBinFull()
     bumpContract(address, ['deposits'])   // a dumpster run is the deposit of deposits
     sendCarried(address)
@@ -1719,7 +1760,11 @@ export function initServer() {
       sendProgress(address)
       // Capacity changes the chip's denominator and a portable bin adds its button
       // immediately — resync the carry payload for both.
-      if (data.upgradeId === 'carryCapacity' || data.upgradeId === 'portableBin') sendCarried(address)
+      // All three drive the visible GEAR ladder (and the first two also change
+      // the HUD chip), so each needs a carry resync — carryPublic.gear is what
+      // tells every other client which prop to put in this player's hands.
+      if (data.upgradeId === 'carryCapacity' || data.upgradeId === 'portableBin'
+          || data.upgradeId === 'vacuum') sendCarried(address)
       // Purchases are a checkpoint too: money left the wallet, and losing that to a
       // server shutdown would be worse than losing an unsaved shift.
       scheduleProgressSave()

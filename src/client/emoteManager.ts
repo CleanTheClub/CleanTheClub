@@ -1,7 +1,8 @@
-import { engine, Entity, Transform, GltfContainer, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
+import { engine, Transform, timers, inputSystem, InputAction, PointerEventType } from '@dcl/sdk/ecs'
 import { triggerSceneEmote, stopEmote } from '~system/RestrictedActions'
 import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
+import { repreload } from './preload'
 
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
 const MOPPING_EMOTE_SRC = 'assets/scene/Emotes/Mopping_emote.glb'
@@ -121,30 +122,10 @@ function emoteWatchSystem(): void {
   }
 }
 
-// Pre-warm the emote GLBs so the FIRST time each one is triggered it plays instantly
-// instead of stalling while the asset loads. The pickup emote stays warm naturally
-// (it fires on every quick item), but the mopping emote only plays on sticky patches,
-// so a player's first mop used to pay the full load cost — that "loading" stutter.
-//
-// We instantiate each GLB on a hidden entity (tiny scale, far underground), which
-// loads the asset. Crucially these entities are kept ALIVE for the whole session:
-// the engine evicts a GLB once nothing references it, so an earlier "load then remove"
-// warm-up got unloaded again long before the first real mop (which only happens after
-// the lobby + countdown, 15s+ in) — leaving it cold exactly when it mattered. Holding
-// a permanent reference keeps the asset resident so every mop is instant.
-const EMOTE_WARMUP_DELAY_MS = 3_000   // wait out the initial scene-item load spike first
-const warmupEntities: Array<{ entity: Entity; src: string }> = []
-function warmUpEmotes() {
-  timers.setTimeout(() => {
-    for (const src of [MOPPING_EMOTE_SRC, PICKUP_EMOTE_SRC, PARTY_EMOTE_SRC, CARRY_POSE_SRC]) {
-      const e = engine.addEntity()
-      Transform.create(e, { position: { x: 0, y: -100, z: 0 }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
-      GltfContainer.create(e, { src })
-      // Never removed — the reference keeps the GLB loaded for the session.
-      warmupEntities.push({ entity: e, src })
-    }
-  }, EMOTE_WARMUP_DELAY_MS)
-}
+// Emote GLB residency is now the platform's job — see client/preload.ts, which
+// lists these four in its AssetLoad set. That replaces the old trick of parking
+// four hidden entities underground purely to hold a GltfContainer reference so
+// the engine wouldn't evict the asset before the first mop.
 
 // A mobile app-switch SUSPENDS the client without reloading the scene; the OS
 // can flush asset memory meanwhile, and the resident references above don't
@@ -160,12 +141,11 @@ function emoteRewarmOnResume() {
   lastFrameWallMs = now
   if (prev === 0) return                    // first frame — nothing to measure
   const gap = now - prev
-  if (gap < RESUME_GAP_MS || warmupEntities.length === 0) return
-  console.log(`[EMOTE] app resumed after ${Math.round(gap / 1000)}s — re-warming emote GLBs`)
-  for (const w of warmupEntities) GltfContainer.deleteFrom(w.entity)
-  timers.setTimeout(() => {
-    for (const w of warmupEntities) GltfContainer.createOrReplace(w.entity, { src: w.src })
-  }, 200)
+  if (gap < RESUME_GAP_MS) return
+  console.log(`[EMOTE] app resumed after ${Math.round(gap / 1000)}s — re-issuing preload`)
+  // AssetLoad guards against ENGINE eviction, but a suspended app can still
+  // have its memory reclaimed by the OS — re-request so the fetch happens again.
+  repreload()
   // The carry LOOP also died in the suspend, but the keeper believes it's live
   // (staleness is only detected via movement, and nothing moved while frozen).
   // Mark it stale now — and again once the re-fetched GLB has had time to land,
@@ -180,7 +160,6 @@ export function initEmoteManager() {
   engine.addSystem(emoteWatchSystem)
   engine.addSystem(carryPoseKeeper)
   engine.addSystem(emoteRewarmOnResume)
-  warmUpEmotes()
 }
 
 // Fires the party emote on the local player at round end.

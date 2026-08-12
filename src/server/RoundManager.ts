@@ -293,7 +293,7 @@ function syncGameState() {
   // This runs on a 1s interval for the server's whole life (plus every accepted
   // clean), so the no-change case is the common one — an idle lobby used to
   // re-broadcast identical state once a second forever.
-  // (binFillGeneral/binFillRecycle are owned by syncBinFull, not compared here.)
+  // (binFills is owned by syncBinFull, not compared here.)
   const cur = GameState.get(gameStateEntity)
   if (cur.phase === phase && cur.cleanedCount === cleaned && cur.totalCount === demanded
       && cur.secondsLeft === secondsLeft && cur.roundNumber === roundNumber

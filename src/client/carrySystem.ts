@@ -9,18 +9,19 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer } from '@dcl/sdk/ecs'
 import { getUserData } from '~system/UserIdentity'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
-import { DUMPSTER_PREFIX, BIN_STREAM_CAPACITY, BIN_STINK_FRACTION, themeModelSrc } from '../shared/config'
+import { DUMPSTER_PREFIX, BIN_CAPACITY, BIN_STINK_FRACTION, themeModelSrc, MODEL_SIZE_M, ITEM_MINI_TARGET_M } from '../shared/config'
+import { carryGearModel, GEAR_DEFAULT } from '../shared/progression'
 import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST, gameState } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
-import { getCareerOrEmpty } from './progressionStore'
+import { getCareerOrEmpty, upgradeLevel } from './progressionStore'
 import { setCarryPose } from './emoteManager'
 import { PSB_ALPHA } from './particleEnums'
 
@@ -136,6 +137,76 @@ function nudgeSystem(): void {
 // Model is PROP-AUTHORED: origin at the box's base, centred (min-y 0.000).
 const SHOW_CARRY_CONTAINER = true
 const BAG_MODEL  = 'assets/scene/Models/Box_Wearable/Box_Wearable.glb'
+
+/**
+ * Props attached to a HAND must not collide with anything. Scene props ship
+ * real colliders (the bins are clickable; Vacuum.glb has a Vacuum_collider
+ * mesh), and by default a GltfContainer's visible meshes get CL_PHYSICS and
+ * its invisible ones get CL_PHYSICS too — so the moment a bin was in hand its
+ * collider shoved the player around and movement felt stuck (playtest).
+ *
+ * CL_CUSTOM1 is a layer nothing in this scene uses: no physics against the
+ * player, and no pointer either (so a held prop can't eat clicks meant for the
+ * world). Preferred over CL_NONE, which the docs flag as having known issues.
+ */
+// Per-gear position nudge, in metres, added to BAG_OFFSET.
+//
+// The rig assumes the Box_Wearable convention: origin at the base, centred on
+// X/Z. Two gear models were authored off that — Janitor_Caddy's mesh sits
+// 0.428m forward of its origin and Gold_Wheelie_Bin 0.058m below — so without
+// this they'd hang in front of / through the hand. MEASURED, not eyeballed
+// (negated mesh-bbox centre). Delete an entry once its GLB is re-exported with
+// a centred base origin.
+const GEAR_FIT: Record<string, { x: number; y: number; z: number }> = {
+  Janitor_Caddy:    { x: 0.015, y: 0,     z: -0.428 },
+  Gold_Wheelie_Bin: { x: 0.001, y: 0.058, z: 0.033 },
+}
+const NO_FIT = { x: 0, y: 0, z: 0 }
+const gearFitFor = (src: string) =>
+  GEAR_FIT[src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')] ?? NO_FIT
+
+const HELD_PROP_COLLIDERS = {
+  visibleMeshesCollisionMask:   ColliderLayer.CL_CUSTOM1,
+  invisibleMeshesCollisionMask: ColliderLayer.CL_CUSTOM1,
+}
+
+/**
+ * This player's carry container. Derived from their own upgrade mirror rather
+ * than a message: it's cosmetic-only, the server resolves it independently for
+ * everyone else (carryPublic.gear), and reading it locally means the swap lands
+ * the instant a purchase confirms. Hold-test overrides it for the fitting room.
+ */
+function gearContainerSrc(): string {
+  // EVERY upgrade the ladder reads — passing only `vacuum` (a leftover from when
+  // the ladder was vacuum-only) meant the owner stayed on the cardboard box
+  // while the server, which sees the whole record, showed everyone else the
+  // right gear: "my carry box upgraded globally but not locally" (playtest).
+  const name = carryGearModel({
+    carryCapacity: upgradeLevel('carryCapacity'),
+    portableBin:   upgradeLevel('portableBin'),
+    vacuum:        upgradeLevel('vacuum'),
+  })
+  return name === GEAR_DEFAULT ? BAG_MODEL : themeModelSrc(name)
+}
+
+/**
+ * What is actually in the player's hand right now.
+ *
+ * On the OUT leg the full bin REPLACES the container outright — it used to ride
+ * on top of the box as a mini, which read as "carrying a bin inside a box".
+ * Once it's tipped into the dumpster (stage 'back') the hands go back to the
+ * normal container, so the walk home looks like ordinary work.
+ */
+function heldContainerSrc(holdTestSrc: string | null): string {
+  if (holdTestSrc) return holdTestSrc
+  // The bin stays in hand for BOTH legs — out to the dumpster and back to its
+  // station. The carry box only returns once the bin is docked (returnBin
+  // clears `hauling`), which is what actually reads as finishing the trip.
+  if (hauling !== '') {
+    return themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')
+  }
+  return gearContainerSrc()
+}
 // Box is 0.41m wide at scale 1 — carried size is right as authored.
 const BAG_MIN    = 0.85
 const BAG_MAX    = 1.1
@@ -168,9 +239,26 @@ const RIG_COUNTER_ROT = { x: 0.5328, y: -0.5063, z: -0.3442, w: -0.5843 }
 const RIG_FINE_TUNE_DEG = { x: -30, y: 0, z: 210 }
 
 const MAX_VISIBLE_ITEMS = 6
+// Fallback only — used when a model isn't in MODEL_SIZE_M (see miniScaleFor).
 const ITEM_MINI_SCALE   = 0.21
 // Fixed jumble — offsets climb up out of the bag, rotations vary per slot so
 // the pile reads as a pile rather than a printed stack.
+// Normalises a carried item to ITEM_MINI_TARGET_M along its longest axis, so
+// props authored at different mesh scales all read the same size in the hand.
+const warnedUnmeasured = new Set<string>()
+function miniScaleFor(src: string): number {
+  const name = src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')
+  const native = MODEL_SIZE_M[name]
+  if (!native || native <= 0) {
+    if (!warnedUnmeasured.has(name)) {
+      warnedUnmeasured.add(name)
+      console.log(`[CARRY] '${name}' has no MODEL_SIZE_M entry — mini uses the flat fallback scale (regenerate the table)`)
+    }
+    return ITEM_MINI_SCALE
+  }
+  return ITEM_MINI_TARGET_M / native
+}
+
 const ITEM_SLOTS = [
   { pos: { x:  0.04, y: 0.16, z:  0.02 }, rot: { x: 10, y:   0, z:  15 } },
   { pos: { x: -0.05, y: 0.19, z: -0.03 }, rot: { x: -8, y:  60, z: -20 } },
@@ -293,17 +381,35 @@ function refreshCarriedBag(): void {
     if (SHOW_CARRY_CONTAINER || holdTest) {
       bagEntity = engine.addEntity()
       Transform.create(bagEntity, { parent: carryRig, position: BAG_OFFSET })
-      // Hold-test overrides the container with the model under audition.
-      GltfContainer.create(bagEntity, { src: holdTestSrc ?? BAG_MODEL })
+      GltfContainer.create(bagEntity, { src: heldContainerSrc(holdTestSrc), ...HELD_PROP_COLLIDERS })
+    }
+  }
+
+  // Container model follows the player's GEAR, so a mid-shift Vacuum purchase
+  // swaps the prop immediately instead of waiting for the next hands-empty
+  // teardown. Diffed — createOrReplace on an unchanged src would re-stream the
+  // GLB every refresh.
+  if (bagEntity) {
+    const want = heldContainerSrc(holdTestSrc)
+    if (GltfContainer.getOrNull(bagEntity)?.src !== want) {
+      GltfContainer.createOrReplace(bagEntity, { src: want, ...HELD_PROP_COLLIDERS })
+      // Off-convention origins get corrected here, so every gear model sits in
+      // the hand the same way the starter box does.
+      const fit = gearFitFor(want)
+      Transform.getMutable(bagEntity).position = {
+        x: BAG_OFFSET.x + fit.x, y: BAG_OFFSET.y + fit.y, z: BAG_OFFSET.z + fit.z,
+      }
     }
   }
 
   // Container scales with how full the hands are — a full load looks heavier.
   // Origin is at the box base on the vertical axis (prop-authored), so scaling
   // grows it in place; the offset no longer needs to move with size.
-  const frac = haulDisplay ? 1 : Math.min(1, total / Math.max(1, capacity))
+  // A hauled bin shows at native scale; the container otherwise grows with load.
+  const binInHand = hauling !== ''
+  const frac = binInHand ? 1 : Math.min(1, total / Math.max(1, capacity))
   // Hold-test shows the auditioned model at its native scale — judge it raw.
-  const size = holdTest ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  const size = holdTest || binInHand ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
 
@@ -349,11 +455,9 @@ function refreshCarriedBag(): void {
   // Newest items on top of the pile; slots are reused, never re-created.
   // While hauling the single decoration is the BIN itself (the one that
   // vanished from its station). Hold-test shows the audited model alone.
-  const visible = holdTest
-    ? []
-    : haulDisplay
-    ? [themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')]
-    : carriedModels.slice(-MAX_VISIBLE_ITEMS)
+  // No minis while hauling — the bin IS the held prop on the way out, and the
+  // return leg is deliberately empty-handed-looking.
+  const visible = holdTest || haulDisplay ? [] : carriedModels.slice(-MAX_VISIBLE_ITEMS)
   for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
     const src = visible[i]
     if (src) {
@@ -369,7 +473,12 @@ function refreshCarriedBag(): void {
         slotEntities[i] = slot
       }
       const cur = GltfContainer.getOrNull(slotEntities[i])
-      if (cur?.src !== src) GltfContainer.createOrReplace(slotEntities[i], { src })
+      if (cur?.src !== src) {
+        GltfContainer.createOrReplace(slotEntities[i], { src, ...HELD_PROP_COLLIDERS })
+        // Slots are recycled between items, so the scale has to follow the model.
+        const ms = miniScaleFor(src)
+        Transform.getMutable(slotEntities[i]).scale = { x: ms, y: ms, z: ms }
+      }
     } else if (slotEntities[i] && GltfContainer.getOrNull(slotEntities[i])) {
       GltfContainer.deleteFrom(slotEntities[i])
     }
@@ -426,18 +535,31 @@ export const getHaulStage      = (): '' | 'out' | 'back' => haulStage
 // The dumpster bag counts as full hands — every pickup gate reads this.
 export const isCarryFull       = (): boolean => known && (hauling !== '' || carriedGeneral + carriedRecycle >= capacity)
 
-/** Bin fill levels from GameState — club-wide, server-owned. */
-function binFillClient(type: RubbishType): number {
-  const gs = gameState()
-  if (!gs) return 0
-  return type === 'general' ? gs.binFillGeneral : gs.binFillRecycle
+// Per-bin fill levels, parsed from GameState's packed "name:count" string.
+// Memoised on the raw string so the split runs once per server change rather
+// than once per bin per tick.
+let fillsRaw = '\u0000'
+const fills = new Map<string, number>()
+function binFillMap(): Map<string, number> {
+  const raw = gameState()?.binFills ?? ''
+  if (raw === fillsRaw) return fills
+  fillsRaw = raw
+  fills.clear()
+  if (raw !== '') {
+    for (const pair of raw.split(',')) {
+      const i = pair.lastIndexOf(':')
+      if (i > 0) fills.set(pair.slice(0, i), Number(pair.slice(i + 1)) || 0)
+    }
+  }
+  return fills
 }
-function binStreamFullClient(type: RubbishType): boolean {
-  return binFillClient(type) >= BIN_STREAM_CAPACITY
-}
-/** Fullest stream, 0..1 — drives the station piles and stink. */
+const binFillClient = (name: string): number  => binFillMap().get(name) ?? 0
+const binFullClient = (name: string): boolean => binFillClient(name) >= BIN_CAPACITY
+/** Fullest single bin, 0..1 — drives the station piles and stink. */
 function binMaxFillFrac(): number {
-  return Math.min(1, Math.max(binFillClient('general'), binFillClient('recycle')) / BIN_STREAM_CAPACITY)
+  let max = 0
+  for (const [, n] of binFillMap()) if (n > max) max = n
+  return Math.min(1, max / BIN_CAPACITY)
 }
 
 /** Portable Bin: empty on the spot (both streams). Server re-validates. */
@@ -471,7 +593,7 @@ function removeRemoteCarry(address: string): void {
   remoteCarries.delete(address)
 }
 
-function updateRemoteCarry(address: string, total: number, capacity: number, hauling: string, haulStage: string): void {
+function updateRemoteCarry(address: string, total: number, capacity: number, hauling: string, haulStage: string, gear: string): void {
   const show = total > 0 || hauling !== ''
   if (!show) { removeRemoteCarry(address); return }
 
@@ -487,30 +609,45 @@ function updateRemoteCarry(address: string, total: number, capacity: number, hau
     rc = { anchor, bag, lastSrc: '' }
     remoteCarries.set(address, rc)
   }
-  // Hauling shows the BIN; carrying shows the box scaled by how full they are.
-  const src = hauling !== ''
+  // The bin is in hand for the whole round trip; gear (box, or the Vacuum once
+  // bought) shows only when not hauling.
+  const binOut = hauling !== ''
+  const src = binOut
     ? themeModelSrc(hauling === 'recycle' ? 'Bin_Recycling' : 'Bin_General')
-    : BAG_MODEL
+    : themeModelSrc(gear || GEAR_DEFAULT)
   if (rc.lastSrc !== src) {
-    GltfContainer.createOrReplace(rc.bag, { src })
+    GltfContainer.createOrReplace(rc.bag, { src, ...HELD_PROP_COLLIDERS })
+    const fit = gearFitFor(src)
+    Transform.getMutable(rc.bag).position = {
+      x: BAG_OFFSET.x + fit.x, y: BAG_OFFSET.y + fit.y, z: BAG_OFFSET.z + fit.z,
+    }
     rc.lastSrc = src
   }
-  const frac = hauling !== '' ? 1 : Math.min(1, total / Math.max(1, capacity))
-  const size = hauling !== '' ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  const frac = binOut ? 1 : Math.min(1, total / Math.max(1, capacity))
+  const size = binOut ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   Transform.getMutable(rc.bag).scale = { x: size, y: size, z: size }
 }
 
 export function initCarrySystem(): void {
   // Own address, to skip self in the public carry broadcasts (the local rig
   // already renders our own hands).
-  getUserData({}).then((d) => { ownAddress = (d.data?.userId ?? '').toLowerCase() })
+  getUserData({}).then((d) => {
+    ownAddress = (d.data?.userId ?? '').toLowerCase()
+    // getUserData resolves asynchronously, so any carryPublic that arrived
+    // BEFORE it landed was treated as another player's and rendered as a
+    // remote prop attached to our OWN avatar. Local teardown never touches it
+    // (it lives in remoteCarries) and every later message is skipped by the
+    // self-check above, so it stuck to the hand forever — the bin that stayed
+    // in hand after returning it, and survived the round reset (playtest).
+    if (ownAddress !== '') removeRemoteCarry(ownAddress)
+  })
 
   room.onMessage('carryPublic', (data) => {
     const addr = data.address.toLowerCase()
     if (addr === ownAddress) return
     const mid = data.haulStage === 'out' || data.haulStage === 'back'
     remoteHauls.set(addr, mid ? (data.haulBinName ?? '') : '')
-    updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage)
+    updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage, data.gear ?? '')
   })
 
   // Sweep for departed players every few seconds — their avatar is gone but
@@ -578,9 +715,14 @@ export function initCarrySystem(): void {
             // Overflowed stream: the bin dispenses its FULL BAG instead of
             // taking deposits — empty hands shoulder it (the persistent FULL
             // marker above the station carries the instruction).
-            if (binStreamFullClient(type)) {
-              if (hauling !== '' || getCarried() > 0) { playMissSound(); return }
+            if (binFullClient(n)) {
+              // Already hauling a bin — hands are literally full of bin.
+              if (hauling !== '') { playMissSound(); return }
               playDepositSound(type)   // bin-grab thunk
+              // Whatever we're carrying is tipped in as the bag comes up (the
+              // server does the same), so flash it like a normal deposit.
+              const armful = getCarried()
+              if (armful > 0) recordDeposit(armful, type)
               room.send('takeFullBag', { binType: type, binName: n })
               return
             }
@@ -595,7 +737,7 @@ export function initCarrySystem(): void {
             const p = Transform.getOrNull(entity)?.position
             if (p) playSparkle({ x: p.x, y: p.y + 1.2, z: p.z })
             recordDeposit(inStream, type)
-            room.send('depositRubbish', { binType: type })
+            room.send('depositRubbish', { binType: type, binName: n })
           },
         )
       },
@@ -650,10 +792,21 @@ export function initCarrySystem(): void {
     Billboard.create(e, { billboardMode: 2 })   // BM_Y — yaw only, like nametags
     return e
   }
+  // Bin names AT each station, parallel to stationMarkerAnchors — fills are
+  // per-bin now, so each station reports only its own.
+  const stationBinNames: string[][] = stationMarkerAnchors.map((a) => {
+    const key = `${Math.round(a.x)}:${Math.round(a.z)}`
+    return binVisuals
+      .filter((b) => {
+        const p = Transform.getOrNull(b.entity)?.position
+        return !!p && `${Math.round(p.x)}:${Math.round(p.z)}` === key
+      })
+      .map((b) => b.name)
+  })
   const fullMarkers = stationMarkerAnchors.map((p) =>
-    makeMarker(p, 'BINS FULL — EMPTY HANDS,\nGRAB THE BAG!', Color4.create(1, 0.45, 0.25, 1)))
+    makeMarker(p, 'BIN FULL —\nTAKE IT OUT!', Color4.create(1, 0.45, 0.25, 1)))
   const dumpMarkers = dumpsterPositions.map((p) =>
-    makeMarker(p, 'EMPTY THE BAG HERE', Color4.create(1, 0.82, 0.25, 1)))
+    makeMarker(p, 'EMPTY THE BIN HERE', Color4.create(1, 0.82, 0.25, 1)))
 
   // ── Station fill visuals — the BINS are the gauge: each bin breathe-pulses
   // harder as ITS stream fills (general bins track general, recycling track
@@ -704,7 +857,7 @@ export function initCarrySystem(): void {
   const hiddenBins = new Set<string>()
   // Marker visibility change-guards — the old version rewrote every marker's
   // Transform each 0.5s tick whether or not anything changed.
-  let lastShowFull = false
+  const lastStationFull: boolean[] = []
   let lastShowDump = false
 
   let markerAcc = 0
@@ -730,13 +883,14 @@ export function initCarrySystem(): void {
         tf.scale = { x: b.base.x, y: b.base.y, z: b.base.z }
       }
     }
-    const anyFull = binStreamFullClient('general') || binStreamFullClient('recycle')
-    const showFull = anyFull && hauling === ''   // once someone hauls, the shout stops
-    if (showFull !== lastShowFull) {
-      lastShowFull = showFull
-      for (const m of fullMarkers) {
-        Transform.getMutable(m).scale = showFull ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
-      }
+    // A station shouts only if a bin AT THAT STATION is full — a blanket
+    // "BINS FULL" would send players to stations that are perfectly fine.
+    for (let i = 0; i < fullMarkers.length; i++) {
+      const show = hauling === '' && stationBinNames[i].some((n) => binFullClient(n))
+      if (show === lastStationFull[i]) continue
+      lastStationFull[i] = show
+      Transform.getMutable(fullMarkers[i]).scale =
+        show ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
     }
     // Dumpsters call only while the FULL bin is out; the return leg points home.
     const showDump = haulStage === 'out'
@@ -775,9 +929,13 @@ export function initCarrySystem(): void {
     // Stink from BIN_STINK_FRACTION, RAMPING with fill: a faint waft at a third
     // full, a plume at overflow. Rate mutation on a live emitter is safe —
     // only pausing has the sinking-particles problem.
-    const frac = binMaxFillFrac()
-    const stinky = frac >= BIN_STINK_FRACTION
     for (let i = 0; i < stationMarkerAnchors.length; i++) {
+      // Each station reeks according to ITS OWN fullest bin.
+      let frac = 0
+      for (const n of stationBinNames[i]) {
+        frac = Math.max(frac, Math.min(1, binFillClient(n) / BIN_CAPACITY))
+      }
+      const stinky = frac >= BIN_STINK_FRACTION
       if (stinky && stationStinks[i] === null) {
         stationStinks[i] = makeStationStink(stationMarkerAnchors[i])
       } else if (!stinky && stationStinks[i] !== null) {
@@ -805,9 +963,8 @@ export function initCarrySystem(): void {
     pulseAcc = 0
     // ONE GameState read per tick, not one per bin. Idle short-circuit AFTER
     // one restore pass, so a round reset can't freeze a mid-pulse scale.
-    const genFrac = Math.min(1, binFillClient('general') / BIN_STREAM_CAPACITY)
-    const recFrac = Math.min(1, binFillClient('recycle') / BIN_STREAM_CAPACITY)
-    if (genFrac <= 0 && recFrac <= 0) {
+    const maxFrac = binMaxFillFrac()
+    if (maxFrac <= 0) {
       if (binsPulsed) {
         binsPulsed = false
         for (const b of binVisuals) {
@@ -822,7 +979,7 @@ export function initCarrySystem(): void {
     const now = Date.now()
     for (const b of binVisuals) {
       if (hiddenBins.has(b.name)) continue   // hauled bins stay hidden
-      const frac = b.type === 'general' ? genFrac : recFrac
+      const frac = Math.min(1, binFillClient(b.name) / BIN_CAPACITY)
       const tf = Transform.getMutableOrNull(b.entity)
       if (!tf) continue
       if (frac <= 0) {
