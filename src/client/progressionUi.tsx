@@ -15,9 +15,10 @@ import { isMobile } from '@dcl/sdk/platform'
 import { theme } from './theme'
 import {
   UPGRADES, UpgradeDef, UpgradeId, maxLevel, nextUpgradeCost, rankForXp, JOB_TITLES, upgradeValue, TITLE_XP,
+  AchievementState,
 } from '../shared/progression'
 import { OUTCOME_ADEQUATE, HOLD_DURATION_MS } from '../shared/config'
-import { CareerState, getCareer, getCareerOrEmpty, getLastPayoutMs, getLastPromotion, getLastPurchase, getPrevShiftItems, upgradeLevel, requestPurchase } from './progressionStore'
+import { CareerState, getCareer, getCareerOrEmpty, getLastPayoutMs, getLastPromotion, getLastPurchase, getPrevShiftItems, upgradeLevel, requestPurchase, getAchievements } from './progressionStore'
 import { tierColorForRank } from './rankBadgeSystem'
 import { getSafeArea, pct } from './safeArea'
 
@@ -29,6 +30,15 @@ const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
 // shown disabled — advertising something unbuyable is worse than not listing
 // it. Static, so filtered once instead of per frame while the shop is open.
 const VISIBLE_UPGRADES = UPGRADES.filter((u) => u.implemented)
+
+// The locked achievements nearest to completion — payout-card teaser rows.
+function nearestLockedAchievements(n: number): AchievementState[] {
+  return getAchievements()
+    .filter((a) => !a.unlocked)
+    .sort((x, y) => y.current / y.target - x.current / x.target)
+    .slice(0, n)
+}
+
 
 const WHITE  = theme.colors.white
 const SUBTLE = theme.text.subtle
@@ -463,6 +473,10 @@ export function ShiftPayoutPanel(
           : row(shift.contractLabel, 'missed', SUBTLE))}
         {shift.openingBonus && row('Opening shift bonus', '×2 XP', GOLD)}
         {(shift.streakXp ?? 0) > 0 && row(`Day ${shift.streakDays} work streak`, `+${shift.streakXp} XP`, XP_FILL)}
+        {/* Flex-gear progress — the two locked achievements you're closest to,
+            so every shift visibly moves you toward a lobby showpiece. */}
+        {nearestLockedAchievements(2).map((a) =>
+          row(a.title, `${a.current}/${a.target} ${a.noun.toLowerCase()}`, SUBTLE))}
         {shift.newBest && (
           <Label
             value="NEW PERSONAL BEST!"

@@ -25,6 +25,7 @@ import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase, gameState } from './phaseGate'
+import { setHoverHighlight } from './sceneItemHelpers'
 import { onClutterPoll, ClutterEntry } from './clutterWatcher'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
@@ -37,6 +38,13 @@ const lastState     = new Map<string, boolean>()
 // entity with no collider yet (playtest console) — so the watcher retries
 // unwired live slots each poll until enableClick's load gate passes.
 const wiredSlots    = new Set<string>()
+// Visibility we last WROTE per slot. Tracked separately from lastState because
+// the cleaned-state change guard below skips unchanged slots — and a slot whose
+// state doesn't change across a round boundary then keeps whatever visibility it
+// had. A disaster stage left live at round end stayed visible and clickable
+// while the server parked it at ~0 scale: "tiny bin bags are visible and
+// interactable where a disaster zone was last round" (playtest).
+const slotVisible   = new Map<string, boolean>()
 
 function slotModelLoaded(entity: Entity): boolean {
   return GltfContainerLoadingState.getOrNull(entity)?.currentState === LoadingState.FINISHED
@@ -121,6 +129,7 @@ function disableClick(itemId: string) {
   wiredSlots.delete(itemId)
   const entity = slotEntities.get(itemId)
   if (!entity) return
+  setHoverHighlight(entity, false)
   pointerEventsSystem.removeOnPointerDown(entity)
   pointerEventsSystem.removeOnPointerHoverEnter(entity)
   PointerEvents.deleteFrom(entity)
@@ -138,7 +147,11 @@ function enableClick(itemId: string) {
   if (!src || !slotModelLoaded(entity)) return
   wiredSlots.add(itemId)
   const stream = classifyRubbish(src)
-  pointerEventsSystem.onPointerHoverEnter({ entity }, () => playHoverSound())
+  pointerEventsSystem.onPointerHoverEnter({ entity }, () => {
+    playHoverSound()
+    setHoverHighlight(entity, true)
+  })
+  pointerEventsSystem.onPointerHoverLeave({ entity }, () => setHoverHighlight(entity, false))
   pointerEventsSystem.onPointerDown(
     {
       entity,
@@ -274,13 +287,21 @@ export function initThemeSpawnSystem() {
         enableClick(itemId)
       }
 
+      // Reconcile visibility EVERY poll (write only on an actual change), so a
+      // parked slot can never be left showing regardless of state history.
+      const wantVisible = !isCleaned
+      if (slotVisible.get(itemId) !== wantVisible) {
+        slotVisible.set(itemId, wantVisible)
+        VisibilityComponent.createOrReplace(entity, { visible: wantVisible })
+        if (!wantVisible) disableClick(itemId)   // parked means untappable too
+      }
+
       if (lastState.get(itemId) === isCleaned) continue
       lastState.set(itemId, isCleaned)
       pendingCleans.delete(itemId)
 
       // Parked/cleaned slots stop RENDERING, not just shrink: 30 spawn slots
       // plus 5 disaster stages sit dormant through every classic round.
-      VisibilityComponent.createOrReplace(entity, { visible: !isCleaned })
       if (isCleaned) {
         disableClick(itemId)
       } else {

@@ -6,7 +6,7 @@
     "start": "sdk-commands start",
     "deploy": "sdk-commands deploy",
     "build": "sdk-commands build",
-    "upgrade-sdk": "npm install --save-dev @dcl/sdk@auth-server",
+    "upgrade-sdk": "echo \"BLOCKED: see UPGRADE-SDK.md — the auth-server tag may now rebase onto 7.26.0, which changes UI scaling. Read the migration notes first, then run the install manually.\" && exit 1",
     "upgrade-sdk:next": "npm install --save-dev @dcl/sdk@next",
     "server-logs": "sdk-commands sdk-server-logs",
     "typecheck": "tsc --noEmit -p ."

@@ -21,6 +21,9 @@ export const Messages = {
    * then every ~5s as the presence heartbeat the server counts players by.
    */
   ping:             Schemas.Map({ dummy: Schemas.Boolean }),
+  /** Equip ('Disco_Ball' …) or clear ('') a flex carry container. The server
+   *  re-checks the achievement, so an unearned equip is refused. */
+  equipGear:        Schemas.Map({ gear: Schemas.String }),
   /** Request to buy the next level of an upgrade. Server validates and pays. */
   buyUpgrade:       Schemas.Map({ upgradeId: Schemas.String }),
   /** Opt in to the next shift. Takes effect when the next round starts. */

@@ -9,7 +9,7 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer, timers } from '@dcl/sdk/ecs'
 import { getUserData } from '~system/UserIdentity'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
@@ -21,7 +21,7 @@ import { requestSetup } from './spawnDirector'
 import { POINTER_MAX_DIST, gameState } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
-import { getCareerOrEmpty, upgradeLevel } from './progressionStore'
+import { getCareerOrEmpty, upgradeLevel, getFlexGear } from './progressionStore'
 import { setCarryPose } from './emoteManager'
 import { PSB_ALPHA } from './particleEnums'
 
@@ -160,6 +160,7 @@ const BAG_MODEL  = 'assets/scene/Models/Box_Wearable/Box_Wearable.glb'
 const GEAR_FIT: Record<string, { x: number; y: number; z: number }> = {
   Janitor_Caddy:    { x: 0.015, y: 0,     z: -0.428 },
   Gold_Wheelie_Bin: { x: 0.001, y: 0.058, z: 0.033 },
+  Gold_Dustpan:     { x: 0,     y: 0.052, z: 0.094 },
 }
 const NO_FIT = { x: 0, y: 0, z: 0 }
 const gearFitFor = (src: string) =>
@@ -181,11 +182,13 @@ function gearContainerSrc(): string {
   // the ladder was vacuum-only) meant the owner stayed on the cardboard box
   // while the server, which sees the whole record, showed everyone else the
   // right gear: "my carry box upgraded globally but not locally" (playtest).
+  // flexGear (pedestal showpieces) overrides the ladder; it's mirrored from the
+  // server, which validated the achievement, so this stays a pure read.
   const name = carryGearModel({
     carryCapacity: upgradeLevel('carryCapacity'),
     portableBin:   upgradeLevel('portableBin'),
     vacuum:        upgradeLevel('vacuum'),
-  })
+  }, getFlexGear())
   return name === GEAR_DEFAULT ? BAG_MODEL : themeModelSrc(name)
 }
 
@@ -310,22 +313,32 @@ export function noteCarriedModel(src: string | undefined): void {
 }
 
 // ── Admin hold-test ───────────────────────────────────────────────────────────
-// Preview any placed scene model riding the carry rig — same left-hand attach,
-// counter-rotation, pose and emote as the box. Local-only visual, for auditing
-// candidate carry props ("test holding them"). Resolved from the PLACED entity
-// by Name, so whatever Creator Hub says the model is, that's what's held.
+// Preview a model riding the carry rig — same left-hand attach, counter-
+// rotation, pose and emote as the box. Local-only visual, for auditing
+// candidate carry props ("test holding them").
+//
+// Resolved by MODELS PATH first (assets/scene/Models/<name>/<name>.glb), so it
+// keeps working for gear models that are no longer PLACED in the scene — the
+// gear set used to sit parked in the composite purely to stay loaded, and the
+// preload list now does that job instead. A placed-entity Name lookup remains
+// as the fallback for auditing arbitrary scene props.
 let holdTestSrc: string | null = null
 export function setCarryHoldTest(name: string | null): void {
   holdTestSrc = null
   if (name) {
-    for (const [entity] of engine.getEntitiesWith(Name)) {
-      if (Name.get(entity).value !== name) continue
-      const gltfEnt = findGltfEntity(entity) ?? entity
-      const src = GltfContainer.getOrNull(gltfEnt)?.src
-      if (src) holdTestSrc = src
-      break
+    holdTestSrc = themeModelSrc(name)
+    if (!MODEL_SIZE_M[name]) {
+      // Not a known models-folder GLB — try a placed entity with that Name.
+      let placed: string | null = null
+      for (const [entity] of engine.getEntitiesWith(Name)) {
+        if (Name.get(entity).value !== name) continue
+        const gltfEnt = findGltfEntity(entity) ?? entity
+        placed = GltfContainer.getOrNull(gltfEnt)?.src ?? null
+        break
+      }
+      if (placed) holdTestSrc = placed
+      else console.log(`[CARRY] hold-test: '${name}' not in MODEL_SIZE_M and no placed GLB by that Name — trying the models path anyway`)
     }
-    if (!holdTestSrc) console.log(`[CARRY] hold-test: no placed GLB found named '${name}'`)
   }
   // Tear the rig down so the container model swaps cleanly on rebuild.
   if (carryAnchor) {
@@ -533,6 +546,18 @@ export const isCarryKnown      = (): boolean => known
 export const getHauling        = (): '' | 'general' | 'recycle' => hauling
 export const getHaulStage      = (): '' | 'out' | 'back' => haulStage
 // The dumpster bag counts as full hands — every pickup gate reads this.
+/**
+ * Client-side haul state, for the admin readout. Mobile can't be attached to a
+ * console and preview has no auth server, so the only way to see this state on
+ * a phone is to render it — server truth vs what our visuals believe.
+ */
+export const getHaulDebug = () => ({
+  hauling, haulStage, haulBinName,
+  carried: carriedGeneral + carriedRecycle,
+  ownKnown: ownAddress !== '',
+  ghosts: remoteCarries.size,
+})
+
 export const isCarryFull       = (): boolean => known && (hauling !== '' || carriedGeneral + carriedRecycle >= capacity)
 
 // Per-bin fill levels, parsed from GameState's packed "name:count" string.
@@ -631,20 +656,38 @@ function updateRemoteCarry(address: string, total: number, capacity: number, hau
 export function initCarrySystem(): void {
   // Own address, to skip self in the public carry broadcasts (the local rig
   // already renders our own hands).
-  getUserData({}).then((d) => {
-    ownAddress = (d.data?.userId ?? '').toLowerCase()
+  // Retried: a single failed/slow resolve used to leave ownAddress empty for
+  // the whole session, which (with the guard above) would mean no remote carry
+  // visuals at all.
+  const resolveOwnAddress = (attempt = 0): void => {
+    getUserData({}).then((d) => {
+      ownAddress = (d.data?.userId ?? '').toLowerCase()
+      if (ownAddress === '') {
+        if (attempt < 10) timers.setTimeout(() => resolveOwnAddress(attempt + 1), 1_000)
+        else console.log('[CARRY] own address never resolved — remote carry visuals disabled')
+        return
+      }
+      console.log(`[CARRY] own address resolved (${ownAddress.slice(0, 8)}…)`)
     // getUserData resolves asynchronously, so any carryPublic that arrived
     // BEFORE it landed was treated as another player's and rendered as a
     // remote prop attached to our OWN avatar. Local teardown never touches it
     // (it lives in remoteCarries) and every later message is skipped by the
     // self-check above, so it stuck to the hand forever — the bin that stayed
     // in hand after returning it, and survived the round reset (playtest).
-    if (ownAddress !== '') removeRemoteCarry(ownAddress)
-  })
+      removeRemoteCarry(ownAddress)
+    })
+  }
+  resolveOwnAddress()
 
   room.onMessage('carryPublic', (data) => {
     const addr = data.address.toLowerCase()
-    if (addr === ownAddress) return
+    // Until we know our OWN address we cannot tell our broadcast from anyone
+    // else's — and mistaking ours for a stranger's attaches a bin to our own
+    // avatar that local teardown never touches (it lives in remoteCarries), so
+    // it stays in hand forever. Briefly missing another player's box is the far
+    // cheaper failure, so skip entirely until getUserData has answered.
+    // Desktop resolves this fast; mobile is where it bites.
+    if (ownAddress === '' || addr === ownAddress) return
     const mid = data.haulStage === 'out' || data.haulStage === 'back'
     remoteHauls.set(addr, mid ? (data.haulBinName ?? '') : '')
     updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage, data.gear ?? '')
@@ -671,9 +714,13 @@ export function initCarrySystem(): void {
     carriedRecycle = data.carriedRecycle
     capacity       = data.capacity
     portableLeft   = data.portableLeft
+    const prevStage = haulStage
     hauling        = data.hauling === 'general' || data.hauling === 'recycle' ? data.hauling : ''
     haulStage      = data.haulStage === 'out' || data.haulStage === 'back' ? data.haulStage : ''
     haulBinName    = data.haulBinName ?? ''
+    if (prevStage !== haulStage) {
+      console.log(`[HAUL] server says stage '${prevStage || 'none'}' -> '${haulStage || 'none'}' (bin='${haulBinName || '-'}', carried=${data.carriedGeneral + data.carriedRecycle})`)
+    }
     known          = true
     refreshMarkers()
   })
@@ -912,7 +959,11 @@ export function initCarrySystem(): void {
         pointerEventsSystem.onPointerDown(
           { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: POINTER_MAX_DIST } },
           () => {
-            if (haulStage !== 'back') return
+            if (haulStage !== 'back') {
+              console.log(`[HAUL] return click IGNORED — haulStage='${haulStage}' (expected 'back')`)
+              return
+            }
+            console.log(`[HAUL] -> returnBin for '${haulBinName}'`)
             playDepositSound()
             room.send('returnBin', { dummy: true })
           },

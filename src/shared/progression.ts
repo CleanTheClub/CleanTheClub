@@ -255,7 +255,77 @@ export const UPGRADES: UpgradeDef[] = [
 // rig's offset and the fill-scaling work unchanged.
 export const GEAR_DEFAULT = 'Box_Wearable'
 
-export function carryGearModel(upgrades: Partial<Record<UpgradeId, number>> | undefined): string {
+// ── Flex gear achievements ────────────────────────────────────────────────────
+// Lifetime-stat unlocks for the four showpiece carriers on the lobby pedestals.
+// Progress comes from ProgressRecord.kindCounts (server-tallied, so a crafted
+// client can't award itself anything) — `keys` are summed, which is why 'pizza'
+// and 'pizzaeaten' both feed the platter.
+//
+// PACING (KJ): the Ice Bucket is the fanciest and must be the hardest grind.
+// Glassware flows in EVERY round (~200+/hr solo) while pizza is theme-gated
+// (~60/hr), so equal-feeling difficulty needs very unequal numbers:
+//   Dustpan 15 disasters (~5h) < Platter 500 pizza (~8-10h) < Bucket 2,500
+//   glassware (~12h+). The Disco Ball is deliberately not a grind at all — a
+//   7-day work streak, the strongest show-up-every-day flex we have.
+// 'streakbest' is a high-water mark (see awardShift): streaks BREAK, and an
+// achievement must never re-lock.
+export type AchievementDef = {
+  gear:        string     // model name = pedestal entity Name
+  title:       string
+  /** Locked-state pedestal line (red). */
+  requirement: string
+  /** Progress noun: "412/500 Pizza to go". */
+  noun:        string
+  target:      number
+  keys:        string[]   // kindCounts keys, summed
+}
+
+export const ACHIEVEMENTS: AchievementDef[] = [
+  {
+    gear: 'Gold_Dustpan', title: 'Hazard Pay',
+    requirement: 'Clear 15 Disaster Zones', noun: 'Disasters', target: 15,
+    keys: ['disastercleared'],
+  },
+  {
+    gear: 'Gold_Platter', title: 'Catering Division',
+    requirement: 'Clean 500 Pizza', noun: 'Pizza', target: 500,
+    keys: ['pizza', 'pizzaeaten'],
+  },
+  {
+    gear: 'Ice_Bucket', title: 'On the Rocks',
+    requirement: 'Clean 2,500 Glassware', noun: 'Glassware', target: 2500,
+    // Every drinkable/glass kind: scene groups + themed spawns + breakage.
+    keys: ['wineglass', 'bottle', 'glasses', 'drink', 'gin', 'martini', 'negroni',
+           'smoothie', 'cosmiclatte', 'dclcan', 'brokenglass', 'reallybrokenglass',
+           'glassesbroken', 'brokenbottle'],
+  },
+  {
+    gear: 'Disco_Ball', title: 'Never Missed a Party',
+    requirement: '7-Day Work Streak', noun: 'Day Streak', target: 7,
+    keys: ['streakbest'],
+  },
+]
+
+export type AchievementState = {
+  gear: string; title: string; requirement: string; noun: string
+  current: number; target: number; unlocked: boolean
+}
+
+/** Progress snapshot for one record — server computes, client renders. */
+export function achievementStates(kindCounts: Record<string, number> | undefined): AchievementState[] {
+  return ACHIEVEMENTS.map((a) => {
+    const current = Math.min(a.target, a.keys.reduce((n, k) => n + (kindCounts?.[k] ?? 0), 0))
+    return { gear: a.gear, title: a.title, requirement: a.requirement, noun: a.noun,
+             current, target: a.target, unlocked: current >= a.target }
+  })
+}
+
+export function carryGearModel(
+  upgrades: Partial<Record<UpgradeId, number>> | undefined,
+  /** Server-validated flex choice — overrides the ladder when set. */
+  flexGear?: string,
+): string {
+  if (flexGear) return flexGear
   // HIGHEST OWNED WINS, ordered by how far into the career the upgrade sits, so
   // the thing in your hands is always your proudest purchase:
   //

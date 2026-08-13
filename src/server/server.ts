@@ -10,11 +10,11 @@ import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
-import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, UpgradeId } from '../shared/progression'
+import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, achievementStates, UpgradeId } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, peekProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
-  progressStorageStatus, setCareersRestoredHandler, bumpKindCount,
+  progressStorageStatus, setCareersRestoredHandler, bumpKindCount, setFlexGear,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -225,6 +225,11 @@ function progressPayload(
     // Personal best (items in one shift) — fuels the payout card's "beat your
     // best" target line.
     bestItems: rec.bestItems ?? 0,
+    // Flex gear: what's equipped, plus live progress for the pedestals and the
+    // payout card's achievement lines. Server-computed so the client renders
+    // exactly what the server would accept.
+    flexGear:     rec.flexGear ?? '',
+    achievements: achievementStates(rec.kindCounts),
     lastShift: lastShift ?? null,
     promotedTo: promotedTo ?? null,
   })
@@ -411,7 +416,7 @@ function buildCarryPublic(address: string) {
     hauling:     haulingBy.get(address)?.stream ?? '',
     haulStage:   haulingBy.get(address)?.stage ?? '',
     haulBinName: haulingBy.get(address)?.binName ?? '',
-    gear:        carryGearModel(getProgress(address).upgrades),
+    gear:        (() => { const r = getProgress(address); return carryGearModel(r.upgrades, r.flexGear) })(),
   }
 }
 
@@ -1615,7 +1620,10 @@ export function initServer() {
     const address = context.from
     if (!paced(address, 'haul', 500)) return
     const haul = haulingBy.get(address)
-    if (!haul || haul.stage !== 'out') { sendCarried(address); return }
+    if (!haul || haul.stage !== 'out') {
+      console.log(`[CARRY] dumpsterEmpty REFUSED for ${address.slice(0, 8)} — ${!haul ? 'no haul in progress' : `stage is '${haul.stage}', expected 'out'`}`)
+      sendCarried(address); return
+    }
     haul.stage = 'back'
     binHauler.delete(haul.binName)
     binFill.set(haul.binName, 0)
@@ -1631,7 +1639,10 @@ export function initServer() {
     const address = context.from
     if (!paced(address, 'haul', 500)) return
     const haul = haulingBy.get(address)
-    if (!haul || haul.stage !== 'back') { sendCarried(address); return }
+    if (!haul || haul.stage !== 'back') {
+      console.log(`[CARRY] returnBin REFUSED for ${address.slice(0, 8)} — ${!haul ? 'no haul in progress' : `stage is '${haul.stage}', expected 'back'`}`)
+      sendCarried(address); return
+    }
     haulingBy.delete(address)
     haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
     bumpKindCount(address, 'haulcompleted')
@@ -1768,6 +1779,23 @@ export function initServer() {
       // Purchases are a checkpoint too: money left the wallet, and losing that to a
       // server shutdown would be worse than losing an unsaved shift.
       scheduleProgressSave()
+    })
+  })
+
+  room.onMessage('equipGear', (data, context) => {
+    if (!context) return
+    const address = context.from
+    if (!paced(address, 'equip', 500)) return
+    executeTask(async () => {
+      await ensureProgressLoaded().catch(() => {})
+      const ok = setFlexGear(address, data.gear)
+      if (!ok) console.log(`[GEAR] equip refused for ${address.slice(0, 8)}: '${data.gear}'`)
+      // Refresh either way — a refused equip resyncs the truthful state, an
+      // accepted one updates the pedestals, payout lines and everyone's view
+      // of this player's hands.
+      sendProgress(address)
+      sendCarried(address)
+      if (ok) scheduleProgressSave()
     })
   })
 

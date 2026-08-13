@@ -10,7 +10,7 @@
 // state is enough to drive the UI — no subscription plumbing needed.
 
 import { room } from '../shared/messages'
-import { UpgradeId } from '../shared/progression'
+import { UpgradeId, AchievementState } from '../shared/progression'
 import { playMoneySound, playPromotionSound } from './soundManager'
 import { promotionBurst, purchaseBurst } from './confettiSystem'
 
@@ -59,6 +59,10 @@ export type CareerState = {
   bestItems?: number
   lastShift:  ShiftPayout | null
   promotedTo: string | null
+  /** Equipped flex carrier ('' = none) — server-validated. */
+  flexGear?:  string
+  /** Live achievement progress, server-computed. */
+  achievements?: AchievementState[]
 }
 
 const EMPTY: CareerState = {
@@ -98,6 +102,9 @@ export const getLastPayoutMs = (): number => lastPayoutMs
 export function upgradeLevel(id: UpgradeId): number {
   return state?.upgrades[id] ?? 0
 }
+
+export const getFlexGear = (): string => state?.flexGear ?? ''
+export const getAchievements = (): AchievementState[] => state?.achievements ?? []
 
 /** Sends a purchase request. The server validates and replies with a progressUpdate. */
 export function requestPurchase(id: UpgradeId): void {

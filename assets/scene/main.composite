@@ -653,16 +653,16 @@
               "y": 0.1667262315750122,
               "z": 13.45732307434082
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -674,16 +674,16 @@
               "y": 0.1667262315750122,
               "z": 14.268110275268555
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -737,16 +737,16 @@
               "y": 0.1644567996263504,
               "z": 14.279747009277344
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -758,16 +758,16 @@
               "y": 0.1644567996263504,
               "z": 13.538444519042969
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -800,16 +800,16 @@
               "y": 7.421699047088623,
               "z": 21.716583251953125
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -821,16 +821,16 @@
               "y": 7.421699047088623,
               "z": 20.952842712402344
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0.7071067690849304,
               "z": 0,
               "w": 0.7071067690849304
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -863,16 +863,16 @@
               "y": 7.4843974113464355,
               "z": 10.330558776855469
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 1,
               "z": 0,
               "w": 5.551115123125783e-17
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -884,16 +884,16 @@
               "y": 7.4843974113464355,
               "z": 10.330558776855469
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 1,
               "z": 0,
               "w": 5.551115123125783e-17
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 544
           }
@@ -1573,9 +1573,9 @@
         "585": {
           "json": {
             "position": {
-              "x": 17.52603530883789,
-              "y": 3.5477185249328613,
-              "z": 6.842209339141846
+              "x": -0.07132339477539062,
+              "y": 0.2680044174194336,
+              "z": 0.08469772338867188
             },
             "rotation": {
               "x": 0,
@@ -1584,40 +1584,40 @@
               "w": 1
             },
             "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 4,
+              "y": 4,
+              "z": 4
             },
-            "parent": 0
+            "parent": 822
           }
         },
         "586": {
           "json": {
             "position": {
-              "x": 16.47734260559082,
-              "y": 3.4926586151123047,
-              "z": 6.734415531158447
+              "x": -0.14183616638183594,
+              "y": 0.0941019058227539,
+              "z": 0.19230270385742188
             },
             "rotation": {
               "x": 0,
-              "y": 0,
+              "y": 0.9238795042037964,
               "z": 0,
-              "w": 1
+              "w": 0.3826834559440613
             },
             "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 3.999999523162842,
+              "y": 4,
+              "z": 3.999999523162842
             },
-            "parent": 0
+            "parent": 826
           }
         },
         "587": {
           "json": {
             "position": {
-              "x": 15.321892738342285,
-              "y": 3.492271900177002,
-              "z": 6.775122165679932
+              "x": -0.038639068603515625,
+              "y": 0.1238093376159668,
+              "z": 0.015575408935546875
             },
             "rotation": {
               "x": 0,
@@ -1626,53 +1626,32 @@
               "w": 1
             },
             "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 4,
+              "y": 4,
+              "z": 4
             },
-            "parent": 0
-          }
-        },
-        "588": {
-          "json": {
-            "position": {
-              "x": 22.5,
-              "y": 0,
-              "z": 11
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
+            "parent": 825
           }
         },
         "589": {
           "json": {
             "position": {
-              "x": 14.32059383392334,
-              "y": 3.5025928020477295,
-              "z": 6.853610515594482
+              "x": -0.018857955932617188,
+              "y": 0.15376806259155273,
+              "z": -0.006992340087890625
             },
             "rotation": {
               "x": 0,
-              "y": 0,
+              "y": 0.3816269040107727,
               "z": 0,
-              "w": 1
+              "w": 0.9243164658546448
             },
             "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
+              "x": 4,
+              "y": 4,
+              "z": 4
             },
-            "parent": 0
+            "parent": 824
           }
         },
         "590": {
@@ -3320,16 +3299,16 @@
               "y": 0.07000000029802322,
               "z": 13.75
             },
+            "scale": {
+              "x": 0.6000000238418579,
+              "y": 0.6000000238418579,
+              "z": 0.6000000238418579
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.6000000238418579,
-              "y": 0.6000000238418579,
-              "z": 0.6000000238418579
             },
             "parent": 648
           }
@@ -3572,16 +3551,16 @@
               "y": 7.320000171661377,
               "z": 22.360000610351562
             },
+            "scale": {
+              "x": 0.6000000238418579,
+              "y": 0.6000000238418579,
+              "z": 0.6000000238418579
+            },
             "rotation": {
               "x": 0,
               "y": 0.9914448857307434,
               "z": 0,
               "w": -0.13052618503570557
-            },
-            "scale": {
-              "x": 0.6000000238418579,
-              "y": 0.6000000238418579,
-              "z": 0.6000000238418579
             },
             "parent": 648
           }
@@ -5833,27 +5812,6 @@
             "parent": 0
           }
         },
-        "789": {
-          "json": {
-            "position": {
-              "x": 20.5,
-              "y": 3.5,
-              "z": 13.379255294799805
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "parent": 0
-          }
-        },
         "790": {
           "json": {
             "position": {
@@ -6295,48 +6253,6 @@
             "parent": 0
           }
         },
-        "811": {
-          "json": {
-            "position": {
-              "x": 19.75,
-              "y": 3.5,
-              "z": 14.142343521118164
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "parent": 0
-          }
-        },
-        "812": {
-          "json": {
-            "position": {
-              "x": 21.25,
-              "y": 0,
-              "z": 11.75
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 0
-          }
-        },
         "813": {
           "json": {
             "position": {
@@ -6344,16 +6260,16 @@
               "y": 0.4575212001800537,
               "z": 0.0034732818603515625
             },
+            "scale": {
+              "x": 0.20000000298023224,
+              "y": 0.20000000298023224,
+              "z": 0.20000000298023224
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.20000000298023224,
-              "y": 0.20000000298023224,
-              "z": 0.20000000298023224
             },
             "parent": 814
           }
@@ -6365,16 +6281,16 @@
               "y": 3.7656619548797607,
               "z": 6.762295246124268
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": -1,
               "z": 0,
               "w": 6.123234262925839e-17
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 0
           }
@@ -6386,16 +6302,16 @@
               "y": 1.25,
               "z": 13.75
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 643
           }
@@ -6407,16 +6323,16 @@
               "y": 1,
               "z": 14.5
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 643
           }
@@ -6428,16 +6344,16 @@
               "y": 1,
               "z": 14.5
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 643
           }
@@ -6449,16 +6365,16 @@
               "y": 1,
               "z": 16
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 643
           }
@@ -6470,16 +6386,16 @@
               "y": 1.25,
               "z": 15.5
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 643
           }
@@ -6491,6 +6407,48 @@
               "y": 1,
               "z": 15.25
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "parent": 643
+          }
+        },
+        "822": {
+          "json": {
+            "position": {
+              "x": 17.655662536621094,
+              "y": 1.0617133378982544,
+              "z": 25.587650299072266
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
+            "parent": 823
+          }
+        },
+        "823": {
+          "json": {
+            "position": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
             "rotation": {
               "x": 0,
               "y": 0,
@@ -6502,7 +6460,154 @@
               "y": 1,
               "z": 1
             },
-            "parent": 643
+            "parent": 0
+          }
+        },
+        "824": {
+          "json": {
+            "position": {
+              "x": 14.35091781616211,
+              "y": 1.0617133378982544,
+              "z": 25.587650299072266
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
+            "parent": 823
+          }
+        },
+        "825": {
+          "json": {
+            "position": {
+              "x": 17.655662536621094,
+              "y": 1.0617133378982544,
+              "z": 28.087650299072266
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
+            "parent": 823
+          }
+        },
+        "826": {
+          "json": {
+            "position": {
+              "x": 14.35091781616211,
+              "y": 1.0617133378982544,
+              "z": 28.087650299072266
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
+            "parent": 823
+          }
+        },
+        "827": {
+          "json": {
+            "position": {
+              "x": -0.011333465576171875,
+              "y": 2.006455659866333,
+              "z": 0.234130859375
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 822
+          }
+        },
+        "828": {
+          "json": {
+            "position": {
+              "x": -0.020711898803710938,
+              "y": 2.006455659866333,
+              "z": 0.234130859375
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 824
+          }
+        },
+        "829": {
+          "json": {
+            "position": {
+              "x": -0.011333465576171875,
+              "y": 2.006455659866333,
+              "z": 0.734130859375
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 825
+          }
+        },
+        "830": {
+          "json": {
+            "position": {
+              "x": 0.09815597534179688,
+              "y": 2.006455659866333,
+              "z": 0.734130859375
+            },
+            "rotation": {
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "w": 1
+            },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
+            "parent": 826
           }
         }
       }
@@ -6811,6 +6916,54 @@
             "networkId": 0,
             "entityId": 8082
           }
+        },
+        "822": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8083
+          }
+        },
+        "824": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8084
+          }
+        },
+        "825": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8085
+          }
+        },
+        "826": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8086
+          }
+        },
+        "827": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8087
+          }
+        },
+        "828": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8088
+          }
+        },
+        "829": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8089
+          }
+        },
+        "830": {
+          "json": {
+            "networkId": 0,
+            "entityId": 8090
+          }
         }
       }
     },
@@ -6905,6 +7058,37 @@
                 "shouldReset": false
               }
             ]
+          }
+        }
+      }
+    },
+    {
+      "name": "core::Billboard",
+      "jsonSchema": {
+        "type": "object",
+        "properties": {},
+        "serializationType": "protocol-buffer",
+        "protocolBuffer": "PBBillboard"
+      },
+      "data": {
+        "827": {
+          "json": {
+            "billboardMode": 2
+          }
+        },
+        "828": {
+          "json": {
+            "billboardMode": 2
+          }
+        },
+        "829": {
+          "json": {
+            "billboardMode": 2
+          }
+        },
+        "830": {
+          "json": {
+            "billboardMode": 2
           }
         }
       }
@@ -7327,13 +7511,6 @@
         "587": {
           "json": {
             "src": "assets/scene/Models/Gold_Platter/Gold_Platter.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "588": {
-          "json": {
-            "src": "assets/scene/Models/Gold_Wheelie_Bin/Gold_Wheelie_Bin.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
           }
@@ -8059,13 +8236,6 @@
             "invisibleMeshesCollisionMask": 3
           }
         },
-        "789": {
-          "json": {
-            "src": "assets/scene/Models/Janitor_Caddy/Janitor_Caddy.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
         "792": {
           "json": {
             "src": "assets/asset-packs/sit_spot/sitting_pose_collider.glb",
@@ -8192,20 +8362,6 @@
             "invisibleMeshesCollisionMask": 3
           }
         },
-        "811": {
-          "json": {
-            "src": "assets/scene/Models/Milk_Crate/Milk_Crate.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "812": {
-          "json": {
-            "src": "assets/scene/Models/Vacuum/Vacuum.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 3
-          }
-        },
         "814": {
           "json": {
             "src": "assets/asset-packs/bubble/MessageBubble.glb",
@@ -8253,6 +8409,34 @@
             "src": "assets/scene/Models/Smoothie/Smoothie.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
+          }
+        },
+        "822": {
+          "json": {
+            "src": "assets/asset-packs/vertical_purple_pad/vertical_purple_pad.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "824": {
+          "json": {
+            "src": "assets/asset-packs/vertical_purple_pad/vertical_purple_pad.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "825": {
+          "json": {
+            "src": "assets/asset-packs/vertical_purple_pad/vertical_purple_pad.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
+          }
+        },
+        "826": {
+          "json": {
+            "src": "assets/asset-packs/vertical_purple_pad/vertical_purple_pad.glb",
+            "visibleMeshesCollisionMask": 1,
+            "invisibleMeshesCollisionMask": 2
           }
         }
       }
@@ -16794,11 +16978,6 @@
             "value": "Gold_Platter"
           }
         },
-        "588": {
-          "json": {
-            "value": "Gold_Wheelie_Bin"
-          }
-        },
         "589": {
           "json": {
             "value": "Ice_Bucket"
@@ -17584,11 +17763,6 @@
             "value": "NFT_3"
           }
         },
-        "789": {
-          "json": {
-            "value": "Janitor_Caddy"
-          }
-        },
         "790": {
           "json": {
             "value": "Video Screen"
@@ -17694,16 +17868,6 @@
             "value": "Graffiti"
           }
         },
-        "811": {
-          "json": {
-            "value": "Milk_Crate"
-          }
-        },
-        "812": {
-          "json": {
-            "value": "Vacuum.glb"
-          }
-        },
         "813": {
           "json": {
             "value": "Text"
@@ -17742,6 +17906,51 @@
         "820": {
           "json": {
             "value": "Smoothie"
+          }
+        },
+        "822": {
+          "json": {
+            "value": "Vertical Purple Pad"
+          }
+        },
+        "823": {
+          "json": {
+            "value": "Upgrades"
+          }
+        },
+        "824": {
+          "json": {
+            "value": "Vertical Purple Pad_2"
+          }
+        },
+        "825": {
+          "json": {
+            "value": "Vertical Purple Pad_3"
+          }
+        },
+        "826": {
+          "json": {
+            "value": "Vertical Purple Pad_4"
+          }
+        },
+        "827": {
+          "json": {
+            "value": "Text_2"
+          }
+        },
+        "828": {
+          "json": {
+            "value": "Text_3"
+          }
+        },
+        "829": {
+          "json": {
+            "value": "Text_4"
+          }
+        },
+        "830": {
+          "json": {
+            "value": "Text_5"
           }
         }
       }
@@ -18640,6 +18849,74 @@
               1081
             ]
           }
+        },
+        "822": {
+          "json": {
+            "componentIds": [
+              1102,
+              2709697014
+            ]
+          }
+        },
+        "824": {
+          "json": {
+            "componentIds": [
+              1102,
+              2709697014
+            ]
+          }
+        },
+        "825": {
+          "json": {
+            "componentIds": [
+              1102,
+              2709697014
+            ]
+          }
+        },
+        "826": {
+          "json": {
+            "componentIds": [
+              1102,
+              2709697014
+            ]
+          }
+        },
+        "827": {
+          "json": {
+            "componentIds": [
+              1030,
+              1081,
+              1090
+            ]
+          }
+        },
+        "828": {
+          "json": {
+            "componentIds": [
+              1030,
+              1081,
+              1090
+            ]
+          }
+        },
+        "829": {
+          "json": {
+            "componentIds": [
+              1030,
+              1081,
+              1090
+            ]
+          }
+        },
+        "830": {
+          "json": {
+            "componentIds": [
+              1030,
+              1081,
+              1090
+            ]
+          }
         }
       }
     },
@@ -18729,6 +19006,110 @@
               "a": 1
             }
           }
+        },
+        "827": {
+          "json": {
+            "text": "500 Pizza to Unlock",
+            "font": 0,
+            "fontSize": 3,
+            "fontAutoSize": false,
+            "textAlign": 4,
+            "paddingTop": 1,
+            "paddingRight": 1,
+            "paddingBottom": 1,
+            "paddingLeft": 1,
+            "lineSpacing": 0,
+            "outlineWidth": 0,
+            "outlineColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0
+            },
+            "textColor": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            }
+          }
+        },
+        "828": {
+          "json": {
+            "text": "500 Pizza to Unlock",
+            "font": 0,
+            "fontSize": 3,
+            "fontAutoSize": false,
+            "textAlign": 4,
+            "paddingTop": 1,
+            "paddingRight": 1,
+            "paddingBottom": 1,
+            "paddingLeft": 1,
+            "lineSpacing": 0,
+            "outlineWidth": 0,
+            "outlineColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0
+            },
+            "textColor": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            }
+          }
+        },
+        "829": {
+          "json": {
+            "text": "500 Pizza to Unlock",
+            "font": 0,
+            "fontSize": 3,
+            "fontAutoSize": false,
+            "textAlign": 4,
+            "paddingTop": 1,
+            "paddingRight": 1,
+            "paddingBottom": 1,
+            "paddingLeft": 1,
+            "lineSpacing": 0,
+            "outlineWidth": 0,
+            "outlineColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0
+            },
+            "textColor": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            }
+          }
+        },
+        "830": {
+          "json": {
+            "text": "500 Pizza to Unlock",
+            "font": 0,
+            "fontSize": 3,
+            "fontAutoSize": false,
+            "textAlign": 4,
+            "paddingTop": 1,
+            "paddingRight": 1,
+            "paddingBottom": 1,
+            "paddingLeft": 1,
+            "lineSpacing": 0,
+            "outlineWidth": 0,
+            "outlineColor": {
+              "r": 0,
+              "g": 0,
+              "b": 0
+            },
+            "textColor": {
+              "r": 1,
+              "g": 0,
+              "b": 0,
+              "a": 1
+            }
+          }
         }
       }
     },
@@ -18762,6 +19143,94 @@
             },
             "playing": true
           }
+        },
+        "822": {
+          "json": {
+            "duration": 5000,
+            "easingFunction": 0,
+            "mode": {
+              "$case": "move",
+              "move": {
+                "start": {
+                  "x": 17.655662536621094,
+                  "y": 1.0617133378982544,
+                  "z": 25.587650299072266
+                },
+                "end": {
+                  "x": 17.655662536621094,
+                  "y": 2.061713218688965,
+                  "z": 25.587650299072266
+                }
+              }
+            },
+            "playing": true
+          }
+        },
+        "824": {
+          "json": {
+            "duration": 5000,
+            "easingFunction": 0,
+            "mode": {
+              "$case": "move",
+              "move": {
+                "start": {
+                  "x": 14.35091781616211,
+                  "y": 1.0617133378982544,
+                  "z": 25.587650299072266
+                },
+                "end": {
+                  "x": 14.35091781616211,
+                  "y": 2.061713218688965,
+                  "z": 25.587650299072266
+                }
+              }
+            },
+            "playing": true
+          }
+        },
+        "825": {
+          "json": {
+            "duration": 5000,
+            "easingFunction": 0,
+            "mode": {
+              "$case": "move",
+              "move": {
+                "start": {
+                  "x": 17.655662536621094,
+                  "y": 1.0617133378982544,
+                  "z": 28.087650299072266
+                },
+                "end": {
+                  "x": 17.655662536621094,
+                  "y": 2.061713218688965,
+                  "z": 28.087650299072266
+                }
+              }
+            },
+            "playing": true
+          }
+        },
+        "826": {
+          "json": {
+            "duration": 5000,
+            "easingFunction": 0,
+            "mode": {
+              "$case": "move",
+              "move": {
+                "start": {
+                  "x": 14.35091781616211,
+                  "y": 1.0617133378982544,
+                  "z": 28.087650299072266
+                },
+                "end": {
+                  "x": 14.35091781616211,
+                  "y": 2.061713218688965,
+                  "z": 28.087650299072266
+                }
+              }
+            },
+            "playing": true
+          }
         }
       }
     },
@@ -18775,6 +19244,30 @@
       },
       "data": {
         "671": {
+          "json": {
+            "sequence": [],
+            "loop": 1
+          }
+        },
+        "822": {
+          "json": {
+            "sequence": [],
+            "loop": 1
+          }
+        },
+        "824": {
+          "json": {
+            "sequence": [],
+            "loop": 1
+          }
+        },
+        "825": {
+          "json": {
+            "sequence": [],
+            "loop": 1
+          }
+        },
+        "826": {
           "json": {
             "sequence": [],
             "loop": 1
@@ -19041,32 +19534,7 @@
         "serializationType": "map"
       },
       "data": {
-        "815": {
-          "json": {
-            "gizmo": 1
-          }
-        },
-        "816": {
-          "json": {
-            "gizmo": 1
-          }
-        },
-        "817": {
-          "json": {
-            "gizmo": 1
-          }
-        },
-        "818": {
-          "json": {
-            "gizmo": 1
-          }
-        },
-        "819": {
-          "json": {
-            "gizmo": 1
-          }
-        },
-        "820": {
+        "0": {
           "json": {
             "gizmo": 1
           }
@@ -19183,15 +19651,8 @@
                   540,
                   554,
                   574,
-                  585,
-                  586,
-                  587,
-                  588,
-                  589,
-                  789,
-                  811,
-                  812,
-                  814
+                  814,
+                  823
                 ]
               },
               {
@@ -19276,7 +19737,6 @@
               },
               {
                 "entity": 643,
-                "open": true,
                 "children": [
                   518,
                   519,
@@ -19324,7 +19784,6 @@
               },
               {
                 "entity": 648,
-                "open": true,
                 "children": [
                   645,
                   533,
@@ -19409,7 +19868,6 @@
               },
               {
                 "entity": 656,
-                "open": true,
                 "children": [
                   649,
                   651,
@@ -20021,7 +20479,6 @@
               },
               {
                 "entity": 544,
-                "open": true,
                 "children": [
                   542,
                   541,
@@ -20159,23 +20616,7 @@
                 "children": []
               },
               {
-                "entity": 588,
-                "children": []
-              },
-              {
                 "entity": 589,
-                "children": []
-              },
-              {
-                "entity": 789,
-                "children": []
-              },
-              {
-                "entity": 811,
-                "children": []
-              },
-              {
-                "entity": 812,
                 "children": []
               },
               {
@@ -20212,6 +20653,64 @@
               {
                 "entity": 820,
                 "children": []
+              },
+              {
+                "entity": 822,
+                "open": true,
+                "children": [
+                  585,
+                  827
+                ]
+              },
+              {
+                "entity": 823,
+                "open": true,
+                "children": [
+                  822,
+                  824,
+                  825,
+                  826
+                ]
+              },
+              {
+                "entity": 824,
+                "open": true,
+                "children": [
+                  828,
+                  589
+                ]
+              },
+              {
+                "entity": 825,
+                "open": true,
+                "children": [
+                  829,
+                  587
+                ]
+              },
+              {
+                "entity": 826,
+                "open": true,
+                "children": [
+                  830,
+                  586
+                ]
+              },
+              {
+                "entity": 827,
+                "children": []
+              },
+              {
+                "entity": 828,
+                "children": []
+              },
+              {
+                "entity": 829,
+                "children": []
+              },
+              {
+                "entity": 830,
+                "children": []
               }
             ]
           }
@@ -20236,6 +20735,9 @@
       },
       "data": {
         "512": {
+          "json": {}
+        },
+        "515": {
           "json": {}
         },
         "517": {
@@ -20425,9 +20927,6 @@
           "json": {}
         },
         "587": {
-          "json": {}
-        },
-        "588": {
           "json": {}
         },
         "589": {
@@ -20868,9 +21367,6 @@
         "788": {
           "json": {}
         },
-        "789": {
-          "json": {}
-        },
         "790": {
           "json": {}
         },
@@ -20934,12 +21430,6 @@
         "810": {
           "json": {}
         },
-        "811": {
-          "json": {}
-        },
-        "812": {
-          "json": {}
-        },
         "813": {
           "json": {}
         },
@@ -20962,6 +21452,36 @@
           "json": {}
         },
         "820": {
+          "json": {}
+        },
+        "821": {
+          "json": {}
+        },
+        "822": {
+          "json": {}
+        },
+        "823": {
+          "json": {}
+        },
+        "824": {
+          "json": {}
+        },
+        "825": {
+          "json": {}
+        },
+        "826": {
+          "json": {}
+        },
+        "827": {
+          "json": {}
+        },
+        "828": {
+          "json": {}
+        },
+        "829": {
+          "json": {}
+        },
+        "830": {
           "json": {}
         }
       }
@@ -23462,6 +23982,510 @@
                 "columns": 2
               }
             ],
+            "version": 2
+          }
+        },
+        "822": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Vertical Platform",
+            "fields": [
+              {
+                "name": "Tween",
+                "type": "core::Tween"
+              },
+              {
+                "name": "When End Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "name": "When Start Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ],
+            "assetId": "669b910d-c45c-4712-baa8-7e7e9fde3db2",
+            "helpTooltip": {
+              "text": "A vertical platform that moves up and down. Players can jump on it to reach higher places."
+            },
+            "version": 1
+          }
+        },
+        "824": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Vertical Platform",
+            "fields": [
+              {
+                "name": "Tween",
+                "type": "core::Tween"
+              },
+              {
+                "name": "When End Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "name": "When Start Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ],
+            "assetId": "669b910d-c45c-4712-baa8-7e7e9fde3db2",
+            "helpTooltip": {
+              "text": "A vertical platform that moves up and down. Players can jump on it to reach higher places."
+            },
+            "version": 1
+          }
+        },
+        "825": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Vertical Platform",
+            "fields": [
+              {
+                "name": "Tween",
+                "type": "core::Tween"
+              },
+              {
+                "name": "When End Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "name": "When Start Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ],
+            "assetId": "669b910d-c45c-4712-baa8-7e7e9fde3db2",
+            "helpTooltip": {
+              "text": "A vertical platform that moves up and down. Players can jump on it to reach higher places."
+            },
+            "version": 1
+          }
+        },
+        "826": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "Vertical Platform",
+            "fields": [
+              {
+                "name": "Tween",
+                "type": "core::Tween"
+              },
+              {
+                "name": "When End Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "name": "When Start Reached",
+                "type": "asset-packs::Triggers",
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ],
+            "assetId": "669b910d-c45c-4712-baa8-7e7e9fde3db2",
+            "helpTooltip": {
+              "text": "A vertical platform that moves up and down. Players can jump on it to reach higher places."
+            },
+            "version": 1
+          }
+        },
+        "827": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "",
+            "fields": [],
+            "assetId": "dd0d51c1-f16f-41c2-9bf1-735fe5b17dc4",
+            "label": "Text Settings",
+            "sections": [
+              {
+                "id": "text-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextArea",
+                    "label": "Text",
+                    "type": "text",
+                    "path": "text"
+                  }
+                ]
+              },
+              {
+                "id": "font-size-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Font",
+                    "type": "text",
+                    "path": "font",
+                    "dataSource": {
+                      "kind": "fonts"
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextField",
+                    "label": "Font Size",
+                    "type": "number",
+                    "path": "fontSize"
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "CheckboxField",
+                    "label": "Auto-Size",
+                    "type": "boolean",
+                    "path": "fontAutoSize"
+                  }
+                ],
+                "columns": 2
+              },
+              {
+                "id": "color-align-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "ColorField",
+                    "label": "Color",
+                    "type": "Color4",
+                    "path": "textColor",
+                    "props": {
+                      "basic": true
+                    },
+                    "transform": {
+                      "in": {
+                        "steps": [
+                          {
+                            "op": "toHex"
+                          }
+                        ]
+                      },
+                      "out": {
+                        "steps": [
+                          {
+                            "op": "toColor4"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Text align",
+                    "type": "text",
+                    "path": "textAlign",
+                    "dataSource": {
+                      "kind": "textAlign"
+                    }
+                  }
+                ],
+                "columns": 2
+              }
+            ],
+            "helpTooltip": {
+              "text": "2D text that can be placed at any position and orientation, not limited to surfaces."
+            },
+            "version": 2
+          }
+        },
+        "828": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "",
+            "fields": [],
+            "assetId": "dd0d51c1-f16f-41c2-9bf1-735fe5b17dc4",
+            "label": "Text Settings",
+            "sections": [
+              {
+                "id": "text-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextArea",
+                    "label": "Text",
+                    "type": "text",
+                    "path": "text"
+                  }
+                ]
+              },
+              {
+                "id": "font-size-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Font",
+                    "type": "text",
+                    "path": "font",
+                    "dataSource": {
+                      "kind": "fonts"
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextField",
+                    "label": "Font Size",
+                    "type": "number",
+                    "path": "fontSize"
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "CheckboxField",
+                    "label": "Auto-Size",
+                    "type": "boolean",
+                    "path": "fontAutoSize"
+                  }
+                ],
+                "columns": 2
+              },
+              {
+                "id": "color-align-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "ColorField",
+                    "label": "Color",
+                    "type": "Color4",
+                    "path": "textColor",
+                    "props": {
+                      "basic": true
+                    },
+                    "transform": {
+                      "in": {
+                        "steps": [
+                          {
+                            "op": "toHex"
+                          }
+                        ]
+                      },
+                      "out": {
+                        "steps": [
+                          {
+                            "op": "toColor4"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Text align",
+                    "type": "text",
+                    "path": "textAlign",
+                    "dataSource": {
+                      "kind": "textAlign"
+                    }
+                  }
+                ],
+                "columns": 2
+              }
+            ],
+            "helpTooltip": {
+              "text": "2D text that can be placed at any position and orientation, not limited to surfaces."
+            },
+            "version": 2
+          }
+        },
+        "829": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "",
+            "fields": [],
+            "assetId": "dd0d51c1-f16f-41c2-9bf1-735fe5b17dc4",
+            "label": "Text Settings",
+            "sections": [
+              {
+                "id": "text-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextArea",
+                    "label": "Text",
+                    "type": "text",
+                    "path": "text"
+                  }
+                ]
+              },
+              {
+                "id": "font-size-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Font",
+                    "type": "text",
+                    "path": "font",
+                    "dataSource": {
+                      "kind": "fonts"
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextField",
+                    "label": "Font Size",
+                    "type": "number",
+                    "path": "fontSize"
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "CheckboxField",
+                    "label": "Auto-Size",
+                    "type": "boolean",
+                    "path": "fontAutoSize"
+                  }
+                ],
+                "columns": 2
+              },
+              {
+                "id": "color-align-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "ColorField",
+                    "label": "Color",
+                    "type": "Color4",
+                    "path": "textColor",
+                    "props": {
+                      "basic": true
+                    },
+                    "transform": {
+                      "in": {
+                        "steps": [
+                          {
+                            "op": "toHex"
+                          }
+                        ]
+                      },
+                      "out": {
+                        "steps": [
+                          {
+                            "op": "toColor4"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Text align",
+                    "type": "text",
+                    "path": "textAlign",
+                    "dataSource": {
+                      "kind": "textAlign"
+                    }
+                  }
+                ],
+                "columns": 2
+              }
+            ],
+            "helpTooltip": {
+              "text": "2D text that can be placed at any position and orientation, not limited to surfaces."
+            },
+            "version": 2
+          }
+        },
+        "830": {
+          "json": {
+            "isBasicViewEnabled": true,
+            "componentName": "",
+            "fields": [],
+            "assetId": "dd0d51c1-f16f-41c2-9bf1-735fe5b17dc4",
+            "label": "Text Settings",
+            "sections": [
+              {
+                "id": "text-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextArea",
+                    "label": "Text",
+                    "type": "text",
+                    "path": "text"
+                  }
+                ]
+              },
+              {
+                "id": "font-size-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Font",
+                    "type": "text",
+                    "path": "font",
+                    "dataSource": {
+                      "kind": "fonts"
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "TextField",
+                    "label": "Font Size",
+                    "type": "number",
+                    "path": "fontSize"
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "CheckboxField",
+                    "label": "Auto-Size",
+                    "type": "boolean",
+                    "path": "fontAutoSize"
+                  }
+                ],
+                "columns": 2
+              },
+              {
+                "id": "color-align-settings",
+                "items": [
+                  {
+                    "component": "core::TextShape",
+                    "widget": "ColorField",
+                    "label": "Color",
+                    "type": "Color4",
+                    "path": "textColor",
+                    "props": {
+                      "basic": true
+                    },
+                    "transform": {
+                      "in": {
+                        "steps": [
+                          {
+                            "op": "toHex"
+                          }
+                        ]
+                      },
+                      "out": {
+                        "steps": [
+                          {
+                            "op": "toColor4"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "component": "core::TextShape",
+                    "widget": "Dropdown",
+                    "label": "Text align",
+                    "type": "text",
+                    "path": "textAlign",
+                    "dataSource": {
+                      "kind": "textAlign"
+                    }
+                  }
+                ],
+                "columns": 2
+              }
+            ],
+            "helpTooltip": {
+              "text": "2D text that can be placed at any position and orientation, not limited to surfaces."
+            },
             "version": 2
           }
         }
@@ -26294,6 +27318,162 @@
               }
             ]
           }
+        },
+        "822": {
+          "json": {
+            "id": 88,
+            "value": [
+              {
+                "name": "Go to Start",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to Start\", \"Tween to Start\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Go to End",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to End\", \"Tween to End\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Going to Start",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToStart\" }"
+              },
+              {
+                "name": "Going to End",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToEnd\" }"
+              },
+              {
+                "name": "Tween to Start",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":-1,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              },
+              {
+                "name": "Tween to End",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":1,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              }
+            ]
+          }
+        },
+        "824": {
+          "json": {
+            "id": 90,
+            "value": [
+              {
+                "name": "Go to Start",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to Start\", \"Tween to Start\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Go to End",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to End\", \"Tween to End\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Going to Start",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToStart\" }"
+              },
+              {
+                "name": "Going to End",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToEnd\" }"
+              },
+              {
+                "name": "Tween to Start",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":-10,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              },
+              {
+                "name": "Tween to End",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":10,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              }
+            ]
+          }
+        },
+        "825": {
+          "json": {
+            "id": 92,
+            "value": [
+              {
+                "name": "Go to Start",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to Start\", \"Tween to Start\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Go to End",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to End\", \"Tween to End\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Going to Start",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToStart\" }"
+              },
+              {
+                "name": "Going to End",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToEnd\" }"
+              },
+              {
+                "name": "Tween to Start",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":-1,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              },
+              {
+                "name": "Tween to End",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":1,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              }
+            ]
+          }
+        },
+        "826": {
+          "json": {
+            "id": 94,
+            "value": [
+              {
+                "name": "Go to Start",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to Start\", \"Tween to Start\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Go to End",
+                "type": "batch",
+                "jsonPayload": "{ \"actions\": [\"Going to End\", \"Tween to End\"] }",
+                "allowedInBasicView": true
+              },
+              {
+                "name": "Going to Start",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToStart\" }"
+              },
+              {
+                "name": "Going to End",
+                "type": "set_state",
+                "jsonPayload": "{ \"state\": \"GoingToEnd\" }"
+              },
+              {
+                "name": "Tween to Start",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":-10,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              },
+              {
+                "name": "Tween to End",
+                "type": "start_tween",
+                "jsonPayload": "{\"type\":\"move_item\",\"end\":{\"x\":0,\"y\":10,\"z\":0},\"relative\":true,\"interpolationType\":\"linear\",\"duration\":5}"
+              }
+            ]
+          }
         }
       }
     },
@@ -26317,7 +27497,7 @@
         "0": {
           "json": {
             "id": 0,
-            "value": 87
+            "value": 95
           }
         }
       }
@@ -28445,6 +29625,166 @@
               }
             ]
           }
+        },
+        "822": {
+          "json": {
+            "value": [
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 89,
+                    "type": "when_state_is",
+                    "value": "GoingToEnd"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 88,
+                    "name": "Going to Start"
+                  }
+                ],
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 89,
+                    "type": "when_state_is",
+                    "value": "GoingToStart"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 88,
+                    "name": "Going to End"
+                  }
+                ],
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ]
+          }
+        },
+        "824": {
+          "json": {
+            "value": [
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 91,
+                    "type": "when_state_is",
+                    "value": "GoingToEnd"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 90,
+                    "name": "Going to Start"
+                  }
+                ],
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 91,
+                    "type": "when_state_is",
+                    "value": "GoingToStart"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 90,
+                    "name": "Going to End"
+                  }
+                ],
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ]
+          }
+        },
+        "825": {
+          "json": {
+            "value": [
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 93,
+                    "type": "when_state_is",
+                    "value": "GoingToEnd"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 92,
+                    "name": "Going to Start"
+                  }
+                ],
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 93,
+                    "type": "when_state_is",
+                    "value": "GoingToStart"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 92,
+                    "name": "Going to End"
+                  }
+                ],
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ]
+          }
+        },
+        "826": {
+          "json": {
+            "value": [
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 95,
+                    "type": "when_state_is",
+                    "value": "GoingToEnd"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 94,
+                    "name": "Going to Start"
+                  }
+                ],
+                "basicViewId": "trigger-when-end-reached"
+              },
+              {
+                "type": "on_tween_end",
+                "conditions": [
+                  {
+                    "id": 95,
+                    "type": "when_state_is",
+                    "value": "GoingToStart"
+                  }
+                ],
+                "actions": [
+                  {
+                    "id": 94,
+                    "name": "Going to End"
+                  }
+                ],
+                "basicViewId": "trigger-when-start-reached"
+              }
+            ]
+          }
         }
       }
     },
@@ -28831,6 +30171,46 @@
               "Taken"
             ],
             "defaultValue": "Free"
+          }
+        },
+        "822": {
+          "json": {
+            "id": 89,
+            "value": [
+              "GoingToEnd",
+              "GoingToStart"
+            ],
+            "defaultValue": "GoingToEnd"
+          }
+        },
+        "824": {
+          "json": {
+            "id": 91,
+            "value": [
+              "GoingToEnd",
+              "GoingToStart"
+            ],
+            "defaultValue": "GoingToEnd"
+          }
+        },
+        "825": {
+          "json": {
+            "id": 93,
+            "value": [
+              "GoingToEnd",
+              "GoingToStart"
+            ],
+            "defaultValue": "GoingToEnd"
+          }
+        },
+        "826": {
+          "json": {
+            "id": 95,
+            "value": [
+              "GoingToEnd",
+              "GoingToStart"
+            ],
+            "defaultValue": "GoingToEnd"
           }
         }
       }

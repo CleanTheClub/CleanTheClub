@@ -4,6 +4,7 @@ import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
 import { initPreload } from './preload'
+import { initGearPedestals } from './gearPedestals'
 import { initGlassSystem } from './glassSystem'
 import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
@@ -84,6 +85,7 @@ export function initClient() {
   initSoundManager()
   initMusicManager()
   initPreload()
+  initGearPedestals()
   initEmoteManager()
   setupUi()
   onEnterSceneObservable.add(() => resetIntro())

@@ -21,7 +21,7 @@ import { isStateSyncronized } from '@dcl/sdk/network'
 import { platformSettled } from './platformWait'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { room } from '../shared/messages'
-import { setupClickProxy } from './sceneItemHelpers'
+import { setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
 import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { playHoverSound, playCleanSound } from './soundManager'
@@ -166,7 +166,11 @@ function enableClick(s: ItemState) {
   const clickEnt  = s.clickEnt ?? entity
   const hoverText = s.def.hoverText ?? 'Clean'
 
-  pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => {
+    playHoverSound()
+    setHoverHighlight(s.dirtyEnt, true)
+  })
+  pointerEventsSystem.onPointerHoverLeave({ entity: clickEnt }, () => setHoverHighlight(s.dirtyEnt, false))
   pointerEventsSystem.onPointerDown(
     { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: POINTER_MAX_DIST } },
     () => {

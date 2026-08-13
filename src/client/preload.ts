@@ -22,11 +22,17 @@ const PRELOAD_ASSETS: string[] = [
   'assets/scene/Emotes/Mopping_emote.glb',
   'assets/scene/Emotes/PartyPhone_emote.glb',
   'assets/scene/Emotes/Carry_emote.glb',
-  // The starter carry container — the only Janitor Gear model with no scene
-  // placement, and it appears the instant a brand-new player's first pickup
-  // lands. The rest of the ladder (crate, caddy, wheelie bin, vacuum) are all
-  // placed props already.
+  // The full Janitor Gear ladder. None of these are placed in the scene any
+  // more (they used to sit parked in the composite purely to stay loaded, at
+  // ~13k placed triangles); AssetLoad is the supported way to keep them
+  // resident. Each appears the INSTANT a gear swap lands — a purchase
+  // mid-shift, or another player's carry visual — so a stream stall would sit
+  // exactly on the reward moment.
   'assets/scene/Models/Box_Wearable/Box_Wearable.glb',
+  'assets/scene/Models/Milk_Crate/Milk_Crate.glb',
+  'assets/scene/Models/Janitor_Caddy/Janitor_Caddy.glb',
+  'assets/scene/Models/Gold_Wheelie_Bin/Gold_Wheelie_Bin.glb',
+  'assets/scene/Models/Vacuum/Vacuum.glb',
 ]
 
 let preloadEntity: Entity | null = null

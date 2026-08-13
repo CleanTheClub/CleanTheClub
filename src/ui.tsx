@@ -10,6 +10,7 @@ import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
+import { getHaulDebug } from './client/carrySystem'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
@@ -1715,6 +1716,22 @@ const uiBody = () => {
             color={ADMIN_COLOR}
             uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
           />
+          {/* Haul state — the stuck-bin bug is mobile-only, and mobile has no
+              console (preview lacks the auth server), so the state is rendered
+              instead. If stage reads 'none' while a bin is still in hand, the
+              server is right and the bug is purely visual; `ghosts` counts
+              remote-carry props, which should be 0 when playing alone. */}
+          {(() => {
+            const h = getHaulDebug()
+            return (
+              <Label
+                value={`haul: ${h.hauling || 'none'}/${h.haulStage || '-'} bin=${h.haulBinName || '-'} carried=${h.carried} own=${h.ownKnown ? 'ok' : 'UNKNOWN'} ghosts=${h.ghosts}`}
+                fontSize={Math.round(ADMIN_BTN_FONT * 0.95)}
+                color={h.ownKnown && h.ghosts === 0 ? ADMIN_COLOR : { r: 1, g: 0.35, b: 0.3, a: 1 }}
+                uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
+              />
+            )
+          })()}
           {/* Persistence health — red until careers are provably being saved. */}
           {(() => {
             const s = storageStatus

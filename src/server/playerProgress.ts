@@ -21,6 +21,7 @@ import { createPersistedDoc } from './persistence'
 import { ADMIN_ADDRESSES } from '../shared/config'
 import {
   UpgradeId, canPurchase, rankForXp, titleForXp, PurchaseRefusal,
+  ACHIEVEMENTS, achievementStates,
 } from '../shared/progression'
 
 // ── Record shape ──────────────────────────────────────────────────────────────
@@ -54,6 +55,9 @@ export type ProgressRecord = {
    * a player only holds keys for kinds they've actually touched.
    */
   kindCounts:   Record<string, number>
+  /** Equipped flex carrier ('' = none) — overrides the upgrade gear ladder.
+   *  Only ever set through setFlexGear, which re-checks the achievement. */
+  flexGear:     string
 }
 
 type ProgressDoc = {
@@ -75,6 +79,7 @@ const emptyRecord = (displayName = ''): ProgressRecord => ({
   dailyItems: 0,
   dailyDay: '',
   kindCounts: {},
+  flexGear: '',
 })
 
 /** UTC day stamp — the boundary all daily mechanics share. */
@@ -102,6 +107,7 @@ function migrate(raw: any): ProgressRecord {
       if (typeof v === 'number' && v > 0) rec.upgrades[k as UpgradeId] = Math.floor(v)
     }
   }
+  if (typeof raw.flexGear === 'string') rec.flexGear = raw.flexGear
   if (raw.kindCounts && typeof raw.kindCounts === 'object') {
     for (const [k, v] of Object.entries(raw.kindCounts)) {
       if (typeof v === 'number' && v > 0) rec.kindCounts[k] = Math.floor(v)
@@ -288,6 +294,29 @@ export function registerProgressPlayer(address: string, displayName: string): Pr
 export const isGuestAddress = (address: string): boolean => guests.has(address.toLowerCase())
 
 /**
+ * Equip ('Disco_Ball' …) or clear ('') a flex carrier. Validation is entirely
+ * server-side against this record's own tallies — the pedestal click is
+ * presentation, and a crafted message can't equip an unearned showpiece.
+ */
+export function setFlexGear(address: string, gear: string): boolean {
+  const rec = records.get(address.toLowerCase())
+  if (!rec) return false
+  if (gear === '') {
+    if (rec.flexGear === '') return true
+    rec.flexGear = ''
+    dirty = true
+    return true
+  }
+  const def = ACHIEVEMENTS.find((a) => a.gear === gear)
+  if (!def) return false
+  const state = achievementStates(rec.kindCounts).find((s) => s.gear === gear)
+  if (!state?.unlocked) return false
+  rec.flexGear = gear
+  dirty = true
+  return true
+}
+
+/**
  * Every known record, for building leaderboard categories.
  *
  * Guests are included: they earn normally for the session, and excluding them from
@@ -362,6 +391,9 @@ export function awardShift(
       xpApplied += streakXp
     }
     rec.lastWorkDay = today
+    // High-water mark for the Disco Ball achievement: streaks BREAK, and an
+    // achievement must never re-lock, so unlocks read this, not workStreak.
+    rec.kindCounts['streakbest'] = Math.max(rec.kindCounts['streakbest'] ?? 0, rec.workStreak)
   }
 
   // Daily counter — reset on the day boundary, then accumulate (pass or fail:
