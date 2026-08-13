@@ -68,6 +68,7 @@ import { initUpgradeEffects } from './upgradeEffects'
 import { initParticipation } from './participation'
 import { initCarrySystem } from './carrySystem'
 import { initRankBadgeSystem } from './rankBadgeSystem'
+import { initSpectateSystem } from './spectateSystem'
 import { initWallArtSystem } from './wallArtSystem'
 
 export function initClient() {
@@ -79,6 +80,7 @@ export function initClient() {
   initUpgradeEffects()   // applies purchased upgrades once levels arrive
   initCarrySystem()   // server-owned rubbish carry count + big-bag deposit clicks
   initRankBadgeSystem()   // career-tier medallion above the player's head
+  initSpectateSystem()   // waiting players can watch the shift through a live camera
   initWallArtSystem()   // swaps the template's NFT frames for local posters
   initPhaseGate()  // start the mid-match lockout watcher
   initLobbyTeleport()  // return players to the entrance when a match ends

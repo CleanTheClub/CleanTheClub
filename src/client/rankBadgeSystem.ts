@@ -57,8 +57,16 @@ const SCALE_MAX    = 2.6
 const FADE_START_M = 14
 const FADE_END_M   = 20
 
-type RankInfo = { name: string; title: string; rank: number }
+// `cleaning` mirrors the roster's `c` flag — whether that player is enrolled in
+// the CURRENT round. Optional: an older server omits it, and consumers (the
+// spectate target picker) must treat "unknown" differently from "no".
+type RankInfo = { name: string; title: string; rank: number; cleaning?: boolean }
 const ranks = new Map<string, RankInfo>()   // lowercased address → career info
+
+/** Career info for a player by (lowercased) address — shared with spectate. */
+export function rankInfoFor(address: string): RankInfo | undefined {
+  return ranks.get(address.toLowerCase())
+}
 
 type Plate = {
   root:    Entity   // AvatarAttach'd to the player
@@ -251,9 +259,14 @@ export function initRankBadgeSystem(): void {
 
   room.onMessage('ranksUpdate', (data) => {
     try {
-      const roster = JSON.parse(data.rosterJson) as Array<{ a: string; n: string; t: string; r: number }>
+      const roster = JSON.parse(data.rosterJson) as Array<{ a: string; n: string; t: string; r: number; c?: number }>
       ranks.clear()
-      for (const e of roster) ranks.set(e.a.toLowerCase(), { name: e.n, title: e.t, rank: e.r })
+      for (const e of roster) {
+        ranks.set(e.a.toLowerCase(), {
+          name: e.n, title: e.t, rank: e.r,
+          cleaning: e.c === undefined ? undefined : e.c === 1,
+        })
+      }
     } catch (e) {
       console.log('[BADGE] failed to parse ranksUpdate:', e)
     }

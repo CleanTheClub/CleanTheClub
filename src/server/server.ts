@@ -555,7 +555,7 @@ function gradeFor(pct: number): string {
  * joins, shift payouts, admin grants — never per frame.
  */
 function broadcastRanks(): void {
-  const roster: Array<{ a: string; n: string; t: string; r: number }> = []
+  const roster: Array<{ a: string; n: string; t: string; r: number; c: number }> = []
   for (const address of activeSessions) {
     const rec = getProgress(address)
     if (!rec.displayName) continue   // name not known yet; the plate falls back
@@ -564,6 +564,9 @@ function broadcastRanks(): void {
       n: rec.displayName,
       t: titleForXp(rec.xp),
       r: rankForXp(rec.xp),
+      // Cleaning this round — spectate uses this to point its camera at actual
+      // cleaners rather than at other bystanders.
+      c: activePlayers.has(address) ? 1 : 0,
     })
   }
   room.send('ranksUpdate', { rosterJson: JSON.stringify(roster) })
@@ -1049,6 +1052,9 @@ export function initServer() {
     // This runs AT the phase flip: delaying it to the spawn-in beat flashed the
     // spectate overlay at every enrolled player (live two-player test).
     for (const address of activeSessions) sendParticipation(address)
+    // The active set just changed (sign-ups promoted in), so the roster's
+    // cleaning flags are stale until rebroadcast — spectate cameras key off them.
+    broadcastRanks()
     console.log(`[PARTICIPATION] round ${roundNumber} — ${activePlayers.size} cleaning, ${activeSessions.size - activePlayers.size} spectating, crew power ${crewPowerNow().toFixed(1)}`)
   })
 

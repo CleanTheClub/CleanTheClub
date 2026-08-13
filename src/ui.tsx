@@ -12,6 +12,8 @@ import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
 import { getHaulDebug } from './client/carrySystem'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
+import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
+import { tierColorForRank } from './client/rankBadgeSystem'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
@@ -996,6 +998,143 @@ const uiBody = () => {
     )
   }
 
+  // ── Spectate HUD — the camera is live behind this, so the screen stays almost
+  // clear: a chip naming who's being watched, and a control row at the bottom.
+  // The sign-up button rides along so watching never delays joining. All exits
+  // (STOP, promotion, lobby, targets gone) drop back to the waiting overlay
+  // below, because isSpectating() flips false.
+  if (waiting && isSpectating()) {
+    const target     = spectateTargetInfo()
+    const titleColor = target && target.title ? tierColorForRank(target.rank) : COLOR_SUBTLE
+    const chipTop    = mobile ? '12%' : Math.round(24 * S)   // clears the profile icons on phones
+    return (
+      <UiEntity uiTransform={{ positionType: 'absolute', position: { top: 0, left: 0 }, ...FULL_SCREEN_SCRIM }}>
+        <UiEntity uiTransform={{ ...FULL_WIDTH_ROW, positionType: 'absolute', position: { top: chipTop } }}>
+          <UiEntity
+            uiTransform={{
+              flexDirection: 'row', alignItems: 'center',
+              height: Math.round(52 * S),
+              padding: { left: Math.round(20 * S), right: Math.round(22 * S) },
+              borderRadius: Math.round(26 * S),
+            }}
+            uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.72 } }}
+          >
+            <UiEntity
+              uiTransform={{
+                width: Math.round(13 * S), height: Math.round(13 * S),
+                borderRadius: Math.round(7 * S),
+                margin: { right: Math.round(10 * S) },
+              }}
+              uiBackground={{ color: { r: 1, g: 0.23, b: 0.23, a: 1 } }}
+            />
+            <Label value={`LIVE — ${target?.name ?? '…'}`} fontSize={Math.round(24 * S)} color={WHITE} />
+            {target && target.title ? (
+              <Label
+                value={`  ${target.title.toUpperCase()}`}
+                fontSize={Math.round(20 * S)}
+                color={titleColor}
+              />
+            ) : null}
+          </UiEntity>
+        </UiEntity>
+
+        {/* Next-shift countdown keeps ticking while watching, so a signed-up
+            spectator knows exactly when the camera hands back. */}
+        {isOpen ? (
+          <UiEntity uiTransform={{ ...FULL_WIDTH_ROW, positionType: 'absolute', position: { top: mobile ? '19%' : Math.round(86 * S) } }}>
+            <Label value={`Next shift in ${seconds}s`} fontSize={Math.round(22 * S)} color={COLOR_SUBTLE} />
+          </UiEntity>
+        ) : null}
+
+        {/* Camera controls — tap-to-step on purpose: each press swings the
+            orbit 45° or steps the zoom, and the camera's own lerp glides it
+            there. Discrete, player-commanded moves; nothing to get stuck held
+            down, and no continuous motion to churn stomachs. */}
+        <UiEntity
+          uiTransform={{
+            ...FULL_WIDTH_ROW, alignItems: 'center',
+            positionType: 'absolute', position: { bottom: mobile ? '21%' : '13%' },
+          }}
+        >
+          <Button
+            value="ORBIT <"
+            variant="secondary"
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
+            onMouseDown={() => stepSpectateOrbit(-1)}
+          />
+          <Button
+            value="ZOOM -"
+            variant="secondary"
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
+            onMouseDown={() => stepSpectateZoom(1)}
+          />
+          <Button
+            value="ZOOM +"
+            variant="secondary"
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
+            onMouseDown={() => stepSpectateZoom(-1)}
+          />
+          <Button
+            value="ORBIT >"
+            variant="secondary"
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S) }}
+            onMouseDown={() => stepSpectateOrbit(1)}
+          />
+        </UiEntity>
+
+        <UiEntity
+          uiTransform={{
+            ...FULL_WIDTH_ROW, alignItems: 'center',
+            positionType: 'absolute', position: { bottom: mobile ? '10%' : '4%' },
+          }}
+        >
+          <Button
+            value="< PREV"
+            variant="secondary"
+            fontSize={Math.round(22 * S)}
+            uiTransform={{ width: Math.round(150 * S), height: Math.round(70 * S), margin: { right: Math.round(12 * S) } }}
+            onMouseDown={() => nextSpectateTarget(-1)}
+          />
+          {isSignedUp() ? (
+            <Button
+              value="SIGNED UP — CANCEL"
+              variant="secondary"
+              fontSize={Math.round(22 * S)}
+              uiTransform={{ width: Math.round(320 * S), height: Math.round(70 * S) }}
+              onMouseDown={() => cancelSignUp()}
+            />
+          ) : (
+            <Button
+              value="JOIN NEXT SHIFT"
+              variant="primary"
+              fontSize={Math.round(24 * S)}
+              uiTransform={{ width: Math.round(320 * S), height: Math.round(70 * S) }}
+              onMouseDown={() => signUpForNextShift()}
+            />
+          )}
+          <Button
+            value="NEXT >"
+            variant="secondary"
+            fontSize={Math.round(22 * S)}
+            uiTransform={{ width: Math.round(150 * S), height: Math.round(70 * S), margin: { left: Math.round(12 * S) } }}
+            onMouseDown={() => nextSpectateTarget(1)}
+          />
+          <Button
+            value="STOP"
+            variant="secondary"
+            fontSize={Math.round(20 * S)}
+            uiTransform={{ width: Math.round(110 * S), height: Math.round(70 * S), margin: { left: Math.round(24 * S) } }}
+            onMouseDown={() => exitSpectate('user')}
+          />
+        </UiEntity>
+      </UiEntity>
+    )
+  }
+
   // ── Waiting overlay — a match is already in progress; join the next one. ──────
   if (waiting) {
     const centeredRow = FULL_WIDTH_ROW
@@ -1057,6 +1196,21 @@ const uiBody = () => {
             color={COLOR_SUBTLE}
           />
         </UiEntity>
+
+        {/* Live camera on the crew — makes "watch until you're ready" literal:
+            the round plays out in front of the spectator instead of behind a
+            black scrim. Only offered while there is actually someone to watch. */}
+        {spectateTargetCount() > 0 ? (
+          <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(14 * S) } }}>
+            <Button
+              value="WATCH LIVE"
+              variant="secondary"
+              fontSize={Math.round(26 * S)}
+              uiTransform={{ width: Math.round(360 * S), height: Math.round(76 * S) }}
+              onMouseDown={() => enterSpectate()}
+            />
+          </UiEntity>
+        ) : null}
 
         {/* Waiting is the natural moment to spend earnings, and gives the wait a
             purpose rather than leaving players staring at a scrim. */}
