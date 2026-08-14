@@ -1,5 +1,5 @@
 import { setupUi, resetIntro } from '../ui'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { initLocalPlayer, onLocalEnterScene } from './localPlayer'
 import { initCleaningSystem } from '../cleaningSystem'
 import { initSoundManager } from './soundManager'
 import { initEmoteManager } from './emoteManager'
@@ -10,7 +10,7 @@ import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
-import { engine, Transform, LightSource } from '@dcl/sdk/ecs'
+import { engine, Entity, Transform, LightSource } from '@dcl/sdk/ecs'
 import { Color3 } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 import { platformKnown } from './platformWait'
@@ -19,6 +19,32 @@ import { platformKnown } from './platformWait'
 // The mobile renderer resolves the club much darker than desktop (playtest:
 // "it's too dark"). One warm point light rides the local player. Platform
 // resolves asynchronously, so a one-shot system waits for it.
+// Admin diagnostic: cycle the player light's intensity on-device. The code
+// path provably runs ("[LIGHT] attached" logs) yet KJ sees no light on mobile —
+// cycling through OFF/soft/bright/BLAZING from the admin panel answers whether
+// LightSource renders on the mobile client at ANY intensity, or is simply
+// unimplemented there (like AvatarLocomotionSettings).
+const LIGHT_LEVELS = [
+  { label: 'soft 1200',    intensity: 1200 },
+  { label: 'bright 4000',  intensity: 4000 },
+  { label: 'BLAZING 16000', intensity: 16000 },
+  { label: 'OFF',          intensity: 0 },
+]
+let lightLevelIdx = 0
+let playerLight: Entity | null = null
+
+export function cycleMobileLight(): string {
+  if (playerLight === null) return 'no light (desktop?)'
+  lightLevelIdx = (lightLevelIdx + 1) % LIGHT_LEVELS.length
+  const lvl = LIGHT_LEVELS[lightLevelIdx]
+  const ls = LightSource.getMutableOrNull(playerLight)
+  if (!ls) return 'light lost'
+  ls.active = lvl.intensity > 0
+  ls.intensity = Math.max(1, lvl.intensity)
+  console.log(`[LIGHT] admin cycle → ${lvl.label}`)
+  return lvl.label
+}
+
 function initMobilePlayerLight(): void {
   // Waits for a REAL platform answer rather than the shared degrade-to-desktop
   // gate: an unknown platform means "no light", not "desktop", so timing out
@@ -36,6 +62,7 @@ function initMobilePlayerLight(): void {
     engine.removeSystem(waitForPlatform)
     if (!isMobile()) return
     const light = engine.addEntity()
+    playerLight = light
     Transform.create(light, { parent: engine.PlayerEntity, position: { x: 0, y: 1.8, z: 0 } })
     LightSource.create(light, {
       active: true,
@@ -73,6 +100,7 @@ import { initWallArtSystem } from './wallArtSystem'
 
 export function initClient() {
   console.log('[CLIENT] started')
+  initLocalPlayer()   // resolve own address first — the scene-enter guards need it
   // Registered before setupUi so the first progressUpdate can't arrive between the
   // UI mounting and the listener existing.
   initProgressionStore()
@@ -90,7 +118,7 @@ export function initClient() {
   initGearPedestals()
   initEmoteManager()
   setupUi()
-  onEnterSceneObservable.add(() => resetIntro())
+  onLocalEnterScene(() => resetIntro())
   initCleaningSystem()
   initGlassSystem()
   initCollectibleGroup({

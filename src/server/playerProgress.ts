@@ -323,8 +323,10 @@ export function setFlexGear(address: string, gear: string): boolean {
  * a live board would make the club look emptier than it is. They simply don't
  * persist, so they drop off when they leave.
  */
-export function allProgressRecords(): ProgressRecord[] {
-  return [...records.values()]
+export function allProgressRecords(): Array<ProgressRecord & { address: string }> {
+  // Address joined in from the map key — the leaderboard categories need it so
+  // clients can fetch profile portraits for the rows.
+  return [...records.entries()].map(([address, rec]) => ({ ...rec, address }))
 }
 
 export function getProgress(address: string): ProgressRecord {

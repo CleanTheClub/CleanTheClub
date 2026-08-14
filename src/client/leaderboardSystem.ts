@@ -19,11 +19,13 @@ import {
   Transform,
   TextShape,
   TextAlignMode,
+  VisibilityComponent,
   executeTask,
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { Quaternion, Color4 } from '@dcl/sdk/math'
 import { playHoverSound, playClickSound } from './soundManager'
+import { updateWallOfFame, PodiumEntry, faceUrlFor, paintFace, paintPlaceholder } from './wallArtSystem'
 import { getUserData } from '~system/UserIdentity'
 import { room } from '../shared/messages'
 
@@ -55,6 +57,13 @@ const LB_HEADER_GAP = 0.75   // extra gap above row 0 for the header
 const LB_NAME_X  = -3.5     // local X of the name column  (negative = left)
 const LB_SCORE_X =  3.0     // local X of the score column (positive = right)
 const LB_DEPTH   =  0.1     // local Z lift off the screen face
+
+// ── Row portraits ─────────────────────────────────────────────
+// Profile face snapshot left of each name (fetched/cached via wallArtSystem).
+// Sized to the 0.55 row pitch; hidden for rows without an address (mock data,
+// or a server that predates addresses in the payload).
+const LB_FACE_X    = -3.85
+const LB_FACE_SIZE = 0.48
 
 // ── Typography ────────────────────────────────────────────────
 const LB_FONT_HEADER = 2.8
@@ -138,6 +147,17 @@ export function setupLeaderboardBoard(): void {
   // Entry rows
   for (let i = 0; i < LB_ENTRIES; i++) {
     const y = LB_START_Y - i * LB_STEP_Y
+
+    const face = engine.addEntity()
+    Transform.create(face, {
+      position: { x: LB_FACE_X, y, z: LB_DEPTH },
+      scale:    { x: LB_FACE_SIZE, y: LB_FACE_SIZE, z: 1 },
+      parent:   board,
+    })
+    MeshRenderer.setPlane(face)
+    paintPlaceholder(face)
+    VisibilityComponent.create(face, { visible: false })
+    rowFaces.push(face)
 
     const nameLabel = engine.addEntity()
     Transform.create(nameLabel, { position: { x: LB_NAME_X, y, z: LB_DEPTH }, parent: board })
@@ -252,7 +272,31 @@ type LbCategory = {
   key:         string
   title:       string
   scoreHeader: string
-  entries:     Array<{ displayName: string; score: string }>
+  // address is optional: older servers (and the mock/legacy payloads) don't
+  // send it, and rows without one simply hide their portrait.
+  entries:     Array<{ displayName: string; score: string; address?: string }>
+}
+
+// ── Row portrait state ────────────────────────────────────────
+const rowFaces: Entity[] = []
+const rowFaceWant:    string[] = []   // address each row should be showing
+const rowFacePainted: string[] = []   // address actually painted on the plane
+
+function setRowFace(row: number, address: string): void {
+  const face = rowFaces[row]
+  if (face === undefined) return
+  rowFaceWant[row] = address
+  VisibilityComponent.createOrReplace(face, { visible: address !== '' })
+  if (!address || rowFacePainted[row] === address) return
+  rowFacePainted[row] = ''
+  paintPlaceholder(face)
+  executeTask(async () => {
+    const url = await faceUrlFor(address)
+    // The board may have cycled to another category while we awaited.
+    if (!url || rowFaceWant[row] !== address || rowFacePainted[row] === address) return
+    rowFacePainted[row] = address
+    paintFace(face, url)
+  })
 }
 
 let categories: LbCategory[] = []
@@ -280,6 +324,7 @@ function renderCategory(cat: LbCategory | undefined): void {
     if (!name || !score) continue
     setText(name,  entry ? `${i + 1}.  ${entry.displayName}` : '')
     setText(score, entry ? entry.score : '')
+    setRowFace(i, entry?.address ?? '')
   }
 }
 
@@ -371,7 +416,11 @@ export function initLeaderboardSystem(): void {
   // Handle real-time leaderboard updates pushed from the server
   room.onMessage('leaderboardUpdate', (data) => {
     try {
-      updateLeaderboardDisplay(JSON.parse(data.entriesJson))
+      const parsed = JSON.parse(data.entriesJson) as { podium?: PodiumEntry[] }
+      updateLeaderboardDisplay(parsed)
+      // Same payload feeds the wall-of-fame frames (older servers send no
+      // podium → the frames keep their posters).
+      updateWallOfFame(Array.isArray(parsed?.podium) ? parsed.podium : [])
     } catch {
       console.log('[Leaderboard] Failed to parse leaderboardUpdate')
     }

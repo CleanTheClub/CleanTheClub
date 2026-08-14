@@ -19,9 +19,9 @@ import {
 } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { platformSettled } from './platformWait'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { room } from '../shared/messages'
-import { setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
+import { setupClickProxy } from './sceneItemHelpers'
 import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { playHoverSound, playCleanSound } from './soundManager'
@@ -166,11 +166,7 @@ function enableClick(s: ItemState) {
   const clickEnt  = s.clickEnt ?? entity
   const hoverText = s.def.hoverText ?? 'Clean'
 
-  pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => {
-    playHoverSound()
-    setHoverHighlight(s.dirtyEnt, true)
-  })
-  pointerEventsSystem.onPointerHoverLeave({ entity: clickEnt }, () => setHoverHighlight(s.dirtyEnt, false))
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
     { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: POINTER_MAX_DIST } },
     () => {
@@ -215,7 +211,7 @@ export function initRestoreSystem(defs: RestoreDef[]): void {
 
   // On scene (re-)entry reset all pending state so the ClutterSync watcher
   // treats each prop as unseen and correctly re-shows dirty/clean on next tick.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     for (const s of states.values()) {
       s.pendingClean = false
       s.lastSyncCleaned = null

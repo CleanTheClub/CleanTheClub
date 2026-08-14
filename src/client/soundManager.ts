@@ -76,10 +76,16 @@ let   popIdx    = 0
 // `global:` audio is DCL 2.0 desktop-only), so there is no per-play position
 // write. The false→true toggle via setTimeout is the standard DCL retrigger.
 function playAt(entity: Entity, pitch?: number) {
-  const src = AudioSource.getMutable(entity)
+  // Null-safe: a throw inside a pointer/timer callback kills the whole scene,
+  // and sounds are fired from every interaction path.
+  const src = AudioSource.getMutableOrNull(entity)
+  if (!src) return
   if (pitch !== undefined) src.pitch = pitch
   src.playing = false
-  timers.setTimeout(() => { AudioSource.getMutable(entity).playing = true }, 0)
+  timers.setTimeout(() => {
+    const s = AudioSource.getMutableOrNull(entity)
+    if (s) s.playing = true
+  }, 0)
 }
 
 export function initSoundManager() {
@@ -142,15 +148,17 @@ export function playSquelchSound() { playAt(squelchEntity) }
 export function playHoverSound()  { playAt(hoverEntity) }
 export function playClickSound()  { playAt(clickEntity) }
 export function playStickySound() { playAt(stickyEntity) }
-export function stopStickySound() { AudioSource.getMutable(stickyEntity).playing = false }
+export function stopStickySound() {
+  const s = AudioSource.getMutableOrNull(stickyEntity)
+  if (s) s.playing = false
+}
 export function playCleanSound()  {
   // Grab the next entity in the pool — guaranteed to not be mid-play from a
   // recent call, so the false→true retrigger always fires correctly.
   const e = cleanPool[cleanIdx % CLEAN_POOL_SIZE]
   // Random ±9% pitch per play. The identical sample dozens of times per round
   // read as grating; small variance makes repetition feel organic instead.
-  AudioSource.getMutable(e).pitch = 0.91 + Math.random() * 0.18
-  playAt(e)
+  playAt(e, 0.91 + Math.random() * 0.18)
   cleanIdx++
 }
 
@@ -163,7 +171,8 @@ export function playPerfectSound(streak: number) {
   // Round-robin so consecutive beats never fight over one entity.
   const e = popPool[popIdx % POP_POOL_SIZE]
   popIdx++
-  const src = AudioSource.getMutable(e)
+  const src = AudioSource.getMutableOrNull(e)
+  if (!src) return
   src.pitch  = 1.15 + 0.08 * Math.min(Math.max(1, streak), 8)
   src.volume = 0.9
   playAt(e)
@@ -182,7 +191,8 @@ export function playMissSound() { playAt(errorEntity) }
  * pouch emptied without looking at the chip. No arg (portable bin) = neutral.
  */
 export function playDepositSound(stream?: 'general' | 'recycle') {
-  const src = AudioSource.getMutable(depositEntity)
+  const src = AudioSource.getMutableOrNull(depositEntity)
+  if (!src) return
   src.pitch = stream === 'general' ? 0.85 : stream === 'recycle' ? 1.18 : 1.0
   playAt(depositEntity)
 }
@@ -190,14 +200,26 @@ export function playDepositSound(stream?: 'general' | 'recycle') {
 /** Crowd cheer at cleanliness milestones. Silent until Sounds/crowdCheer.mp3 exists.
  *  Random pitch so a party that cheers many times a night never sounds like a
  *  looped sample — same trick as the clean sound. */
-export function playCrowdSound()     { playAt(crowdEntity, 0.88 + Math.random() * 0.24) }
+/**
+ * Crowd cheer for cleanliness milestones. `level` (0..1, fraction of the club
+ * clean) scales the crowd's excitement — louder and higher-pitched as the
+ * night gets cleaner, so the 90% cheer lands bigger than the 25% one instead
+ * of all four being identical (playtest ask). A small random wobble keeps
+ * repeats from sounding canned.
+ */
+export function playCrowdSound(level = 0.5) {
+  const s = AudioSource.getMutableOrNull(crowdEntity)
+  if (s) s.volume = 0.55 + 0.45 * level
+  playAt(crowdEntity, 0.82 + 0.28 * level + Math.random() * 0.06)
+}
 
 /**
  * Cleaning-spree chime — the notification ding climbing in pitch with the
  * combo, quieter than real notifications so a spree hums rather than shouts.
  */
 export function playSpreeSound(combo: number) {
-  const src = AudioSource.getMutable(notificationEntity)
+  const src = AudioSource.getMutableOrNull(notificationEntity)
+  if (!src) return
   src.pitch  = 1.0 + 0.05 * Math.min(combo, 14)
   src.volume = 0.45
   playAt(notificationEntity)
@@ -215,9 +237,10 @@ export function playToastSound(kind: ToastKind) {
   lastNotificationMs = now
 
   const { pitch, volume } = NOTIFICATION_SETTINGS[kind]
-  const src = AudioSource.getMutable(notificationEntity)
+  const src = AudioSource.getMutableOrNull(notificationEntity)
+  if (!src) return
   src.pitch   = pitch
   src.volume  = volume
   src.playing = false
-  timers.setTimeout(() => { AudioSource.getMutable(notificationEntity).playing = true }, 0)
+  timers.setTimeout(() => { const s = AudioSource.getMutableOrNull(notificationEntity); if (s) s.playing = true }, 0)
 }

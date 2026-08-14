@@ -1577,16 +1577,16 @@
               "y": 0.2680044174194336,
               "z": 0.08469772338867188
             },
+            "scale": {
+              "x": 4,
+              "y": 4,
+              "z": 4
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
             },
             "parent": 822
           }
@@ -1598,16 +1598,16 @@
               "y": 0.0941019058227539,
               "z": 0.19230270385742188
             },
+            "scale": {
+              "x": 3.999999523162842,
+              "y": 4,
+              "z": 3.999999523162842
+            },
             "rotation": {
               "x": 0,
               "y": 0.9238795042037964,
               "z": 0,
               "w": 0.3826834559440613
-            },
-            "scale": {
-              "x": 3.999999523162842,
-              "y": 4,
-              "z": 3.999999523162842
             },
             "parent": 826
           }
@@ -1619,16 +1619,16 @@
               "y": 0.1238093376159668,
               "z": 0.015575408935546875
             },
+            "scale": {
+              "x": 4,
+              "y": 4,
+              "z": 4
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
             },
             "parent": 825
           }
@@ -1640,16 +1640,16 @@
               "y": 0.15376806259155273,
               "z": -0.006992340087890625
             },
+            "scale": {
+              "x": 4,
+              "y": 4,
+              "z": 4
+            },
             "rotation": {
               "x": 0,
               "y": 0.3816269040107727,
               "z": 0,
               "w": 0.9243164658546448
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
             },
             "parent": 824
           }
@@ -5749,69 +5749,6 @@
             "parent": 557
           }
         },
-        "786": {
-          "json": {
-            "position": {
-              "x": 2.7994163036346436,
-              "y": 9.25,
-              "z": 15
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
-        "787": {
-          "json": {
-            "position": {
-              "x": 2.7994163036346436,
-              "y": 9.25,
-              "z": 11.5
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
-        "788": {
-          "json": {
-            "position": {
-              "x": 2.7994163036346436,
-              "y": 9.25,
-              "z": 18.31172752380371
-            },
-            "scale": {
-              "x": 4,
-              "y": 4,
-              "z": 4
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0.707099974155426,
-              "z": 0,
-              "w": -0.707099974155426
-            },
-            "parent": 0
-          }
-        },
         "790": {
           "json": {
             "position": {
@@ -6253,48 +6190,6 @@
             "parent": 0
           }
         },
-        "813": {
-          "json": {
-            "position": {
-              "x": 0.24909210205078125,
-              "y": 0.4575212001800537,
-              "z": 0.0034732818603515625
-            },
-            "scale": {
-              "x": 0.20000000298023224,
-              "y": 0.20000000298023224,
-              "z": 0.20000000298023224
-            },
-            "rotation": {
-              "x": 0,
-              "y": 0,
-              "z": 0,
-              "w": 1
-            },
-            "parent": 814
-          }
-        },
-        "814": {
-          "json": {
-            "position": {
-              "x": 17.70603370666504,
-              "y": 3.7656619548797607,
-              "z": 6.762295246124268
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
-            },
-            "rotation": {
-              "x": 0,
-              "y": -1,
-              "z": 0,
-              "w": 6.123234262925839e-17
-            },
-            "parent": 0
-          }
-        },
         "815": {
           "json": {
             "position": {
@@ -6428,16 +6323,16 @@
               "y": 1.0617133378982544,
               "z": 25.587650299072266
             },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.5,
-              "y": 0.5,
-              "z": 0.5
             },
             "parent": 823
           }
@@ -6449,16 +6344,16 @@
               "y": 0,
               "z": 0
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 0
           }
@@ -6470,16 +6365,16 @@
               "y": 1.0617133378982544,
               "z": 25.587650299072266
             },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.5,
-              "y": 0.5,
-              "z": 0.5
             },
             "parent": 823
           }
@@ -6491,16 +6386,16 @@
               "y": 1.0617133378982544,
               "z": 28.087650299072266
             },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.5,
-              "y": 0.5,
-              "z": 0.5
             },
             "parent": 823
           }
@@ -6512,16 +6407,16 @@
               "y": 1.0617133378982544,
               "z": 28.087650299072266
             },
+            "scale": {
+              "x": 0.5,
+              "y": 0.5,
+              "z": 0.5
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 0.5,
-              "y": 0.5,
-              "z": 0.5
             },
             "parent": 823
           }
@@ -6533,16 +6428,16 @@
               "y": 2.006455659866333,
               "z": 0.234130859375
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 822
           }
@@ -6554,16 +6449,16 @@
               "y": 2.006455659866333,
               "z": 0.234130859375
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 824
           }
@@ -6575,16 +6470,16 @@
               "y": 2.006455659866333,
               "z": 0.734130859375
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 825
           }
@@ -6596,16 +6491,16 @@
               "y": 2.006455659866333,
               "z": 0.734130859375
             },
+            "scale": {
+              "x": 1,
+              "y": 1,
+              "z": 1
+            },
             "rotation": {
               "x": 0,
               "y": 0,
               "z": 0,
               "w": 1
-            },
-            "scale": {
-              "x": 1,
-              "y": 1,
-              "z": 1
             },
             "parent": 826
           }
@@ -6773,24 +6668,6 @@
             "entityId": 8057
           }
         },
-        "786": {
-          "json": {
-            "networkId": 0,
-            "entityId": 8058
-          }
-        },
-        "787": {
-          "json": {
-            "networkId": 0,
-            "entityId": 8059
-          }
-        },
-        "788": {
-          "json": {
-            "networkId": 0,
-            "entityId": 8060
-          }
-        },
         "790": {
           "json": {
             "networkId": 0,
@@ -6909,12 +6786,6 @@
           "json": {
             "networkId": 0,
             "entityId": 8081
-          }
-        },
-        "813": {
-          "json": {
-            "networkId": 0,
-            "entityId": 8082
           }
         },
         "822": {
@@ -8360,13 +8231,6 @@
             "src": "assets/scene/Models/graffiti/graffiti.glb",
             "visibleMeshesCollisionMask": 0,
             "invisibleMeshesCollisionMask": 3
-          }
-        },
-        "814": {
-          "json": {
-            "src": "assets/asset-packs/bubble/MessageBubble.glb",
-            "visibleMeshesCollisionMask": 0,
-            "invisibleMeshesCollisionMask": 2
           }
         },
         "815": {
@@ -17748,21 +17612,6 @@
             "value": "Sit Spot_16"
           }
         },
-        "786": {
-          "json": {
-            "value": "NFT_1"
-          }
-        },
-        "787": {
-          "json": {
-            "value": "NFT_2"
-          }
-        },
-        "788": {
-          "json": {
-            "value": "NFT_3"
-          }
-        },
         "790": {
           "json": {
             "value": "Video Screen"
@@ -17868,16 +17717,6 @@
             "value": "Graffiti"
           }
         },
-        "813": {
-          "json": {
-            "value": "Text"
-          }
-        },
-        "814": {
-          "json": {
-            "value": "Bubble"
-          }
-        },
         "815": {
           "json": {
             "value": "CosmicLatte"
@@ -17951,50 +17790,6 @@
         "830": {
           "json": {
             "value": "Text_5"
-          }
-        }
-      }
-    },
-    {
-      "name": "core::NftShape",
-      "jsonSchema": {
-        "type": "object",
-        "properties": {},
-        "serializationType": "protocol-buffer",
-        "protocolBuffer": "PBNftShape"
-      },
-      "data": {
-        "786": {
-          "json": {
-            "urn": "urn:decentraland:ethereum:erc721:0xe977bfe8b83db27616ec10c7862066d37e0326a9:132",
-            "style": 21,
-            "color": {
-              "r": 1,
-              "g": 1,
-              "b": 1
-            }
-          }
-        },
-        "787": {
-          "json": {
-            "urn": "urn:decentraland:ethereum:erc721:0xe977bfe8b83db27616ec10c7862066d37e0326a9:64",
-            "style": 21,
-            "color": {
-              "r": 1,
-              "g": 1,
-              "b": 1
-            }
-          }
-        },
-        "788": {
-          "json": {
-            "urn": "urn:decentraland:ethereum:erc721:0xe977bfe8b83db27616ec10c7862066d37e0326a9:36",
-            "style": 21,
-            "color": {
-              "r": 1,
-              "g": 1,
-              "b": 1
-            }
           }
         }
       }
@@ -18675,30 +18470,6 @@
             ]
           }
         },
-        "786": {
-          "json": {
-            "componentIds": [
-              1040,
-              1081
-            ]
-          }
-        },
-        "787": {
-          "json": {
-            "componentIds": [
-              1040,
-              1081
-            ]
-          }
-        },
-        "788": {
-          "json": {
-            "componentIds": [
-              1040,
-              1081
-            ]
-          }
-        },
         "790": {
           "json": {
             "componentIds": [
@@ -18842,14 +18613,6 @@
             ]
           }
         },
-        "813": {
-          "json": {
-            "componentIds": [
-              1030,
-              1081
-            ]
-          }
-        },
         "822": {
           "json": {
             "componentIds": [
@@ -18977,32 +18740,6 @@
               "r": 1,
               "g": 0.5803921818733215,
               "b": 0.8666666746139526,
-              "a": 1
-            }
-          }
-        },
-        "813": {
-          "json": {
-            "text": "Your text here",
-            "font": 2,
-            "fontSize": 4,
-            "fontAutoSize": false,
-            "textAlign": 4,
-            "paddingTop": 0,
-            "paddingRight": 0,
-            "paddingBottom": 0,
-            "paddingLeft": 0,
-            "lineSpacing": 0,
-            "outlineWidth": 0,
-            "outlineColor": {
-              "r": 1,
-              "g": 1,
-              "b": 1
-            },
-            "textColor": {
-              "r": 0,
-              "g": 0,
-              "b": 0,
               "a": 1
             }
           }
@@ -19484,11 +19221,6 @@
           "json": {
             "visible": false
           }
-        },
-        "814": {
-          "json": {
-            "visible": true
-          }
         }
       }
     },
@@ -19536,7 +19268,7 @@
       "data": {
         "0": {
           "json": {
-            "gizmo": 1
+            "gizmo": 0
           }
         }
       }
@@ -19639,9 +19371,6 @@
                   767,
                   768,
                   769,
-                  786,
-                  787,
-                  788,
                   790,
                   791,
                   809,
@@ -19651,7 +19380,6 @@
                   540,
                   554,
                   574,
-                  814,
                   823
                 ]
               },
@@ -20620,17 +20348,6 @@
                 "children": []
               },
               {
-                "entity": 813,
-                "children": []
-              },
-              {
-                "entity": 814,
-                "open": true,
-                "children": [
-                  813
-                ]
-              },
-              {
                 "entity": 815,
                 "children": []
               },
@@ -21358,15 +21075,6 @@
         "785": {
           "json": {}
         },
-        "786": {
-          "json": {}
-        },
-        "787": {
-          "json": {}
-        },
-        "788": {
-          "json": {}
-        },
         "790": {
           "json": {}
         },
@@ -21428,12 +21136,6 @@
           "json": {}
         },
         "810": {
-          "json": {}
-        },
-        "813": {
-          "json": {}
-        },
-        "814": {
           "json": {}
         },
         "815": {
@@ -23453,45 +23155,6 @@
               }
             ],
             "assetId": "ce374705-d5f6-4837-b9ca-c0744527cfd5"
-          }
-        },
-        "786": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "NFT Portrait",
-            "fields": [
-              {
-                "name": "NFT Portrait",
-                "type": "core::NftShape"
-              }
-            ],
-            "assetId": "dbffd66a-8c1f-4b34-bed4-c71ab5cb4024"
-          }
-        },
-        "787": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "NFT Portrait",
-            "fields": [
-              {
-                "name": "NFT Portrait",
-                "type": "core::NftShape"
-              }
-            ],
-            "assetId": "dbffd66a-8c1f-4b34-bed4-c71ab5cb4024"
-          }
-        },
-        "788": {
-          "json": {
-            "isBasicViewEnabled": true,
-            "componentName": "NFT Portrait",
-            "fields": [
-              {
-                "name": "NFT Portrait",
-                "type": "core::NftShape"
-              }
-            ],
-            "assetId": "dbffd66a-8c1f-4b34-bed4-c71ab5cb4024"
           }
         },
         "790": {
@@ -27298,23 +26961,6 @@
                 "name": "Show text",
                 "type": "batch",
                 "jsonPayload": "{\"actions\":[\"Hide text\",\"Print text\"]}"
-              }
-            ]
-          }
-        },
-        "814": {
-          "json": {
-            "id": 87,
-            "value": [
-              {
-                "name": "Hide",
-                "type": "set_visibility",
-                "jsonPayload": "{\"visible\":false,\"collider\":0}"
-              },
-              {
-                "name": "Show",
-                "type": "set_visibility",
-                "jsonPayload": "{\"visible\":true,\"collider\":0}"
               }
             ]
           }

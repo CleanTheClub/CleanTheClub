@@ -12,16 +12,23 @@ import {
   ParticleSystem,
 } from '@dcl/sdk/ecs'
 import { Color4, Vector3 } from '@dcl/sdk/math'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { CLUTTER_DEFS } from '../shared/config'
 import { discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { gameState } from './phaseGate'
-import { onClutterPoll } from './clutterWatcher'
+import { onClutterPoll, clutterEntry } from './clutterWatcher'
 
 import { PSB_ALPHA, PS_PLAYING, PS_STOPPED } from './particleEnums'
 
 // ── Pool config ───────────────────────────────────────────────────────────────
-const MAX_STINK_EMITTERS = 100  // hard cap on emitter entities (scene currently has ~83 items)
+// The cap bounds CONCURRENTLY-DIRTY items, not items overall: emitters recycle
+// (cleaned item → freed → reassigned to a still-dirty one). The old design
+// allocated once at init, first-come-for-life — with 98 scene items plus the
+// restore props the pool was exhausted before themed extras could ever join,
+// which is why paparazzi-night spawns had no stink (playtest, mobile). At round
+// start more than 100 items can be dirty at once; the tail goes stinkless
+// briefly and picks up emitters as cleaning frees them.
+const MAX_STINK_EMITTERS = 100  // hard cap on emitter ENTITIES (recycled)
 const PARTICLES_PER_ITEM = 5   // maxParticles per emitter → ≤ 500 total
 const STINK_Y_OFFSET     = 0.6 // metres above the item's Transform position
 
@@ -124,57 +131,98 @@ export function initStinkSystem() {
   // re-entries leave lastCleaned stale: items that were cleaned before leaving
   // never get their emitters re-paused (or re-resumed) when state changes while
   // the player is away.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     lastCleaned.clear()
-    console.log('[STINK] onEnterSceneObservable — lastCleaned cleared')
+    console.log('[STINK] re-entered — lastCleaned cleared')
   })
 
-  let allocated = 0
-
-  function tryAllocate(itemId: string, pos: { x: number; y: number; z: number }) {
-    if (allocated >= MAX_STINK_EMITTERS) return
-    emitterFor.set(itemId, createEmitter(pos))
-    allocated++
-  }
-
-  // CLUTTER_DEFS — positions come from config.
-  // sceneGlb items use the world-space position stored in def.position directly —
-  // their GLB origin may be at local (0,0,0) but the correct world coords are in config.
+  // Authored world positions for scene items — their ClutterSync entities are
+  // logical (no Transform), so positions are captured here once.
+  // CLUTTER_DEFS positions come from config (GLB origins may be local 0,0,0).
+  const itemPosFor = new Map<string, { x: number; y: number; z: number }>()
   for (const def of CLUTTER_DEFS) {
-    tryAllocate(def.id, def.stinkPos ?? def.position)
+    itemPosFor.set(def.id, def.stinkPos ?? def.position)
   }
-
-  // Scene-placed groups — read world Transform at init time
   for (const { entity, itemId } of [...discoverGlasses(), ...discoverBottles(), ...discoverRubbish(), ...discoverStickyPatches()]) {
     const pos = Transform.getOrNull(entity)?.position
-    if (pos) {
-      tryAllocate(itemId, pos)
-    } else {
-      console.log(`[STINK] No Transform for ${itemId} at init — skipping`)
-    }
+    if (pos) itemPosFor.set(itemId, pos)
+    else console.log(`[STINK] No Transform for ${itemId} at init — skipping`)
   }
 
-  console.log(`[STINK] Allocated ${allocated} emitters (pool cap: ${MAX_STINK_EMITTERS})`)
+  // Recyclable pool: freed emitters (paused + sunk) queue here for reuse.
+  const freeEmitters: Entity[] = []
+  let created = 0
+  let starvedLogged = false
 
-  // Per-frame watcher — mirrors isCleaned state → emitter on/off.
-  // Skips updates during party mode (phase = 'open') — stink is frozen then.
+  function acquireEmitter(pos: { x: number; y: number; z: number }): Entity | null {
+    const recycled = freeEmitters.pop()
+    if (recycled) {
+      resumeEmitter(recycled)
+      const tf = Transform.getMutableOrNull(recycled)
+      if (tf) tf.position = Vector3.create(pos.x, pos.y + STINK_Y_OFFSET, pos.z)
+      return recycled
+    }
+    if (created >= MAX_STINK_EMITTERS) {
+      if (!starvedLogged) {
+        starvedLogged = true
+        console.log(`[STINK] pool cap ${MAX_STINK_EMITTERS} hit — tail items go stinkless until cleans free emitters`)
+      }
+      return null
+    }
+    created++
+    return createEmitter(pos)
+  }
+
+  function releaseEmitter(itemId: string): void {
+    const e = emitterFor.get(itemId)
+    if (!e) return
+    emitterFor.delete(itemId)
+    pauseEmitter(e)
+    freeEmitters.push(e)
+  }
+
+  // Poll watcher. Transitions maintain needStink (the set of currently-dirty
+  // items); a separate assignment sweep then matches that set against the pool
+  // EVERY poll, not just on the transition — an item starved at round start
+  // must pick up an emitter later when a clean frees one, and a dynamic item
+  // (theme_*/dis_*) must get one once its server-written Transform arrives /
+  // unparks from the locked ~0.001 scale. Assigning only on the isCleaned edge
+  // made both starvations permanent (review finding).
+  // Skips pool work during party mode (phase = 'open') — stink is frozen then.
+  const needStink = new Set<string>()
   let partyMode = false
 
   onClutterPoll((entries) => {
     for (const { itemId, isCleaned } of entries) {
       if (lastCleaned.get(itemId) === isCleaned) continue
       lastCleaned.set(itemId, isCleaned)
-
-      if (partyMode) continue   // don't toggle emitters during open phase
-
-      const emitter = emitterFor.get(itemId)
-      if (!emitter) continue
-
       if (isCleaned) {
-        pauseEmitter(emitter)
+        needStink.delete(itemId)
+        if (!partyMode) releaseEmitter(itemId)
       } else {
-        resumeEmitter(emitter)
+        needStink.add(itemId)
       }
+    }
+
+    if (partyMode) return
+
+    // Assignment sweep — cheap (≤ ~130 set entries, most already assigned).
+    for (const itemId of needStink) {
+      if (emitterFor.has(itemId)) continue
+      if (freeEmitters.length === 0 && created >= MAX_STINK_EMITTERS) break
+      let pos = itemPosFor.get(itemId)
+      if (!pos) {
+        // Dynamic item: position lives on its sync entity. The scale gate
+        // skips stages the server parks at ~0.001 (locked disaster stain) —
+        // stink over an invisible spot reads as a bug. Re-checked every sweep,
+        // so it gets its emitter the moment the server unparks it.
+        const entry = clutterEntry(itemId)
+        const t = entry ? Transform.getOrNull(entry.entity) : null
+        if (!t || t.scale.x < 0.01) continue
+        pos = t.position
+      }
+      const e = acquireEmitter(pos)
+      if (e) emitterFor.set(itemId, e)
     }
   })
 
@@ -194,11 +242,12 @@ export function initStinkSystem() {
     } else if (prev === 'open') {
       // New round started — ClutterSync changes that arrived during party mode
       // were skipped by the watcher (partyMode guard), so lastCleaned can be
-      // stale. Clear it entirely and resume every emitter; the watcher will
-      // re-pause any that are genuinely still cleaned on its first tick.
+      // stale. Release every assignment and clear the cache; the watcher's next
+      // tick re-acquires emitters for exactly the items that are dirty NOW
+      // (including this round's fresh theme spawns).
       lastCleaned.clear()
-      for (const emitter of emitterFor.values()) resumeEmitter(emitter)
-      console.log('[STINK] Round started — all emitters resumed')
+      for (const itemId of [...emitterFor.keys()]) releaseEmitter(itemId)
+      console.log('[STINK] Round started — pool released for reassignment')
     }
   })
 }

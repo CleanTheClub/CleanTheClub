@@ -4,6 +4,19 @@ import { isMobile } from '@dcl/sdk/platform'
 import { PICKUP_EMOTE_MS, MOPPING_EMOTE_MS } from '../shared/config'
 import { repreload } from './preload'
 
+// Every emote RPC is fire-and-forget, and an unhandled rejection inside a
+// pointer callback kills the whole scene ("scene error" + reload prompt). The
+// mobile explorer CAN reject these — it evicts emote GLBs after an app suspend
+// (see the rewarm notes below) — so a retried mop after a resume was a crash.
+// All call sites go through these caught wrappers.
+type EmoteOpts = Parameters<typeof triggerSceneEmote>[0]
+function fireEmote(opts: EmoteOpts): void {
+  triggerSceneEmote(opts).catch((e) => console.log('[EMOTE] trigger failed:', e))
+}
+function fireStopEmote(): void {
+  stopEmote({}).catch((e) => console.log('[EMOTE] stop failed:', e))
+}
+
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
 const MOPPING_EMOTE_SRC = 'assets/scene/Emotes/Mopping_emote.glb'
 const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
@@ -46,7 +59,7 @@ function stopPickupEmote() {
     // stopEmote(), not the old empty-src hack: an empty src does NOT cancel a
     // masked LOOPING emote — the explorer keeps the loop registered and
     // resumes it after a one-shot ends (field-verified).
-    stopEmote({})
+    fireStopEmote()
   }
 }
 
@@ -64,13 +77,13 @@ export function setCarryPose(active: boolean) {
     // Kill the loop for real (see stopPickupEmote). If a one-shot is mid-play
     // (the deposit dump), let it finish — its own stop clears the loop too and
     // reassert is a no-op once wanted is false.
-    if (!emoteActive) stopEmote({})
+    if (!emoteActive) fireStopEmote()
   }
 }
 
 function reassertCarryPose() {
   if (!carryPoseWanted || emoteActive) return
-  triggerSceneEmote({ src: CARRY_POSE_SRC, loop: true, mask: AM_UPPER_BODY })
+  fireEmote({ src: CARRY_POSE_SRC, loop: true, mask: AM_UPPER_BODY })
   carryLoopLive = true
 }
 
@@ -168,7 +181,7 @@ export function initEmoteManager() {
 export function playPartyEmote() {
   if (emoteActive) stopPickupEmote()
   emoteActive = true
-  triggerSceneEmote({ src: PARTY_EMOTE_SRC, loop: false })
+  fireEmote({ src: PARTY_EMOTE_SRC, loop: false })
   timers.setTimeout(() => stopPickupEmote(), PARTY_EMOTE_MS)
 }
 
@@ -189,7 +202,7 @@ function playStepEmote(
 ) {
   if (emoteActive) stopPickupEmote()
   emoteActive = true
-  triggerSceneEmote({ src, loop: false })
+  fireEmote({ src, loop: false })
   timers.setTimeout(() => stopPickupEmote(), durationMs)
 }
 

@@ -1,19 +1,19 @@
 // Generic system for scene-item groups that are collected (hidden) on click.
 // Each call to initCollectibleGroup handles one named group (Glasses, Bottles, …).
 
-import { Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
+import { Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent, timers } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { SceneItemDef } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
+import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox, usingVacuum } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { shrinkAndHide, cancelShrink } from './itemFx'
+import { shrinkAndHide, suckAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
@@ -65,7 +65,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
 
   // On scene (re-)entry clear stale state so the ClutterSync watcher re-applies
   // authoritative state and re-enables clicks on any newly-uncleaned items.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     pendingCleans.clear()
     pendingVisualHide.clear()
     lastState.clear()
@@ -89,11 +89,11 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     VisibilityComponent.createOrReplace(rec.containerEntity, { visible })
     const tf = Transform.getMutable(rec.containerEntity)
     if (visible) {
-      if (rec.originalScale !== null) {
-        tf.scale = rec.originalScale
-      }
-      // If originalScale is still null (joined while item was cleaned), don't write
-      // 0.001 — the server's CRDT has already, or will shortly, restore the real scale.
+      // Restore only from a banked scale — the server never writes these
+      // Transforms (it only flips ClutterSync.isCleaned), so a zeroed scale is
+      // ours to undo. Null means the authored scale was already ≤0.01: nothing
+      // to restore.
+      if (rec.originalScale !== null) tf.scale = rec.originalScale
     } else {
       // Capture real scale before hiding if we haven't yet (item was cleaned on join).
       if (rec.originalScale === null) {
@@ -102,6 +102,8 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
           rec.originalScale = { x: curr.scale.x, y: curr.scale.y, z: curr.scale.z }
         }
       }
+      // Unconditional: hidden must also mean a vanishing collider — visibility
+      // stops the render, not the CL_POINTER mesh collider.
       tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
     }
   }
@@ -109,7 +111,6 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
   function disableClick(itemId: string) {
     const rec = gltfRecords.get(itemId)
     if (!rec) return
-    setHoverHighlight(findGltfEntity(rec.containerEntity), false)
     pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
     pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
     PointerEvents.deleteFrom(rec.clickEntity)
@@ -122,13 +123,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     // Invariant: clickable implies visible (see rubbishSystem).
     VisibilityComponent.createOrReplace(rec.containerEntity, { visible: true })
     const { clickEntity, containerEntity } = rec
-    pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => {
-      playHoverSound()
-      setHoverHighlight(findGltfEntity(containerEntity), true)
-    })
-    pointerEventsSystem.onPointerHoverLeave({ entity: clickEntity }, () => {
-      setHoverHighlight(findGltfEntity(containerEntity), false)
-    })
+    pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
     pointerEventsSystem.onPointerDown(
       // Glasses and bottles are glass — they fill the recycling pouch, and the
       // prompt says so, so the carry chip's green number can't be a mystery.
@@ -151,9 +146,9 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         }
         disableClick(itemId)
         playCleanSound()
-        if (pos) playPickupEmote(pos)
+        if (pos && !usingVacuum()) playPickupEmote(pos)
         room.send('cleanItem', { itemId })
-        if (toastKind !== null) showCollectionToast(toastKind, countCollected(), items.length)
+        if (toastKind !== null) showCollectionToast(toastKind, countCollected(), reachableTotal())
 
         pendingVisualHide.add(itemId)
         // Capture the real (full) scale now, before the shrink starts, so respawn
@@ -167,7 +162,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
         // Shrink immediately (instant visual response, no frozen wait) and land
         // "gone" at the emote's hand-touch moment.  Sparkle + the pending-hide
         // bookkeeping fire on completion, preserving the original guard logic.
-        shrinkAndHide(containerEntity, PICKUP_TOUCH_MS / 1000, () => {
+        ;(usingVacuum() ? suckAndHide : shrinkAndHide)(containerEntity, PICKUP_TOUCH_MS / 1000, () => {
           const wasPending = pendingVisualHide.has(itemId)
           pendingVisualHide.delete(itemId)
           // cleanRejected wiped the guard and the item isn't confirmed clean →
@@ -183,9 +178,31 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     )
   }
 
+  // Items the round's theme mask pre-cleaned (e.g. the special drinks on a
+  // classic round) read as collected in ClutterSync without anyone touching
+  // them, which inflated the counter (first pickup showed 7/23). Baseline them
+  // out: snapshot shortly after round start — the delay lets the reset + mask
+  // replicate — and count/total against the reachable rest.
+  const maskedBaseline = new Set<string>()
+  onPhaseChange((phase) => {
+    if (phase !== 'playing') return
+    timers.setTimeout(() => {
+      if (currentPhase() !== 'playing') return   // round already moved on
+      maskedBaseline.clear()
+      for (const { itemId } of items) {
+        if (lastState.get(itemId) === true) maskedBaseline.add(itemId)
+      }
+    }, 1_200)
+  })
+
+  function reachableTotal(): number {
+    return items.length - maskedBaseline.size
+  }
+
   function countCollected(): number {
     let n = 0
     for (const { itemId } of items) {
+      if (maskedBaseline.has(itemId)) continue
       if (lastState.get(itemId) || pendingCleans.has(itemId)) n++
     }
     return n

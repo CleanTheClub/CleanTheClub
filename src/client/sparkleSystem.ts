@@ -11,7 +11,12 @@ import { Color4 } from '@dcl/sdk/math'
 
 const SPARKLE_SRC    = 'assets/scene/Particles/sparkle.png'
 const BURST_COUNT    = 10    // sparkles claimed per clean event
-const BURST_POOL_SIZE = 14   // pool slots — handles 1 simultaneous burst + buffer
+// Sized for a CREW, not a soloist: 14 slots meant the second overlapping clean
+// got 4 sparkles and the third got none — the normal case with 3-4 cleaners on
+// a themed night (reported as "particles missing on some items"). Three full
+// bursts fit; beyond that playSparkle steals the oldest in-flight sparkles, so
+// every clean always reads.
+const BURST_POOL_SIZE = 32
 const SPARKLE_SIZE   = 0.22  // peak world-space diameter (m)
 const SPEED_MIN      = 1.6   // m/s
 const SPEED_MAX      = 3.8   // m/s
@@ -105,28 +110,45 @@ export function initSparkleSystem(): void {
   console.log(`[Sparkles] Pool ready — ${BURST_POOL_SIZE} slots`)
 }
 
+function launchSlot(s: BurstSlot, pos: { x: number; y: number; z: number }): void {
+  const azimuth   = Math.random() * Math.PI * 2
+  const elevation = (25 + Math.random() * 65) * (Math.PI / 180)
+  const speed     = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN)
+
+  if (!s.active) activeSparkles++
+  s.active    = true
+  s.lifeMs    = 0
+  s.maxLifeMs = LIFE_BASE_MS + Math.random() * LIFE_VARY_MS
+  s.pos       = { x: pos.x, y: pos.y + SPAWN_Y, z: pos.z }
+  s.vel       = {
+    x: Math.cos(azimuth) * Math.cos(elevation) * speed,
+    y: Math.sin(elevation) * speed,
+    z: Math.sin(azimuth)  * Math.cos(elevation) * speed,
+  }
+  const tf = Transform.getMutableOrNull(s.entity)
+  if (tf) tf.position = { ...s.pos }
+}
+
 /** Fire a gold sparkle burst centred on `pos` (world position of the cleaned item). */
 export function playSparkle(pos: { x: number; y: number; z: number }): void {
   let claimed = 0
   for (const s of pool) {
-    if (claimed >= BURST_COUNT) break
+    if (claimed >= BURST_COUNT) return
     if (s.active) continue
+    launchSlot(s, pos)
+    claimed++
+  }
+  if (claimed >= BURST_COUNT) return
 
-    const azimuth   = Math.random() * Math.PI * 2
-    const elevation = (25 + Math.random() * 65) * (Math.PI / 180)
-    const speed     = SPEED_MIN + Math.random() * (SPEED_MAX - SPEED_MIN)
-
-    s.active    = true
-    activeSparkles++
-    s.lifeMs    = 0
-    s.maxLifeMs = LIFE_BASE_MS + Math.random() * LIFE_VARY_MS
-    s.pos       = { x: pos.x, y: pos.y + SPAWN_Y, z: pos.z }
-    s.vel       = {
-      x: Math.cos(azimuth) * Math.cos(elevation) * speed,
-      y: Math.sin(elevation) * speed,
-      z: Math.sin(azimuth)  * Math.cos(elevation) * speed,
-    }
-    Transform.getMutable(s.entity).position = { ...s.pos }
+  // Pool dry — steal the sparkles closest to expiry rather than emitting a
+  // half-burst. The oldest are already mid-fade, so the visual cost of cutting
+  // them short is far below the cost of a clean with no feedback.
+  const steal = pool
+    .filter((s) => s.active)
+    .sort((a, b) => (b.lifeMs / b.maxLifeMs) - (a.lifeMs / a.maxLifeMs))
+  for (const s of steal) {
+    if (claimed >= BURST_COUNT) return
+    launchSlot(s, pos)
     claimed++
   }
 }

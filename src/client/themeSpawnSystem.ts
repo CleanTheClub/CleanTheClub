@@ -25,7 +25,6 @@ import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase, gameState } from './phaseGate'
-import { setHoverHighlight } from './sceneItemHelpers'
 import { onClutterPoll, ClutterEntry } from './clutterWatcher'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
@@ -129,7 +128,6 @@ function disableClick(itemId: string) {
   wiredSlots.delete(itemId)
   const entity = slotEntities.get(itemId)
   if (!entity) return
-  setHoverHighlight(entity, false)
   pointerEventsSystem.removeOnPointerDown(entity)
   pointerEventsSystem.removeOnPointerHoverEnter(entity)
   PointerEvents.deleteFrom(entity)
@@ -147,11 +145,7 @@ function enableClick(itemId: string) {
   if (!src || !slotModelLoaded(entity)) return
   wiredSlots.add(itemId)
   const stream = classifyRubbish(src)
-  pointerEventsSystem.onPointerHoverEnter({ entity }, () => {
-    playHoverSound()
-    setHoverHighlight(entity, true)
-  })
-  pointerEventsSystem.onPointerHoverLeave({ entity }, () => setHoverHighlight(entity, false))
+  pointerEventsSystem.onPointerHoverEnter({ entity }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
     {
       entity,

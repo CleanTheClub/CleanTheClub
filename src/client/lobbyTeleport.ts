@@ -37,14 +37,18 @@ export function initLobbyTeleport(): void {
     const prev = lastPhase
     lastPhase = phase
 
+    // Both moves are fire-and-forget; a rejection (restricted-actions refusal)
+    // must not become an unhandled-rejection scene crash.
     // Match ended → re-gather at the entrance.
     if (phase === 'lobby' && (prev === 'playing' || prev === 'open')) {
       movePlayerTo({ newRelativePosition: ENTRANCE_POS, avatarTarget: ENTRANCE_TARGET })
+        .catch((e) => console.log('[LOBBY] movePlayerTo failed:', e))
     }
 
     // Match started → drop entrance-stayers onto the dance floor; leave wanderers.
     if (phase === 'playing' && prev === 'lobby' && nearEntrance()) {
       movePlayerTo({ newRelativePosition: DANCEFLOOR_POS, avatarTarget: DANCEFLOOR_TARGET })
+        .catch((e) => console.log('[LOBBY] movePlayerTo failed:', e))
     }
   })
 }

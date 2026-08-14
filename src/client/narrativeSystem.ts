@@ -93,7 +93,7 @@ export function initNarrativeSystem(): void {
     if (phase === 'playing' && lastCall && !lastCallSeen) {
       lastCallSeen = true
       showNarrativeToast('LAST CALL — spotless! Empty your hands at a bin!')
-      playCrowdSound()   // the club salutes an early finish
+      playCrowdSound(1)   // the club salutes an early finish — biggest cheer of the night
     }
     if (phase !== 'playing' && lastCallSeen) lastCallSeen = false
 
@@ -145,7 +145,7 @@ export function initNarrativeSystem(): void {
         if (!firedMilestones.has(m.pct) && pctInt >= m.pct) {
           firedMilestones.add(m.pct)
           showNarrativeToast(m.text)
-          playCrowdSound()   // the club applauds the progress
+          playCrowdSound(m.pct / 100)   // the applause grows with the progress
         }
       }
 

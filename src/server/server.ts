@@ -86,13 +86,14 @@ type LbCategory = {
   key:         string
   title:       string
   scoreHeader: string
-  entries:     Array<{ displayName: string; score: string }>
+  // address rides along so clients can fetch profile portraits for the rows.
+  entries:     Array<{ displayName: string; score: string; address: string }>
 }
 
 function buildCategories(): LbCategory[] {
   const progress = allProgressRecords().filter((r) => r.displayName)
 
-  const topBy = <T,>(
+  const topBy = <T extends { address: string },>(
     items: T[],
     value: (t: T) => number,
     label: (t: T) => string,
@@ -102,7 +103,7 @@ function buildCategories(): LbCategory[] {
       .filter((t) => value(t) > 0)   // an all-zero board reads as broken, not empty
       .sort((a, b) => value(b) - value(a))
       .slice(0, LB_TOP_N)
-      .map((t) => ({ displayName: label(t), score: format(t) }))
+      .map((t) => ({ displayName: label(t), score: format(t), address: t.address }))
 
   return [
     {
@@ -117,7 +118,7 @@ function buildCategories(): LbCategory[] {
     {
       key: 'cleaned', title: 'TOP CLEANERS', scoreHeader: 'CLEANED',
       entries: topBy(
-        [...leaderboard.values()],
+        [...leaderboard.entries()].map(([address, e]) => ({ address, ...e })),
         (e) => e.total, (e) => e.displayName, (e) => String(e.total),
       ),
     },
@@ -145,10 +146,23 @@ function buildCategories(): LbCategory[] {
   ]
 }
 
+// Top all-time cleaners WITH addresses — the wall-of-fame slots need the
+// address to fetch each player's profile snapshot (categories carry names only,
+// which is all the text board needs). Must match the client's SLOT_COUNT.
+const PODIUM_N = 6
+
+function podiumEntries(): Array<{ address: string; displayName: string; total: number }> {
+  return [...leaderboard.entries()]
+    .filter(([, e]) => e.total > 0 && e.displayName)
+    .sort((a, b) => b[1].total - a[1].total)
+    .slice(0, PODIUM_N)
+    .map(([address, e]) => ({ address, displayName: e.displayName, total: e.total }))
+}
+
 function leaderboardJson(): string {
   // Categories only — the client falls back to treating a bare array as the legacy
   // single-board shape, so an older client against a newer server still renders.
-  return JSON.stringify({ categories: buildCategories() })
+  return JSON.stringify({ categories: buildCategories(), podium: podiumEntries() })
 }
 
 function broadcastLeaderboard(to?: string[]): void {
@@ -1229,6 +1243,9 @@ export function initServer() {
         if (getPhase() === 'playing') activePlayers.add(sessionId)
         else signedUp.add(sessionId)
         console.log(`[PARTICIPATION] ${sessionId} returned within grace — re-enrolled`)
+        // activePlayers changed mid-round → refresh the roster's cleaning
+        // flags, or spectate cameras can't see the re-enrolled cleaner.
+        broadcastRanks()
       }
     }
     // Always resync participation on entry — a suspended client's mirror is
@@ -1245,10 +1262,14 @@ export function initServer() {
     // gone — but remember active cleaners for the reconnect grace window.
     // carriedRubbish is deliberately KEPT: zeroing it here would make a reload a
     // free hands-empty (round start clears it anyway).
-    if (activePlayers.has(sessionId)) recentlyActive.set(sessionId, Date.now())
+    const wasActive = activePlayers.has(sessionId)
+    if (wasActive) recentlyActive.set(sessionId, Date.now())
     activePlayers.delete(sessionId)
     signedUp.delete(sessionId)
     contracts.delete(sessionId)
+    // A cleaner leaving changes the roster's cleaning flags — keep spectate
+    // target lists honest.
+    if (wasActive) broadcastRanks()
     // A hauler leaving puts the bin back at its station: anyone else can take
     // over (unlike carriedRubbish, keeping this would deadlock the stream —
     // the bin would be gone forever).
@@ -1292,12 +1313,20 @@ export function initServer() {
   //
   // The one ground truth that provably reaches the server is the message channel
   // itself — the same transport every clean and purchase already rides on. So
-  // presence is heartbeat-based: clients ping every ~5s (see leaderboardSystem),
+  // presence is heartbeat-based: clients ping every 12s (see leaderboardSystem),
   // any message refreshes its sender's lastSeen, and a player is only counted out
   // after PRESENCE_TIMEOUT_MS of silence. A reload never drops the count, because
   // the new connection pings under the same address well inside the window.
+  //
+  // BUDGET RULE: keep the timeout ≥5 missed pings. It was left at 30s when the
+  // request diet moved pings from 5s to 12s — a budget of 2.5 pings, so one
+  // alt-tab or app-switch counted a live player out. Solo, that emptied the
+  // club → lobby → the next arrival auto-started a fresh round-0 that enrolled
+  // everyone present — the "round restarts and the mid-round joiner can play"
+  // playtest bug. The ping is a dt-accumulator: it stops whenever the client's
+  // render loop stops, which backgrounded tabs and app-switches do routinely.
   const PRESENCE_POLL_MS    = 4_000
-  const PRESENCE_TIMEOUT_MS = 30_000   // ~2.5 missed 12s heartbeats
+  const PRESENCE_TIMEOUT_MS = 60_000   // 5 missed 12s heartbeats
 
   const lastSeen = new Map<string, number>()   // address → last message of any kind
 
@@ -1677,6 +1706,12 @@ export function initServer() {
   room.onMessage('startMatch', (_data, context) => {
     if (!context) return
     if (!paced(context.from, 'start', 1_000)) return
+    // Log rejected presses: a START pressed mid-round (a joiner's pre-sync UI
+    // used to offer one) was silently swallowed, leaving no trace to debug by.
+    if (getPhase() !== 'lobby') {
+      console.log(`[SERVER] startMatch from ${context.from.slice(0, 8)} ignored — phase '${getPhase()}'`)
+      return
+    }
     onStartMatch()
   })
 

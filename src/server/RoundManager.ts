@@ -1,6 +1,6 @@
 import { Entity } from '@dcl/sdk/ecs'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { RUBBISH_ID_PREFIX } from '../shared/glassDiscovery'
+import { RUBBISH_ID_PREFIX, isSpecialDrink } from '../shared/glassDiscovery'
 import {
   CLUTTER_DEFS,
   ROUND_DURATIONS_MS, OPEN_DISPLAY_MS, FINALE_DISPLAY_MS, MILESTONE_EVERY,
@@ -108,7 +108,11 @@ function applyThemeMask(): void {
     // else (sticky, glasses, resets) is governed by categories alone.
     let inRound: boolean
     if (cats === null) {
-      inRound = true
+      // Classic keeps the everyday mess but NOT the special drinks — the six
+      // cocktails/cans are themed-night set dressing (cocktail night keeps
+      // them via its 'glasses' category); on a plain shift they read as
+      // misplaced hero props (playtest ask).
+      inRound = !isSpecialDrink(nameFor?.(id) ?? '')
     } else if (def?.keepRubbishNames && id.startsWith(RUBBISH_ID_PREFIX)) {
       const name = nameFor?.(id) ?? ''
       inRound = def.keepRubbishNames.some((frag) => name.includes(frag))

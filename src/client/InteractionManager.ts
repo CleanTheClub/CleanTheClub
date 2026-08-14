@@ -1,7 +1,7 @@
 import { engine, Entity, Transform, pointerEventsSystem, PointerEvents, InputAction, PointerEventType, inputSystem, timers } from '@dcl/sdk/ecs'
 import { isMobile } from '@dcl/sdk/platform'
 import { isStateSyncronized } from '@dcl/sdk/network'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { room } from '../shared/messages'
 import { ClutterSync } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType, POP_BEATS, POP_BEAT_MS, POP_HIT_T, POP_FIRST_GRACE_MS } from '../shared/config'
@@ -134,7 +134,7 @@ function tryClean(
 ) {
   if (pendingCleans.has(id)) return
   const syncEnt = findClutterEntity(id)
-  if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
   pendingCleans.add(id)
   registerSpreeHit()
   disableClick(id)            // remove prompt immediately while pending
@@ -147,6 +147,12 @@ function tryClean(
 
 function enableClick(id: string) {
   if (!clicksAllowed()) return  // pointer events only live during the 'playing' phase
+  // Never arm an already-cleaned item. Callers race the authoritative watcher —
+  // most visibly the spawn director's onPopped, which could re-enable a patch
+  // that was cleaned while its pop-in was still queued, leaving a hoverable
+  // "ghost" that ate clicks with no feedback for the rest of the round.
+  const syncEnt = findClutterEntity(id)
+  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
   const ref = itemRefs.get(id)
   if (!ref) return
   const { entity, type } = ref
@@ -159,7 +165,7 @@ function enableClick(id: string) {
       () => {
         if (pendingCleans.has(id) || activeHold || activeRhythm) return
         const syncEnt = findClutterEntity(id)
-        if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+        if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         // Reach gate — pointer rays pass through pointer-layer-free walls/floors,
         // so a patch upstairs was moppable from below. Real distance check instead.
@@ -193,7 +199,7 @@ function enableClick(id: string) {
       () => {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
-        if (syncEnt && ClutterSync.get(syncEnt).isCleaned) return
+        if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
 
         playCleanSound()               // instant audio feedback on click
@@ -250,10 +256,8 @@ export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
   pointerEventsSystem.removeOnPointerHoverEnter(old)
   PointerEvents.deleteFrom(old)
   ref.entity = gltfEntity
-  if (!pendingCleans.has(itemId)) {
-    const syncEnt = findClutterEntity(itemId)
-    if (!syncEnt || !ClutterSync.get(syncEnt).isCleaned) enableClick(itemId)
-  }
+  // enableClick itself refuses cleaned items — the one home of that check.
+  if (!pendingCleans.has(itemId)) enableClick(itemId)
 }
 
 /**
@@ -268,10 +272,7 @@ export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
 export function registerDisasterHold(itemId: string, entity: Entity) {
   if (itemRefs.has(itemId)) return
   itemRefs.set(itemId, { entity, type: 'hold', posEntity: entity })
-  if (!pendingCleans.has(itemId)) {
-    const syncEnt = findClutterEntity(itemId)
-    if (!syncEnt || !ClutterSync.get(syncEnt).isCleaned) enableClick(itemId)
-  }
+  if (!pendingCleans.has(itemId)) enableClick(itemId)
 }
 
 /**
@@ -313,7 +314,7 @@ export function initInteractionManager(
 
   // On scene (re-)entry clear all stale client state so the ClutterSync watcher
   // treats every item as freshly unseen and correctly re-enables uncleaned ones.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     if (activeHold) {
       showHoldBar(false)
       stopStickySound()
@@ -521,8 +522,6 @@ export function initInteractionManager(
     if (phase === 'playing') {
       for (const [id] of itemRefs) {
         if (pendingCleans.has(id)) continue
-        const syncEnt = findClutterEntity(id)
-        if (syncEnt && ClutterSync.get(syncEnt).isCleaned) continue
         enableClick(id)
       }
     } else {

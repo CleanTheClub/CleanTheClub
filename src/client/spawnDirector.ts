@@ -28,6 +28,9 @@ type SpawnReq = {
   toScale:   { x: number; y: number; z: number }
   isReady:   () => boolean
   onPopped?: () => void
+  /** Checked just before the pop runs — a queued spawn whose item was cleaned
+   *  in the meantime must be dropped, not popped back into view. */
+  isCancelled?: () => boolean
 }
 
 // Tunables — raise SETUP_STAGGER_S if loading still spikes (slower, gentler).
@@ -91,6 +94,10 @@ function directorTick(dt: number): void {
 
   // ── Spawn queue (visual pops) ────────────────────────────────────────────────
   if (spawnQueue.length > 0) {
+    // Cancelled requests leave the queue without popping (cleaned while queued).
+    for (let i = spawnQueue.length - 1; i >= 0; i--) {
+      if (spawnQueue[i].isCancelled?.()) spawnQueue.splice(i, 1)
+    }
     spawnAcc += dt
     if (spawnAcc >= SPAWN_STAGGER_S) {
       const req = runFirstReady(spawnQueue)

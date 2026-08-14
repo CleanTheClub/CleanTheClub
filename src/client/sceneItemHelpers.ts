@@ -1,6 +1,6 @@
 import {
   engine, Entity, Transform, GltfContainer, GltfContainerLoadingState,
-  LoadingState, Name, MeshCollider, ColliderLayer, GltfNodeModifiers } from '@dcl/sdk/ecs'
+  LoadingState, Name, MeshCollider, ColliderLayer } from '@dcl/sdk/ecs'
 import { isMobile } from '@dcl/sdk/platform'
 
 // ── Mobile tap targets ────────────────────────────────────────────────────────
@@ -54,47 +54,12 @@ const MOBILE_TAP_SCALE = 1.4
 // but still clickable and collectible" item can't happen.
 //
 // REVERT to true if small items become hard to tap again — it is one flag.
-const USE_MOBILE_TAP_PROXY = true
-
-// ── Hover highlight (the "outline" for proxied items) ────────────────────────
-// The native toon outline follows whatever the pointer ray HITS, and on mobile
-// that's the proxy box — which has no renderable, so proxied items could never
-// glow. Rather than choose between a big tap target and visible feedback, we
-// draw our own: GltfNodeModifiers with an EMPTY path applies a material
-// override to ALL nodes of a GLB (protocol: "if the path of the first modifier
-// is an empty string the configuration will affect all of the GLTF Nodes"), so
-// a hovered item lights up whatever its mesh hierarchy looks like — no
-// per-model node names needed.
-//
-// The override replaces the authored material, so a hovered item reads as a
-// bright tinted silhouette rather than its texture. On a phone that's a CLEARER
-// selection cue than a hairline outline, and it lasts only while aimed at.
-// Desktop keeps the real outline (no proxy there, so the ray hits the mesh).
-// OFF returns mobile to platform-standard behaviour: no highlight at all on
-// proxied items (the native outline needs the ray to hit the mesh, which the
-// proxy intercepts by design). ON substitutes our own. One switch either way.
-const MOBILE_HOVER_TINT = true
-const HOVER_TINT = { r: 1, g: 0.93, b: 0.55 }
-
-export function setHoverHighlight(gltfEnt: Entity | undefined, on: boolean): void {
-  if (gltfEnt === undefined || !MOBILE_HOVER_TINT || !USE_MOBILE_TAP_PROXY || !isMobile()) return
-  if (!on) { GltfNodeModifiers.deleteFrom(gltfEnt); return }
-  GltfNodeModifiers.createOrReplace(gltfEnt, {
-    modifiers: [{
-      path: '',                      // empty = every node in the GLB
-      material: {
-        material: {
-          $case: 'pbr' as const,
-          pbr: {
-            albedoColor:       { ...HOVER_TINT, a: 1 },
-            emissiveColor:     HOVER_TINT,
-            emissiveIntensity: 0.85,
-          },
-        },
-      },
-    }],
-  })
-}
+// The proxy machinery below (createMobileTapTarget, hasBakedOffset, the addBox
+// params at the call sites) is INERT while this is false; it is kept as the
+// documented revert path, not as live behaviour. The mobile hover-tint that
+// substituted for the outline on proxied items was deleted outright — restore
+// it from git history alongside the flag if ever needed.
+const USE_MOBILE_TAP_PROXY = false
 
 // ── Blender-baked placements ──────────────────────────────────────────────────
 // 20 of the scene's GLBs (MainStructure, Elevator, the cushions, stools, chaise,
@@ -155,7 +120,19 @@ function watchGlb(entity: Entity): void {
 // GLB_STUCK_S gets the same forced reload as an outright failure.
 const GLB_STUCK_S = 20
 
+// Recreates run one tick after the delete. A same-tick delete+create with
+// identical fields coalesces into an in-place PUT the renderer may treat as a
+// no-op (same reason server.ts staggers its bin resets: "never a same-tick
+// src swap"); the one-frame gap makes the delete real, so the create forces
+// an actual re-fetch.
+type GlbProps = Parameters<typeof GltfContainer.create>[1]
+const pendingGlbRecreate: Array<{ entity: Entity; props: GlbProps }> = []
+
 function glbWatchdogSystem(dt: number): void {
+  if (pendingGlbRecreate.length > 0) {
+    for (const r of pendingGlbRecreate) GltfContainer.createOrReplace(r.entity, r.props)
+    pendingGlbRecreate.length = 0
+  }
   glbWatchAcc += dt
   if (glbWatchAcc < GLB_WATCH_INTERVAL_S) return
   const tick = glbWatchAcc
@@ -182,12 +159,15 @@ function glbWatchdogSystem(dt: number): void {
     const stuck  = (st === LoadingState.LOADING || st === LoadingState.UNKNOWN) && w.stateAgeS >= GLB_STUCK_S
     if (failed || stuck) {
       w.reloads++
-      const src = GltfContainer.getOrNull(w.entity)?.src
-      if (!src) continue
+      const g = GltfContainer.getOrNull(w.entity)
+      if (!g?.src) continue
       const label = Name.getOrNull(w.entity)?.value ?? `entity ${w.entity}`
       console.log(`[GLB] '${label}' ${failed ? 'failed to load' : `stuck ${GLB_STATE_NAME[st]} ${Math.round(w.stateAgeS)}s`} — forcing reload ${w.reloads}/${GLB_RELOAD_LIMIT}`)
+      // ALL fields preserved, not just src — recreating with {src} alone
+      // dropped the visibleMeshesCollisionMask applyPointerMask had set, so a
+      // reloaded item came back unclickable.
+      pendingGlbRecreate.push({ entity: w.entity, props: { ...g } })
       GltfContainer.deleteFrom(w.entity)
-      GltfContainer.create(w.entity, { src })
       w.stateAgeS = 0
     }
   }
@@ -212,9 +192,16 @@ export function findGltfEntity(containerEntity: Entity): Entity | undefined {
 function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
   const g = GltfContainer.getOrNull(gltfEnt)
   if (!g) return false
+  const mut = GltfContainer.getMutable(gltfEnt)
   const mask = g.visibleMeshesCollisionMask ?? 0
-  GltfContainer.getMutable(gltfEnt).visibleMeshesCollisionMask =
+  mut.visibleMeshesCollisionMask =
     clear ? (mask & ~ColliderLayer.CL_POINTER) : (mask | ColliderLayer.CL_POINTER)
+  // A GLB's authored _collider meshes default to PHYSICS+POINTER. An invisible
+  // collider that wins the pointer ray has nothing to outline — which is why
+  // some items never highlighted (playtest: "do I need to remove mesh
+  // colliders?" — no: keep the collider for physics, strip its POINTER layer
+  // so the ray lands on the visible mesh or the mobile proxy instead).
+  mut.invisibleMeshesCollisionMask = ColliderLayer.CL_PHYSICS
   return true
 }
 

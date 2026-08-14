@@ -18,26 +18,37 @@ export type RubbishType = 'general' | 'recycle'
 // Name fragments that mark an item recyclable: paper (napkins, polaroids) and
 // glass (broken bottles/glasses, drink cups). Only ever applied to items in the
 // Rubbish group, so the glass_/bottle_ collectible groups are unaffected.
+// Cocktails / soft drinks — glassware and cans, all recycling. These matter
+// for THEME SPAWNS: as scene items they inherit the Glasses group's stream,
+// but a spawned copy is classified from its model name alone, and an item
+// must behave identically wherever it came from. Exported as THE canonical
+// special-drink list — the server's theme mask uses it to keep these six off
+// classic rounds (themed-night set dressing only).
+export const SPECIAL_DRINK_NAME_PARTS = ['martini', 'negroni', 'smoothie', 'cosmiclatte', 'dclcan']
+// Names too short to use as fragments without catching something else —
+// matched exactly against the bare model name. ('gin' would match any future
+// "Ginger…"/"Engine…"; note 'latte' alone would already have matched
+// Gold_PLATTEr.)
+export const SPECIAL_DRINK_EXACT_NAMES = new Set(['gin'])
+
+/** True when a scene/model name is one of the six special drinks. */
+export function isSpecialDrink(name: string): boolean {
+  const n = name.toLowerCase()
+  const bare = n.slice(n.lastIndexOf('/') + 1).replace('.glb', '')
+  if (SPECIAL_DRINK_EXACT_NAMES.has(bare)) return true
+  return SPECIAL_DRINK_NAME_PARTS.some((frag) => n.includes(frag))
+}
+
 const RECYCLE_NAME_PARTS = [
   'napkin', 'polaroid', 'bottle', 'glass', 'drink',
-  // Cocktails / soft drinks — glassware and cans, all recycling. These matter
-  // for THEME SPAWNS: as scene items they inherit the Glasses group's stream,
-  // but a spawned copy is classified from its model name alone, and an item
-  // must behave identically wherever it came from.
-  'martini', 'negroni', 'smoothie', 'cosmiclatte', 'dclcan',
+  ...SPECIAL_DRINK_NAME_PARTS,
 ]
-
-// Models whose name is too short to use as a fragment without catching
-// something else. Matched against the full model name instead.
-// ('gin' would match any future "Ginger…"/"Engine…"; note 'latte' alone would
-// already have matched Gold_PLATTEr.)
-const RECYCLE_EXACT_NAMES = new Set(['gin'])
 
 export function classifyRubbish(name: string): RubbishType {
   const n = name.toLowerCase()
   // Accepts a scene Name or a GLB path — reduce to the bare model name first.
   const bare = n.slice(n.lastIndexOf('/') + 1).replace('.glb', '')
-  if (RECYCLE_EXACT_NAMES.has(bare)) return 'recycle'
+  if (SPECIAL_DRINK_EXACT_NAMES.has(bare)) return 'recycle'
   return RECYCLE_NAME_PARTS.some((p) => n.includes(p)) ? 'recycle' : 'general'
 }
 

@@ -6,7 +6,7 @@
 // round end so the player is never left permanently slow.
 
 import { engine, Transform, AvatarLocomotionSettings, timers } from '@dcl/sdk/ecs'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { gameState } from './phaseGate'
 import { discoverStickyPatches } from '../shared/glassDiscovery'
 import { playSquelchSound } from './soundManager'
@@ -61,7 +61,7 @@ export function initStickyHazardSystem(): void {
   // On scene re-entry the slow timer may have been cancelled (fired while the player
   // was outside the parcel) and AvatarLocomotionSettings can persist on PlayerEntity.
   // Reset everything so the player starts fresh with normal movement speed.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     occupiedPatches.clear()
     if (isSlowed) restoreSpeed()
   })

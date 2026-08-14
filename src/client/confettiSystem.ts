@@ -137,6 +137,17 @@ function stopCelebration(): void {
 /** Admin test hook — stop emitting; pieces already falling finish their arc. */
 export function stopCelebrationNow(): void { stopCelebration() }
 
+/**
+ * Reaching CLUB OWNER — the top of the ladder, once per career. Full finale
+ * barrage for several seconds, standalone so it can fire whatever phase the
+ * promoting shift ended in.
+ */
+export function ownerCelebration(): void {
+  fire('optimal', true)
+  if (oneShotTimer) clearTimeout(oneShotTimer)
+  oneShotTimer = setTimeout(() => { oneShotTimer = null; allIdle() }, 6_000)
+}
+
 export function initConfettiSystem(): void {
   for (let i = 0; i < CANNONS.length; i++) {
     const c = CANNONS[i]

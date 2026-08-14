@@ -40,6 +40,11 @@ type Pedestal = {
 }
 const pedestals: Pedestal[] = []
 
+// World-space label size — the authored 3 fit the short placeholder line, but
+// the live strings run ~2.5× wider ("UNLOCKED — CLICK TO EQUIP") and clipped
+// through the walls. Applied once at wiring, covering the authored text too.
+const PEDESTAL_FONT_SIZE = 2
+
 // One-shot celebration per gear per session when an unlock is first SEEN —
 // the moment usually lands mid-shift via a progressUpdate, not at a pedestal.
 const celebrated = new Set<string>()
@@ -94,6 +99,10 @@ export function initGearPedestals(): void {
       }
     }
     if (!textEnt) console.log(`[GEAR] pedestal '${def.gear}' has no TextShape sibling — text updates skipped`)
+    if (textEnt) {
+      const ts0 = TextShape.getMutableOrNull(textEnt)
+      if (ts0) ts0.fontSize = PEDESTAL_FONT_SIZE
+    }
     pedestals.push({ gear: def.gear, itemEnt, textEnt, lastLine: '' })
 
     // Placed GLBs aren't clickable by default — the same pointer-mask +

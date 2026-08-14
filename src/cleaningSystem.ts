@@ -4,6 +4,7 @@ import { discoverStickyPatches } from './shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from './client/sceneItemHelpers'
 import { initInteractionManager, updateSceneHoldGltf } from './client/InteractionManager'
 import { requestSpawn, requestSetup } from './client/spawnDirector'
+import { clutterEntry } from './client/clutterWatcher'
 import { setHoldBarVisible, setHoldBarProgress } from './ui'
 
 // Dirty entities are what players interact with (pointer events registered on these).
@@ -25,7 +26,8 @@ export function applyCleanState(id: string, isCleaned: boolean) {
     const t = Transform.getOrNull(dirty)
     if (t) originalDirtyScales.set(id, { x: t.scale.x, y: t.scale.y, z: t.scale.z })
   }
-  const t = Transform.getMutable(dirty)
+  const t = Transform.getMutableOrNull(dirty)
+  if (!t) return
   if (isCleaned) {
     t.scale = Vector3.Zero()
   } else {
@@ -70,7 +72,18 @@ export function spawnInSticky(id: string, onPopped: () => void) {
     entity:  ent,
     toScale,
     isReady: () => stickyReady.has(id),
-    onPopped,
+    // The clean may land while the pop is queued or mid-tween. Cancelled reqs
+    // are dropped by the director; the onPopped re-check catches a clean that
+    // arrived DURING the 0.45s tween, re-hiding instead of arming a ghost that
+    // looks moppable but silently eats every click.
+    isCancelled: () => clutterEntry(id)?.isCleaned === true,
+    onPopped: () => {
+      if (clutterEntry(id)?.isCleaned === true) {
+        applyCleanState(id, true)
+        return
+      }
+      onPopped()
+    },
   })
 }
 

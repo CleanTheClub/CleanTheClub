@@ -10,9 +10,9 @@
 // state is enough to drive the UI — no subscription plumbing needed.
 
 import { room } from '../shared/messages'
-import { UpgradeId, AchievementState } from '../shared/progression'
+import { UpgradeId, AchievementState, JOB_TITLES } from '../shared/progression'
 import { playMoneySound, playPromotionSound } from './soundManager'
-import { promotionBurst, purchaseBurst } from './confettiSystem'
+import { promotionBurst, purchaseBurst, ownerCelebration } from './confettiSystem'
 
 export type ShiftPayout = {
   money:  number
@@ -140,7 +140,11 @@ export function initProgressionStore(): void {
       // shift-end promotions and admin rank grants alike.
       if (next.promotedTo) {
         playPromotionSound()
-        promotionBurst()
+        // The FINAL promotion is the career's summit — one full finale barrage
+        // instead of the standard pop (playtest: "something special needs to
+        // happen when I rank up to Club Owner").
+        if (next.promotedTo === JOB_TITLES[JOB_TITLES.length - 1]) ownerCelebration()
+        else promotionBurst()
         lastPromotion = { title: next.promotedTo, rank: next.rank, ms: Date.now() }
       }
       // Purchase celebration — a level ROSE versus the previous mirror (the join

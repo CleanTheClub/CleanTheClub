@@ -9,8 +9,8 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer, timers } from '@dcl/sdk/ecs'
-import { getUserData } from '~system/UserIdentity'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer } from '@dcl/sdk/ecs'
+import { onOwnAddress } from './localPlayer'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
@@ -420,16 +420,21 @@ function refreshCarriedBag(): void {
   // grows it in place; the offset no longer needs to move with size.
   // A hauled bin shows at native scale; the container otherwise grows with load.
   const binInHand = hauling !== ''
+  const vacMode = !holdTest && !binInHand && usingVacuum()
   const frac = binInHand ? 1 : Math.min(1, total / Math.max(1, capacity))
   // Hold-test shows the auditioned model at its native scale — judge it raw.
-  const size = holdTest || binInHand ? 1 : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
+  // The vacuum swells noticeably more than the box — the machine IS the pile.
+  const size = holdTest || binInHand ? 1
+    : vacMode ? 0.9 + 0.5 * frac
+    : BAG_MIN + (BAG_MAX - BAG_MIN) * frac
   const bagTf = bagEntity && Transform.getMutableOrNull(bagEntity)
   if (bagTf) bagTf.scale = { x: size, y: size, z: size }
 
   // Stink cloud appears exactly at capacity, disappears the moment space frees.
   // A hauled FULL bin stinks all the way out; the emptied bin rides home clean.
   // Hold-test props never stink — it's a fitting room, not a shift.
-  const full = !holdTest && ((haulDisplay && haulStage === 'out') || (!haulDisplay && total >= capacity))
+  const full = !holdTest && ((haulDisplay && haulStage === 'out')
+    || (!haulDisplay && (vacMode ? frac >= BIN_STINK_FRACTION : total >= capacity)))
   if (full && !fullStinkEntity && carryRig) {
     fullStinkEntity = engine.addEntity()
     Transform.create(fullStinkEntity, {
@@ -468,9 +473,9 @@ function refreshCarriedBag(): void {
   // Newest items on top of the pile; slots are reused, never re-created.
   // While hauling the single decoration is the BIN itself (the one that
   // vanished from its station). Hold-test shows the audited model alone.
-  // No minis while hauling — the bin IS the held prop on the way out, and the
-  // return leg is deliberately empty-handed-looking.
-  const visible = holdTest || haulDisplay ? [] : carriedModels.slice(-MAX_VISIBLE_ITEMS)
+  // No minis while hauling (the bin IS the held prop) — and none on the
+  // vacuum: sucked rubbish is INSIDE it, so the machine swells instead.
+  const visible = holdTest || haulDisplay || vacMode ? [] : carriedModels.slice(-MAX_VISIBLE_ITEMS)
   for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
     const src = visible[i]
     if (src) {
@@ -557,6 +562,19 @@ export const getHaulDebug = () => ({
   ownKnown: ownAddress !== '',
   ghosts: remoteCarries.size,
 })
+
+/** True while the player's ACTIVE container is the Vacuum (not hauling a bin,
+ *  not a flex showpiece). Vacuum changes the pickup FEEL: no bend-down emote,
+ *  no item pile on top — rubbish is sucked, so the machine itself swells,
+ *  pulses and reeks with the load instead. */
+export function usingVacuum(): boolean {
+  if (hauling !== '') return false
+  return carryGearModel({
+    carryCapacity: upgradeLevel('carryCapacity'),
+    portableBin:   upgradeLevel('portableBin'),
+    vacuum:        upgradeLevel('vacuum'),
+  }, getFlexGear()) === 'Vacuum'
+}
 
 export const isCarryFull       = (): boolean => known && (hauling !== '' || carriedGeneral + carriedRecycle >= capacity)
 
@@ -655,29 +673,16 @@ function updateRemoteCarry(address: string, total: number, capacity: number, hau
 
 export function initCarrySystem(): void {
   // Own address, to skip self in the public carry broadcasts (the local rig
-  // already renders our own hands).
-  // Retried: a single failed/slow resolve used to leave ownAddress empty for
-  // the whole session, which (with the guard above) would mean no remote carry
-  // visuals at all.
-  const resolveOwnAddress = (attempt = 0): void => {
-    getUserData({}).then((d) => {
-      ownAddress = (d.data?.userId ?? '').toLowerCase()
-      if (ownAddress === '') {
-        if (attempt < 10) timers.setTimeout(() => resolveOwnAddress(attempt + 1), 1_000)
-        else console.log('[CARRY] own address never resolved — remote carry visuals disabled')
-        return
-      }
-      console.log(`[CARRY] own address resolved (${ownAddress.slice(0, 8)}…)`)
-    // getUserData resolves asynchronously, so any carryPublic that arrived
-    // BEFORE it landed was treated as another player's and rendered as a
-    // remote prop attached to our OWN avatar. Local teardown never touches it
-    // (it lives in remoteCarries) and every later message is skipped by the
-    // self-check above, so it stuck to the hand forever — the bin that stayed
-    // in hand after returning it, and survived the round reset (playtest).
-      removeRemoteCarry(ownAddress)
-    })
-  }
-  resolveOwnAddress()
+  // already renders our own hands). Resolution + retries live in localPlayer.
+  onOwnAddress((addr) => {
+    ownAddress = addr
+    console.log(`[CARRY] own address resolved (${ownAddress.slice(0, 8)}…)`)
+    // Any carryPublic that arrived BEFORE the address landed was treated as
+    // another player's and rendered as a remote prop attached to our OWN
+    // avatar — and it stuck to the hand forever (local teardown never touches
+    // remoteCarries; every later message is skipped by the self-check).
+    removeRemoteCarry(ownAddress)
+  })
 
   room.onMessage('carryPublic', (data) => {
     const addr = data.address.toLowerCase()

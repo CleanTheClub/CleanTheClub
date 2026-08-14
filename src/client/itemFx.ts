@@ -55,12 +55,77 @@ export function shrinkAndHide(
 
 // Stops an in-flight shrink (e.g. when the server rejects the clean). Does NOT
 // restore scale — the caller decides whether to restore the item to full size.
+// DOES restore a suck's original position, or a rejected vacuum clean would
+// leave the item standing wherever the tween had dragged it.
 export function cancelShrink(entity: Entity): void {
   const sys = active.get(entity)
   if (sys) {
     engine.removeSystem(sys)
     active.delete(entity)
   }
+  restoreSuckOrigin(entity)
+}
+
+// ─── Suck-to-player (vacuum pickup) ────────────────────────────────────────────
+// The vacuum doesn't pluck items — it INHALES them: the item accelerates toward
+// the player while shrinking, like dust into a nozzle.
+//
+// The item's ORIGINAL position is captured and restored the moment it finishes
+// (it's invisible by then) — these composite entities are reused for respawns,
+// and an item that respawned wherever the player had been standing would be a
+// far worse bug than any visual polish. Same restore on cancel (rejected clean).
+const suckOrigins = new Map<Entity, { x: number; y: number; z: number }>()
+
+function restoreSuckOrigin(entity: Entity): void {
+  const orig = suckOrigins.get(entity)
+  if (!orig) return
+  suckOrigins.delete(entity)
+  const tr = Transform.getMutableOrNull(entity)
+  if (tr) tr.position = { x: orig.x, y: orig.y, z: orig.z }
+}
+
+export function suckAndHide(
+  entity: Entity,
+  durationS: number,
+  onComplete?: () => void,
+): void {
+  cancelShrink(entity)
+
+  const t = Transform.getOrNull(entity)
+  if (!t) { onComplete?.(); return }
+  const from      = { x: t.scale.x, y: t.scale.y, z: t.scale.z }
+  const start     = { x: t.position.x, y: t.position.y, z: t.position.z }
+  suckOrigins.set(entity, start)
+
+  const sys = tweenValue(
+    0,
+    1,
+    durationS,
+    (k) => {
+      const tr = Transform.getMutableOrNull(entity)
+      if (!tr) return
+      // Chase the player's LIVE position — they keep moving mid-suck.
+      const p = Transform.getOrNull(engine.PlayerEntity)?.position ?? start
+      const target = { x: p.x, y: p.y + 0.6, z: p.z }   // roughly nozzle height
+      tr.position = {
+        x: start.x + (target.x - start.x) * k,
+        y: start.y + (target.y - start.y) * k,
+        z: start.z + (target.z - start.z) * k,
+      }
+      const s = 1 - k
+      tr.scale = { x: from.x * s, y: from.y * s, z: from.z * s }
+    },
+    () => {
+      active.delete(entity)
+      const tr = Transform.getMutableOrNull(entity)
+      if (tr) tr.scale = { x: HIDDEN_SCALE, y: HIDDEN_SCALE, z: HIDDEN_SCALE }
+      restoreSuckOrigin(entity)   // invisible now — put it back for the respawn
+      onComplete?.()
+    },
+    // Ease-IN: starts slow, accelerates into the nozzle — reads as suction.
+    EasingFunction.EF_EASEINCUBIC,
+  )
+  active.set(entity, sys)
 }
 
 // ─── Pop-in ─────────────────────────────────────────────────────────────────────

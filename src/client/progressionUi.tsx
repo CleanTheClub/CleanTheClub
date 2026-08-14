@@ -9,7 +9,8 @@
 // width — never a fixed virtual-pixel width, which does not reach the screen edges
 // on aspects wider than 16:9.
 
-import ReactEcs, { UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
+import ReactEcs, { UiEntity, Label } from '@dcl/sdk/react-ecs'
+import { GameButton } from './uiButton'
 import { Color4 } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
 import { theme } from './theme'
@@ -189,10 +190,10 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
 
       {/* Promotion progress. At max rank the bar is full and labelled, rather than
           showing a bar that can never fill. */}
-      <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: Math.round(6 * Z) } }}
+      <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: Math.round(6 * Z) }, borderRadius: Math.round(barH / 2) }}
         uiBackground={{ color: TRACK }}>
         <UiEntity
-          uiTransform={{ width: Math.round(barW * frac), height: barH }}
+          uiTransform={{ width: Math.round(barW * frac), height: barH, borderRadius: Math.round(barH / 2) }}
           uiBackground={{ color: fillColor }}
         />
       </UiEntity>
@@ -488,7 +489,9 @@ export function ShiftPayoutPanel(
 
         {c.promotedTo && (
           <Label
-            value={`PROMOTED — ${c.promotedTo}!`}
+            value={c.promotedTo === JOB_TITLES[JOB_TITLES.length - 1]
+              ? 'YOU OWN THE CLUB NOW!'
+              : `PROMOTED — ${c.promotedTo}!`}
             fontSize={Math.round(20 * Z)}
             color={GOLD}
             uiTransform={{ margin: { top: Math.round(8 * Z) } }}
@@ -651,7 +654,9 @@ export function PromotionBanner({ S, centerStage = false }: { S: number; centerS
 const UPGRADE_ICONS: Record<string, string> = {
   movementSpeed: 'assets/scene/UI/upgrade_movementSpeed.png',
   moppingSpeed:  'assets/scene/UI/upgrade_moppingSpeed.png',
-  carryCapacity: 'assets/scene/UI/upgrade_carryCapacity.png',
+  // Same art as the HUD carry chip — the row points at the exact element the
+  // purchase improves (and the texture is already resident for the HUD).
+  carryCapacity: 'assets/scene/UI/carry_bag_chip.png',
   portableBin:   'assets/scene/UI/upgrade_portableBin.png',
   vacuum:        'assets/scene/UI/upgrade_vacuum.png',
 }
@@ -736,7 +741,10 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
     >
       <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
         <UiEntity
-          uiTransform={{ width: icon, height: icon, margin: { right: Math.round(12 * S) } }}
+          // flexShrink 0: rows under width pressure (locked rows swap the
+          // fixed-width buy button for a free-width label) steal width from
+          // the icon, squashing the square art into a portrait sliver.
+          uiTransform={{ width: icon, height: icon, flexShrink: 0, margin: { right: Math.round(12 * S) } }}
           uiBackground={{ texture: { src: UPGRADE_ICONS[def.id] }, textureMode: 'stretch', color: WHITE }}
         />
         <UiEntity uiTransform={{ flexDirection: 'column' }}>
@@ -763,7 +771,7 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
       {maxed || locked ? (
         <Label value={statusLabel} fontSize={small} color={locked ? theme.colors.tertiary : GOLD} />
       ) : (
-        <Button
+        <GameButton
           value={statusLabel}
           variant={affordable ? 'primary' : 'secondary'}
           fontSize={Math.round(17 * S)}
@@ -987,7 +995,7 @@ export function CareerIntroOverlay({ S }: { S: number }) {
             textAlign="middle-center"
             uiTransform={{ margin: { top: gap } }}
           />
-          <Button
+          <GameButton
             value="NEXT"
             variant="primary"
             fontSize={Math.round(24 * Z)}
@@ -1003,9 +1011,9 @@ export function CareerIntroOverlay({ S }: { S: number }) {
           <Label value={rung} fontSize={body} color={SUBTLE}
             uiTransform={{ margin: { top: Math.round(4 * Z) } }} />
 
-          <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: gap } }}
+          <UiEntity uiTransform={{ width: barW, height: barH, margin: { top: gap }, borderRadius: Math.round(barH / 2) }}
             uiBackground={{ color: TRACK }}>
-            <UiEntity uiTransform={{ width: Math.round(barW * frac), height: barH }}
+            <UiEntity uiTransform={{ width: Math.round(barW * frac), height: barH, borderRadius: Math.round(barH / 2) }}
               uiBackground={{ color: XP_FILL }} />
           </UiEntity>
           <Label
@@ -1028,7 +1036,7 @@ export function CareerIntroOverlay({ S }: { S: number }) {
             />
           )}
 
-          <Button
+          <GameButton
             value={newbie ? "LET'S CLEAN!" : 'BACK TO WORK'}
             variant="primary"
             fontSize={Math.round(26 * Z)}
@@ -1044,7 +1052,7 @@ export function CareerIntroOverlay({ S }: { S: number }) {
 /** Small button that opens the shop; shown in the lobby and between shifts. */
 export function ShopButton({ S }: { S: number }) {
   return (
-    <Button
+    <GameButton
       value="UPGRADES"
       variant="secondary"
       fontSize={Math.round(20 * S)}

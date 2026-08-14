@@ -38,10 +38,10 @@
 
 import {
   ColliderLayer, engine, Entity, InputModifier, MainCamera, PlayerIdentityData,
-  RaycastQueryType, raycastSystem, Transform, VirtualCamera,
+  RaycastQueryType, raycastSystem, timers, Transform, VirtualCamera,
 } from '@dcl/sdk/ecs'
 import { Vector3 } from '@dcl/sdk/math'
-import { currentPhase } from './phaseGate'
+import { currentPhase, gameState } from './phaseGate'
 import { isActive } from './participation'
 import { rankInfoFor } from './rankBadgeSystem'
 
@@ -68,7 +68,9 @@ const CAM_LERP_K   = 3.0
 const FOCUS_LERP_K = 6.0
 const ENGAGE_TRANSITION_S = 0.8   // fly-in/out between real and virtual camera
 const RESCAN_S     = 0.5    // candidate roster scan cadence
+const RAY_INTERVAL_S = 0.15 // wall-ray cadence — stale-tolerant, camArm eases
 const NO_TARGET_GRACE_S = 3 // targets gone this long → give the camera back
+const GS_NULL_EXIT_S = 2    // GameState missing this long → bail out safely
 const PROBE_AT_S   = 1.5    // after the fly-in; ~0 distance means honored
 
 type TargetInfo = { name: string; title: string; rank: number }
@@ -84,7 +86,9 @@ let radius       = RADIUS_DEFAULT_M   // player-chosen zoom (before wall clamp)
 let rayHitLen: number | null = null   // latest wall-ray hit distance, if any
 let camArm       = RADIUS_DEFAULT_M   // smoothed actual arm length in use
 let rescanAcc    = 0
+let rayAcc       = 0
 let noTargetFor  = 0
+let gsNullFor    = 0
 
 // Candidates are the OTHER players in the scene, preferred down to those the
 // server flags as cleaning this round (roster `c`). If no flag has arrived yet
@@ -97,9 +101,11 @@ let targetAddress: string = ''
 
 export function isSpectating(): boolean { return spectating }
 
-/** How many players could be watched right now — drives the WATCH button. */
+/** How many players could be watched right now — drives the WATCH button.
+ *  Reads the cached roster (refreshed on the system's 0.5s cadence): this is
+ *  called from the UI render every frame, and a full entity scan + sort there
+ *  was measurable GC churn on mobile. */
 export function spectateTargetCount(): number {
-  refreshCandidates()
   return candidates.length
 }
 
@@ -125,7 +131,11 @@ function refreshCandidates(): void {
     if (info?.cleaning) flagged.push({ entity, address })
   }
 
-  const list = flagsKnown ? flagged : anyone
+  // Flags known but nobody flagged: trust presence over the roster — a flag
+  // can be stale (reconnect re-enrol) or missing (cleaner without a display
+  // name is skipped by the broadcast), and a live camera on a bystander beats
+  // ejecting the spectator while someone is visibly cleaning.
+  const list = flagsKnown && flagged.length > 0 ? flagged : anyone
   // Stable order so next/prev walks the same ring every time.
   list.sort((a, b) => (a.address < b.address ? -1 : 1))
   candidates = list
@@ -210,6 +220,8 @@ export function enterSpectate(): void {
   probed      = false
   elapsed     = 0
   noTargetFor = 0
+  gsNullFor   = 0
+  rayAcc      = RAY_INTERVAL_S   // first wall-ray fires immediately
   console.log(`[SPECTATE] enter — watching ${targetAddress} (${candidates.length} candidates)`)
 }
 
@@ -222,7 +234,13 @@ export function exitSpectate(reason: string): void {
     console.log(`[SPECTATE] MainCamera release FAILED: ${err}`)
   }
   InputModifier.deleteFrom(engine.PlayerEntity)
-  if (focusEntity) raycastSystem.removeRaycasterEntity(focusEntity)
+  if (focusEntity) {
+    // Twice: registration is deferred one tick inside the raycast helper, so a
+    // ray registered this frame could outlive an immediate removal.
+    const fe = focusEntity
+    raycastSystem.removeRaycasterEntity(fe)
+    timers.setTimeout(() => raycastSystem.removeRaycasterEntity(fe), 100)
+  }
   rayHitLen     = null
   targetEntity  = null
   targetAddress = ''
@@ -251,6 +269,14 @@ function armOffset(len: number): Vector3 {
 }
 
 function spectateSystem(dt: number): void {
+  // Candidate roster refresh runs whether or not the camera is live — the
+  // waiting overlay's WATCH button reads the cached count.
+  rescanAcc += dt
+  if (rescanAcc >= RESCAN_S) {
+    rescanAcc = 0
+    refreshCandidates()
+  }
+
   if (!spectating || !camEntity || !focusEntity) return
   elapsed += dt
 
@@ -259,6 +285,15 @@ function spectateSystem(dt: number): void {
   if (isActive()) { exitSpectate('promoted'); return }
   // Club emptied back to the lobby screen, which expects the normal camera.
   if (currentPhase() === 'lobby') { exitSpectate('lobby'); return }
+  // GameState gone (server redeploy / CRDT resync): the pre-sync UI branch
+  // hides the STOP button in exactly that state, so without this exit the
+  // player would be stuck behind the connecting scrim with input disabled.
+  if (!gameState()) {
+    gsNullFor += dt
+    if (gsNullFor >= GS_NULL_EXIT_S) { exitSpectate('gamestate_lost'); return }
+  } else {
+    gsNullFor = 0
+  }
 
   // One-shot probe: did the explorer actually honor the takeover? Purely a
   // diagnostic — the STOP button and watchdogs work either way.
@@ -273,15 +308,10 @@ function spectateSystem(dt: number): void {
   }
 
   // ── Target upkeep ────────────────────────────────────────────────────────────
-  rescanAcc += dt
-  if (rescanAcc >= RESCAN_S) {
-    rescanAcc = 0
-    refreshCandidates()
-    // Current target left the scene or stopped cleaning → move on, don't drop out.
-    if (!candidates.some((c) => c.address === targetAddress)) {
-      if (candidates.length > 0) setTarget(targetIdx % candidates.length)
-      else targetEntity = null
-    }
+  // Current target left the scene or stopped cleaning → move on, don't drop out.
+  if (!candidates.some((c) => c.address === targetAddress)) {
+    if (candidates.length > 0) setTarget(targetIdx % candidates.length)
+    else targetEntity = null
   }
 
   const tPos = targetEntity ? Transform.getOrNull(targetEntity)?.position : null
@@ -305,25 +335,31 @@ function spectateSystem(dt: number): void {
     fk,
   )
 
-  // Wall ray: focus → out along the arm. Re-registered every frame because the
-  // direction changes as the target moves and the player orbits; the result
-  // lands via callback a frame later, which is close enough for a camera.
+  // Wall ray: focus → out along the arm. Re-registered on a short throttle —
+  // each registration is a one-shot (create + auto-remove of two components),
+  // so doing it per frame was pure churn, and the result is a frame stale and
+  // eased by camArm anyway.
   const fullArm = armLengthFor(radius)
   const dir = armDir()
-  raycastSystem.registerGlobalDirectionRaycast(
-    {
-      entity: focusEntity,
-      opts: {
-        queryType:     RaycastQueryType.RQT_HIT_FIRST,
-        direction:     dir,
-        maxDistance:   fullArm + WALL_MARGIN_M,
-        collisionMask: ColliderLayer.CL_PHYSICS,   // what players collide with = what the camera shouldn't pass
+  rayAcc += dt
+  if (rayAcc >= RAY_INTERVAL_S) {
+    rayAcc = 0
+    raycastSystem.registerGlobalDirectionRaycast(
+      {
+        entity: focusEntity,
+        opts: {
+          queryType:     RaycastQueryType.RQT_HIT_FIRST,
+          direction:     dir,
+          maxDistance:   fullArm + WALL_MARGIN_M,
+          collisionMask: ColliderLayer.CL_PHYSICS,   // what players collide with = what the camera shouldn't pass
+        },
       },
-    },
-    (result) => {
-      rayHitLen = result.hits.length > 0 ? result.hits[0].length : null
-    },
-  )
+      (result) => {
+        if (!spectating) return   // late result after exit — ignore
+        rayHitLen = result.hits.length > 0 ? result.hits[0].length : null
+      },
+    )
+  }
 
   // Shorten instantly (a camera inside a wall can't be eased back out of it),
   // relax back to full length smoothly once the path clears.
@@ -335,7 +371,7 @@ function spectateSystem(dt: number): void {
     : camArm + (clamped - camArm) * (1 - Math.exp(-EXTEND_K * dt))
 
   const camT = Transform.getMutable(camEntity)
-  const desired = Vector3.add(focusT.position, armOffset(camArm))
+  const desired = Vector3.add(focusT.position, Vector3.scale(dir, camArm))
   const ck = 1 - Math.exp(-CAM_LERP_K * dt)
   camT.position = Vector3.lerp(camT.position, desired, ck)
 }

@@ -18,6 +18,8 @@ import {
   AvatarModifierArea, AvatarModifierType,
 } from '@dcl/sdk/ecs'
 import { Color3, Color4, Vector3 } from '@dcl/sdk/math'
+import { onLocalEnterScene } from './localPlayer'
+import { gameState } from './phaseGate'
 import { room } from '../shared/messages'
 
 // Rank index → tier colour. Tiers group the ladder: janitors (0-2), senior
@@ -211,16 +213,49 @@ function applyDistance(p: Plate): void {
 
 /**
  * Hides the explorer's own nametags across the club, so our plates replace them
- * rather than stacking under them. The box is generous vertically: the docs warn
- * the tag reappears if a player's head leaves the area (e.g. a double jump).
+ * rather than stacking under them.
+ *
+ * The volume must cover the WHOLE 16-parcel scene (64×64m), not just the club
+ * interior: the modifier hides the tag OF each avatar that is itself inside the
+ * volume, and the haul loop sends players to the dumpsters at x≈62 — outside
+ * the old 40m box, where their real tag popped back under our plate ("nametags
+ * sometimes visible", worst for haulers). Generous vertically too: the docs
+ * warn the tag reappears if a player's head leaves the area.
  */
-function initNametagHideArea(): void {
-  const area = engine.addEntity()
-  Transform.create(area, { position: Vector3.create(16, 12, 16) })
-  AvatarModifierArea.create(area, {
-    area:       Vector3.create(40, 40, 40),   // covers all 4 parcels + both floors
-    modifiers:  [AvatarModifierType.AMT_HIDE_NAMETAGS],
+let hideArea: Entity | null = null
+
+// While a round is live, clicking another avatar must not open the passport UI
+// (bio/inventory popup) — mid-haul it steals the pointer and the whole screen.
+// Passports come back in the lobby and celebration, where socialising is the
+// point.
+let passportsOff = false
+
+function armNametagHideArea(): void {
+  if (!hideArea) {
+    hideArea = engine.addEntity()
+    Transform.create(hideArea, { position: Vector3.create(32, 16, 32) })
+  }
+  AvatarModifierArea.createOrReplace(hideArea, {
+    area:       Vector3.create(68, 48, 68),   // all 16 parcels + margin, both storeys
+    modifiers:  passportsOff
+      ? [AvatarModifierType.AMT_HIDE_NAMETAGS, AvatarModifierType.AMT_DISABLE_PASSPORTS]
+      : [AvatarModifierType.AMT_HIDE_NAMETAGS],
     excludeIds: [],
+  })
+}
+
+function initNametagHideArea(): void {
+  armNametagHideArea()
+  // Re-arm on our own re-entry: a mobile app suspend/resume can drop runtime
+  // state without reloading the scene (same failure class the emote preload
+  // re-warms for), and a dead modifier area = real nametags back for everyone.
+  onLocalEnterScene(armNametagHideArea)
+
+  engine.addSystem(() => {
+    const off = gameState()?.phase === 'playing'
+    if (off === passportsOff) return
+    passportsOff = off
+    armNametagHideArea()
   })
 }
 

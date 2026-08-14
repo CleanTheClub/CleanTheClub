@@ -1,4 +1,5 @@
-import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label, Button } from '@dcl/sdk/react-ecs'
+import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label } from '@dcl/sdk/react-ecs'
+import { GameButton } from './client/uiButton'
 import { engine, EasingFunction, timers } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
@@ -11,6 +12,7 @@ import { theme } from './client/theme'
 import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
 import { getHaulDebug } from './client/carrySystem'
+import { cycleMobileLight } from './client/setup'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
 import { tierColorForRank } from './client/rankBadgeSystem'
@@ -243,7 +245,7 @@ const TOAST_DURATION: Record<ToastKind, number> = {
   narrative: 7_000,
 }
 
-function _addToast(entry: Omit<ToastEntry, 'id' | 'timerId'>) {
+function _addToast(entry: Omit<ToastEntry, 'id' | 'timerId'>, durationMs?: number) {
   const id = ++_toastId
   const t: ToastEntry = { ...entry, id }
   // timers.*, not the global setTimeout — engine-tick timers respect the scene
@@ -251,7 +253,7 @@ function _addToast(entry: Omit<ToastEntry, 'id' | 'timerId'>) {
   t.timerId = timers.setTimeout(() => {
     const i = activeToasts.findIndex(x => x.id === id)
     if (i !== -1) activeToasts.splice(i, 1)
-  }, TOAST_DURATION[entry.kind])
+  }, durationMs ?? TOAST_DURATION[entry.kind])
   activeToasts.push(t)
   playToastSound(entry.kind)
 }
@@ -282,9 +284,36 @@ export function showCollectionToast(kind: 'glasses' | 'bottles', count: number, 
   }
 }
 
+// ── Narrative toast queue ─────────────────────────────────────────────────────
+// One announcement at a time. A round end can legitimately produce five in the
+// same second (milestone + LAST CALL + outcome + achievement + disaster bonus)
+// — stacked they shout over each other and each rings its own full-volume
+// ding. Queued, it's the same information with one voice: followers run at a
+// shortened duration so the backlog clears quickly, the queue caps at 3 with
+// the OLDEST dropped (later announcements are the round's conclusions), and
+// back-to-back duplicates coalesce.
+const NARRATIVE_QUEUE_MAX = 3
+const NARRATIVE_FAST_MS   = 3_500
+const NARRATIVE_GAP_MS    = 400
+const narrativeQueue: string[] = []
+let narrativeActive = false
+
 /** Show a narrative pop-up with `text` overlaid on the NarrativeUI image. */
 export function showNarrativeToast(text: string) {
-  _addToast({ kind: 'narrative', text })
+  if (narrativeActive) {
+    if (narrativeQueue[narrativeQueue.length - 1] === text) return
+    narrativeQueue.push(text)
+    while (narrativeQueue.length > NARRATIVE_QUEUE_MAX) narrativeQueue.shift()
+    return
+  }
+  narrativeActive = true
+  const durationMs = narrativeQueue.length > 0 ? NARRATIVE_FAST_MS : TOAST_DURATION.narrative
+  _addToast({ kind: 'narrative', text }, durationMs)
+  timers.setTimeout(() => {
+    narrativeActive = false
+    const next = narrativeQueue.shift()
+    if (next !== undefined) showNarrativeToast(next)
+  }, durationMs + NARRATIVE_GAP_MS)
 }
 
 async function checkAdmin() {
@@ -350,6 +379,7 @@ const CONFETTI_TEST: Array<{ label: string; outcome: 'suboptimal' | 'adequate' |
   { label: 'FINALE',  outcome: 'optimal',    finale: true  },
 ]
 let adminConfettiIdx = 0
+let adminLightLabel = 'soft 1200'
 // When the themed-round story card started showing (round start / scene entry).
 // Long hold + late fade: reading time first, THEN the screen declutters.
 let themeStoryStartMs   = -1
@@ -693,8 +723,8 @@ function CarryChip({ S }: { S: number }) {
         {/* Portable Bin: empty on the spot, uses remaining in the label. Greyed
             (secondary) with empty hands — the server re-validates regardless. */}
         {getPortableLeft() > 0 && (
-          <Button
-            value={`EMPTY (${getPortableLeft()})`}
+          <GameButton
+            value={`EMPTY ON THE SPOT — ${getPortableLeft()} left`}
             variant={gen + rec > 0 ? 'primary' : 'secondary'}
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(150 * S), height: Math.round(44 * S), margin: { left: Math.round(12 * S) } }}
@@ -712,10 +742,30 @@ function CarryChip({ S }: { S: number }) {
 // there. Complementary to getSafeArea(), which handles the EXPLORER's own
 // chrome (chat, minimap, profile) — two different fields of
 // UiCanvasInformation, both needed.
+// A scrim must cover the PHYSICAL screen, and inside ScreenInsetArea '100%'
+// means only the notch-safe region — so the lobby darkness started just after
+// the device's speaker inset (playtest). The darkness is therefore drawn here,
+// OUTSIDE the inset, while the screens' CONTENT stays inset and clear of the
+// notch. Mirrors uiBody's screen order: career intro > lobby > spectate.
+const scrimActive = (): boolean => {
+  const phase   = getGameState()?.phase ?? 'lobby'
+  const waiting = isWaitingForMatch()
+  const isLobby = phase === 'lobby'
+  return isLobby || waiting || shouldShowCareerIntro(isLobby || waiting)
+}
+
 const ui = () => (
-  <ScreenInsetArea uiTransform={{ width: '100%', height: '100%' }}>
-    {uiBody()}
-  </ScreenInsetArea>
+  <UiEntity uiTransform={{ width: '100%', height: '100%' }}>
+    {scrimActive() && (
+      <UiEntity
+        uiTransform={{ positionType: 'absolute', position: { top: 0, left: 0 }, width: '100%', height: '100%' }}
+        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+      />
+    )}
+    <ScreenInsetArea uiTransform={{ width: '100%', height: '100%' }}>
+      {uiBody()}
+    </ScreenInsetArea>
+  </UiEntity>
 )
 
 // Hoisted render literals — rebuilt per frame otherwise.
@@ -941,6 +991,32 @@ const uiBody = () => {
   // a full-VIRT_W row with justifyContent:'center' (flex alignItems does NOT centre
   // reliably in this renderer). The column's justifyContent:'center' centres the
   // stack vertically. Fonts scale by S for mobile legibility.
+  // ── Pre-sync — no GameState yet (cold server boot / CRDT still syncing) ──────
+  // Without this branch the null phase fell through as 'lobby', which showed a
+  // full lobby screen — live START NOW included — to a player who might really
+  // be joining mid-round; their stale press could genuinely start a match the
+  // moment the server dropped to the lobby (see the presence-timeout note in
+  // server.ts). A joiner sees this holding screen for the first moments instead.
+  if (!gs) {
+    return (
+      <UiEntity
+        uiTransform={{
+          positionType: 'absolute', position: { top: 0, left: 0 },
+          ...FULL_SCREEN_SCRIM,
+          flexDirection: 'column', justifyContent: 'center',
+        }}
+        /* darkness drawn full-bleed in ui() — inner bg removed to avoid a double-dark seam at the inset edge */
+      >
+        <UiEntity uiTransform={{ ...FULL_WIDTH_ROW, margin: { bottom: Math.round(14 * S) } }}>
+          <Label value="Connecting to the club…" fontSize={Math.round(40 * S)} color={WHITE} />
+        </UiEntity>
+        <UiEntity uiTransform={FULL_WIDTH_ROW}>
+          <Label value="The night is loading. One second." fontSize={Math.round(22 * S)} color={COLOR_SUBTLE} />
+        </UiEntity>
+      </UiEntity>
+    )
+  }
+
   if (isLobby) {
     const titleW = mobile ? 1040 : 820
     const titleH = Math.round(titleW / 8)            // InstructionsUI.png is 1024×128 (8:1)
@@ -952,7 +1028,7 @@ const uiBody = () => {
           ...FULL_SCREEN_SCRIM,
           flexDirection: 'column', justifyContent: 'center',
         }}
-        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+        /* darkness drawn full-bleed in ui() — inner bg removed to avoid a double-dark seam at the inset edge */
       >
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(30 * S) } }}>
           <UiEntity
@@ -976,7 +1052,7 @@ const uiBody = () => {
           {starting ? (
             <Label value={`Next shift in ${seconds}…`} fontSize={Math.round(64 * S)} color={WHITE} />
           ) : (
-            <Button
+            <GameButton
               value="START NOW"
               variant="primary"
               fontSize={Math.round(34 * S)}
@@ -1056,33 +1132,35 @@ const uiBody = () => {
             positionType: 'absolute', position: { bottom: mobile ? '21%' : '13%' },
           }}
         >
-          <Button
+          {/* Direction sign: "<" must pan the VIEW leftward (target slides right)
+              — playtest reported the first wiring as inverted. */}
+          <GameButton
             value="ORBIT <"
             variant="secondary"
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
-            onMouseDown={() => stepSpectateOrbit(-1)}
+            onMouseDown={() => stepSpectateOrbit(1)}
           />
-          <Button
+          <GameButton
             value="ZOOM -"
             variant="secondary"
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
             onMouseDown={() => stepSpectateZoom(1)}
           />
-          <Button
+          <GameButton
             value="ZOOM +"
             variant="secondary"
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S), margin: { right: Math.round(10 * S) } }}
             onMouseDown={() => stepSpectateZoom(-1)}
           />
-          <Button
+          <GameButton
             value="ORBIT >"
             variant="secondary"
             fontSize={Math.round(20 * S)}
             uiTransform={{ width: Math.round(140 * S), height: Math.round(60 * S) }}
-            onMouseDown={() => stepSpectateOrbit(1)}
+            onMouseDown={() => stepSpectateOrbit(-1)}
           />
         </UiEntity>
 
@@ -1092,7 +1170,7 @@ const uiBody = () => {
             positionType: 'absolute', position: { bottom: mobile ? '10%' : '4%' },
           }}
         >
-          <Button
+          <GameButton
             value="< PREV"
             variant="secondary"
             fontSize={Math.round(22 * S)}
@@ -1100,7 +1178,7 @@ const uiBody = () => {
             onMouseDown={() => nextSpectateTarget(-1)}
           />
           {isSignedUp() ? (
-            <Button
+            <GameButton
               value="SIGNED UP — CANCEL"
               variant="secondary"
               fontSize={Math.round(22 * S)}
@@ -1108,7 +1186,7 @@ const uiBody = () => {
               onMouseDown={() => cancelSignUp()}
             />
           ) : (
-            <Button
+            <GameButton
               value="JOIN NEXT SHIFT"
               variant="primary"
               fontSize={Math.round(24 * S)}
@@ -1116,14 +1194,14 @@ const uiBody = () => {
               onMouseDown={() => signUpForNextShift()}
             />
           )}
-          <Button
+          <GameButton
             value="NEXT >"
             variant="secondary"
             fontSize={Math.round(22 * S)}
             uiTransform={{ width: Math.round(150 * S), height: Math.round(70 * S), margin: { left: Math.round(12 * S) } }}
             onMouseDown={() => nextSpectateTarget(1)}
           />
-          <Button
+          <GameButton
             value="STOP"
             variant="secondary"
             fontSize={Math.round(20 * S)}
@@ -1145,7 +1223,7 @@ const uiBody = () => {
           ...FULL_SCREEN_SCRIM,
           flexDirection: 'column', justifyContent: 'center',
         }}
-        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+        /* darkness drawn full-bleed in ui() — inner bg removed to avoid a double-dark seam at the inset edge */
       >
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(16 * S) } }}>
           <Label value="Spectating" fontSize={Math.round(56 * S)} color={WHITE} />
@@ -1169,7 +1247,7 @@ const uiBody = () => {
             arriving never drops a player into a shift they didn't choose. */}
         <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(24 * S) } }}>
           {isSignedUp() ? (
-            <Button
+            <GameButton
               value="SIGNED UP — CANCEL"
               variant="secondary"
               fontSize={Math.round(26 * S)}
@@ -1177,7 +1255,7 @@ const uiBody = () => {
               onMouseDown={() => cancelSignUp()}
             />
           ) : (
-            <Button
+            <GameButton
               value="JOIN NEXT SHIFT"
               variant="primary"
               fontSize={Math.round(28 * S)}
@@ -1202,7 +1280,7 @@ const uiBody = () => {
             black scrim. Only offered while there is actually someone to watch. */}
         {spectateTargetCount() > 0 ? (
           <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(14 * S) } }}>
-            <Button
+            <GameButton
               value="WATCH LIVE"
               variant="secondary"
               fontSize={Math.round(26 * S)}
@@ -1442,13 +1520,13 @@ const uiBody = () => {
             alignItems:     'center',
           }}
         >
-          {/* Track */}
+          {/* Track — stadium ends, matching the rest of the rounded chrome */}
           <UiEntity
-            uiTransform={{ width: barTrackW, height: barHeight }}
+            uiTransform={{ width: barTrackW, height: barHeight, borderRadius: Math.round(barHeight / 2) }}
             uiBackground={{ color: BAR_BG_COLOR }}
           >
             <UiEntity
-              uiTransform={{ width: `${Math.round(pct * 100)}%`, height: '100%' }}
+              uiTransform={{ width: `${Math.round(pct * 100)}%`, height: '100%', borderRadius: Math.round(barHeight / 2) }}
               uiBackground={{ color: barColor }}
             />
           </UiEntity>
@@ -1485,14 +1563,16 @@ const uiBody = () => {
             color={holdZoneStart !== null ? WHITE : COLOR_DIM}
             uiTransform={{ margin: { bottom: 8 } }}
           />
-          {/* Track */}
+          {/* Track — rounded like every other bar; the zone band and posts stay
+              square (they're precision markers, and mid-track they never touch
+              the rounded ends) */}
           <UiEntity
-            uiTransform={{ width: holdBarW, height: holdBarHeight }}
+            uiTransform={{ width: holdBarW, height: holdBarHeight, borderRadius: Math.round(holdBarHeight / 2) }}
             uiBackground={{ color: HOLD_BAR_BG_COLOR }}
           >
             {/* Fill */}
             <UiEntity
-              uiTransform={{ width: `${Math.round(holdBarProgress * 100)}%`, height: '100%' }}
+              uiTransform={{ width: `${Math.round(holdBarProgress * 100)}%`, height: '100%', borderRadius: Math.round(holdBarHeight / 2) }}
               uiBackground={{ color: HOLD_BAR_FILL_COLOR }}
             />
             {/* Skill-check zone — release while the fill edge is inside for an
@@ -1537,6 +1617,7 @@ const uiBody = () => {
                 position: { top: -5, left: Math.max(0, Math.round(holdBarProgress * holdBarW) - 3) },
                 width: 6,
                 height: holdBarHeight + 10,
+                borderRadius: 3,
               }}
               uiBackground={{
                 color: holdZoneStart !== null && holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd
@@ -1549,7 +1630,7 @@ const uiBody = () => {
           {/* Mobile skill input — the button IS the timing tap on touch. Bigger
               while the tick is in the green, as a "NOW!" signal you can feel. */}
           {mobile && holdZoneStart !== null && (
-            <Button
+            <GameButton
               value="SCRUB!"
               variant="primary"
               fontSize={Math.round((holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd ? 40 : 32) * S)}
@@ -1634,7 +1715,7 @@ const uiBody = () => {
             </UiEntity>
             {/* Mobile input — same pattern as the SCRUB button. */}
             {mobile && (
-              <Button
+              <GameButton
                 value="POP!"
                 variant="primary"
                 fontSize={Math.round(32 * S)}
@@ -1907,21 +1988,21 @@ const uiBody = () => {
           })()}
           {/* Testing grants/sinks — money both ways, and rank up/down (XP jumps to
               the next title, or back to the floor of the previous one). */}
-          <Button
+          <GameButton
             value="+$1,000"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
             onMouseDown={() => room.send('adminGrant', { money: 1000, xp: 0 })}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
             value="−$1,000"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
             onMouseDown={() => room.send('adminGrant', { money: -1000, xp: 0 })}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
             value="+1 Rank"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -1933,7 +2014,7 @@ const uiBody = () => {
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
             value="−1 Rank"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -1948,14 +2029,14 @@ const uiBody = () => {
           {/* Intro previews — the lobby is a ~5s beat now, so catching the cards
               naturally isn't practical. "New" forces the 3-card story even on an
               account that has already worked shifts. */}
-          <Button
+          <GameButton
             value="Intro: new"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
             onMouseDown={() => replayCareerIntro(true)}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
             value="Intro: returning"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -1965,7 +2046,7 @@ const uiBody = () => {
           {/* Theme pin — cycles RANDOM → each theme → RANDOM. Sticky on the
               server (every following round uses it), applies from the NEXT
               round. Label shows what was last sent. */}
-          <Button
+          <GameButton
             value={`Theme: ${adminThemeIdx === 0 ? 'RANDOM' : THEME_DEFS[adminThemeIdx - 1].title}`}
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -1979,7 +2060,7 @@ const uiBody = () => {
           />
           {/* Hold-test — cycles placed models onto the carry rig (same attach,
               pose and emote as the box). Local preview only. */}
-          <Button
+          <GameButton
             value={`Hold: ${adminHoldIdx === 0 ? 'OFF' : HOLD_TEST_MODELS[adminHoldIdx - 1]}`}
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -1989,7 +2070,7 @@ const uiBody = () => {
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
             value={`Confetti: ${adminConfettiIdx === 0 ? 'OFF' : CONFETTI_TEST[adminConfettiIdx - 1].label}`}
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}
@@ -2004,7 +2085,14 @@ const uiBody = () => {
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
-          <Button
+          <GameButton
+            value={`Light: ${adminLightLabel}`}
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => { adminLightLabel = cycleMobileLight() }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <GameButton
             value="Reset to Round 1"
             variant="secondary"
             fontSize={ADMIN_BTN_FONT}

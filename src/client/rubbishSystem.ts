@@ -2,21 +2,21 @@
 
 import { Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onLocalEnterScene } from './localPlayer'
 import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from '../shared/glassDiscovery'
-import { findGltfEntity, setupClickProxy, setHoverHighlight } from './sceneItemHelpers'
+import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
 import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { shrinkAndHide, cancelShrink } from './itemFx'
+import { shrinkAndHide, suckAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
 import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { startPopRhythm } from './InteractionManager'
 import { POP_NAME_PART } from '../shared/config'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox, usingVacuum } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
@@ -85,10 +85,11 @@ function setVisible(itemId: string, visible: boolean) {
   VisibilityComponent.createOrReplace(rec.containerEntity, { visible })
   const tf = Transform.getMutable(rec.containerEntity)
   if (visible) {
-    if (rec.originalScale !== null) {
-      tf.scale = rec.originalScale
-    }
-    // If originalScale is still null the server's CRDT will restore the real scale.
+    // Restore only from a banked scale — the server never writes these
+    // Transforms (it only flips ClutterSync.isCleaned), so a zeroed scale is
+    // ours to undo. Null means the authored scale was already ≤0.01: nothing
+    // to restore.
+    if (rec.originalScale !== null) tf.scale = rec.originalScale
   } else {
     if (rec.originalScale === null) {
       const curr = Transform.getOrNull(rec.containerEntity)
@@ -96,6 +97,8 @@ function setVisible(itemId: string, visible: boolean) {
         rec.originalScale = { x: curr.scale.x, y: curr.scale.y, z: curr.scale.z }
       }
     }
+    // Unconditional: hidden must also mean a vanishing collider — visibility
+    // stops the render, not the CL_POINTER mesh collider.
     tf.scale = { x: 0.001, y: 0.001, z: 0.001 }
   }
 }
@@ -103,7 +106,6 @@ function setVisible(itemId: string, visible: boolean) {
 function disableClick(itemId: string) {
   const rec = gltfRecords.get(itemId)
   if (!rec) return
-  setHoverHighlight(rec.gltfEntity, false)   // never leave an item lit
   pointerEventsSystem.removeOnPointerDown(rec.clickEntity)
   pointerEventsSystem.removeOnPointerHoverEnter(rec.clickEntity)
   PointerEvents.deleteFrom(rec.clickEntity)
@@ -117,13 +119,7 @@ function enableClick(itemId: string) {
   // restores an item without going through setVisible.
   VisibilityComponent.createOrReplace(rec.containerEntity, { visible: true })
   const { clickEntity, containerEntity } = rec
-  pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => {
-    playHoverSound()
-    setHoverHighlight(rec.gltfEntity, true)
-  })
-  pointerEventsSystem.onPointerHoverLeave({ entity: clickEntity }, () => {
-    setHoverHighlight(rec.gltfEntity, false)
-  })
+  pointerEventsSystem.onPointerHoverEnter({ entity: clickEntity }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
     {
       entity: clickEntity,
@@ -169,7 +165,8 @@ function enableClick(itemId: string) {
       }
       disableClick(itemId)
       playCleanSound()
-      if (pos) playPickupEmote(pos)
+      // Vacuum pickups skip the bend-down emote — the machine does the work.
+      if (pos && !usingVacuum()) playPickupEmote(pos)
       room.send('cleanItem', { itemId })
       showCleanedToast()
 
@@ -185,7 +182,8 @@ function enableClick(itemId: string) {
       // Shrink immediately (instant visual response, no frozen wait) and land
       // "gone" at the emote's hand-touch moment.  Sparkle + the pending-hide
       // bookkeeping fire on completion, preserving the original guard logic.
-      shrinkAndHide(containerEntity, PICKUP_TOUCH_MS / 1000, () => {
+      // Vacuum INHALES the item toward the player; hands pluck it in place.
+      ;(usingVacuum() ? suckAndHide : shrinkAndHide)(containerEntity, PICKUP_TOUCH_MS / 1000, () => {
         const wasPending = pendingVisualHide.has(itemId)
         pendingVisualHide.delete(itemId)
         // cleanRejected wiped the guard and the item isn't confirmed clean →
@@ -216,7 +214,7 @@ export function initRubbishSystem() {
 
   // On scene (re-)entry clear stale state so the ClutterSync watcher re-applies
   // authoritative state and re-enables clicks on any newly-uncleaned items.
-  onEnterSceneObservable.add(() => {
+  onLocalEnterScene(() => {
     pendingCleans.clear()
     pendingVisualHide.clear()
     lastState.clear()
