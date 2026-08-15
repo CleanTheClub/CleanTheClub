@@ -21,7 +21,7 @@ const PRELOAD_ASSETS: string[] = [
   'assets/scene/Emotes/PickUp_Anim_emote.glb',
   'assets/scene/Emotes/Mopping_emote.glb',
   'assets/scene/Emotes/PartyPhone_emote.glb',
-  'assets/scene/Emotes/Carry_emote.glb',
+  'assets/scene/Emotes/CarryIdle_emote.glb',
   // The full Janitor Gear ladder. None of these are placed in the scene any
   // more (they used to sit parked in the composite purely to stay loaded, at
   // ~13k placed triangles); AssetLoad is the supported way to keep them

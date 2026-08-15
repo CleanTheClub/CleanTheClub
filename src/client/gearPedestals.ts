@@ -24,7 +24,7 @@ import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { requestSetup } from './spawnDirector'
 import { playHoverSound, playClickSound, playMissSound } from './soundManager'
 import { showNarrativeToast } from '../ui'
-import { POINTER_MAX_DIST } from './phaseGate'
+import { pointerMaxDist } from './phaseGate'
 import { purchaseBurst } from './confettiSystem'
 
 const COLOR_LOCKED   = Color4.create(1, 0.3, 0.28, 1)     // red
@@ -117,7 +117,7 @@ export function initGearPedestals(): void {
         const clickEnt = setupClickProxy(gltfEnt)
         pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
         pointerEventsSystem.onPointerDown(
-          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: def.title, maxDistance: POINTER_MAX_DIST } },
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: def.title, maxDistance: pointerMaxDist() } },
           () => onPedestalClick(gear),
         )
       },

@@ -20,6 +20,10 @@ const SND_ERROR         = 'assets/scene/Sounds/errorSound.mp3'
 // Crowd cheer sting for cleanliness milestones (25/50/75%) — file pending.
 // A short "small crowd woo", ~1.5s.
 const SND_CROWD         = 'assets/scene/Sounds/crowdCheer.mp3'
+// Vacuum slurp (~1s) — replaces the clean sound on click while the Vacuum
+// gear is in hand. Popcorn pop (~0.3s) — the Rhythm Pop's own sample.
+const SND_VACUUM        = 'assets/scene/Sounds/vacuumSound.mp3'
+const SND_POPCORN       = 'assets/scene/Sounds/PopcornSound_Short.mp3'
 
 const VOL_HOVER   = 0.7
 const VOL_CLICK   = 0.9
@@ -70,6 +74,17 @@ let   cleanIdx  = 0
 const POP_POOL_SIZE = 3
 const popPool: Entity[] = []
 let   popIdx    = 0
+
+// Vacuum clip runs ~1s and vacuum clicking peaks at several per second —
+// pooled for the same retrigger reason as the clean sound.
+const VACUUM_POOL_SIZE = 3
+const vacuumPool: Entity[] = []
+let   vacuumIdx = 0
+
+// Popcorn pops land 700ms apart on the rhythm beats — same cure again.
+const POPCORN_POOL_SIZE = 3
+const popcornPool: Entity[] = []
+let   popcornIdx = 0
 
 // Retriggers playback. Every SFX entity is PARENTED to the player (positional
 // audio at zero distance ≈ global, and it works on every client — true
@@ -142,6 +157,20 @@ export function initSoundManager() {
   crowdEntity = engine.addEntity()
   Transform.create(crowdEntity, { parent: engine.PlayerEntity })
   AudioSource.create(crowdEntity, { audioClipUrl: SND_CROWD, playing: false, loop: false, volume: 0.9 })
+
+  for (let i = 0; i < VACUUM_POOL_SIZE; i++) {
+    const e = engine.addEntity()
+    Transform.create(e, { parent: engine.PlayerEntity })
+    AudioSource.create(e, { audioClipUrl: SND_VACUUM, playing: false, loop: false, volume: 0.8 })
+    vacuumPool.push(e)
+  }
+
+  for (let i = 0; i < POPCORN_POOL_SIZE; i++) {
+    const e = engine.addEntity()
+    Transform.create(e, { parent: engine.PlayerEntity })
+    AudioSource.create(e, { audioClipUrl: SND_POPCORN, playing: false, loop: false, volume: 0.9 })
+    popcornPool.push(e)
+  }
 }
 
 export function playSquelchSound() { playAt(squelchEntity) }
@@ -160,6 +189,22 @@ export function playCleanSound()  {
   // read as grating; small variance makes repetition feel organic instead.
   playAt(e, 0.91 + Math.random() * 0.18)
   cleanIdx++
+}
+
+/** Vacuum slurp — the click sound while the Vacuum gear is in hand. Same
+ *  ±9% pitch wobble as the clean sound, for the same anti-grating reason. */
+export function playVacuumSound() {
+  const e = vacuumPool[vacuumIdx % VACUUM_POOL_SIZE]
+  playAt(e, 0.91 + Math.random() * 0.18)
+  vacuumIdx++
+}
+
+/** Popcorn pop for Rhythm Pop hits — ascending pitch with each hit in the
+ *  run (same scheme the notification chime used), on popcorn's own sample. */
+export function playPopcornSound(hit: number) {
+  const e = popcornPool[popcornIdx % POPCORN_POOL_SIZE]
+  popcornIdx++
+  playAt(e, 1.0 + 0.1 * Math.min(Math.max(1, hit), 8) + Math.random() * 0.04)
 }
 
 /**
@@ -209,7 +254,10 @@ export function playDepositSound(stream?: 'general' | 'recycle') {
  */
 export function playCrowdSound(level = 0.5) {
   const s = AudioSource.getMutableOrNull(crowdEntity)
-  if (s) s.volume = 0.55 + 0.45 * level
+  // Tamed from 0.55+0.45 (playtest: milestone cheers read as aggressive —
+  // they land mid-flow, over music AND clean sfx). Still scales with level,
+  // topping out at 0.68 instead of full volume.
+  if (s) s.volume = 0.38 + 0.3 * level
   playAt(crowdEntity, 0.82 + 0.28 * level + Math.random() * 0.06)
 }
 

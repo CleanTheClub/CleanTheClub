@@ -7,12 +7,13 @@ import { ClutterSync } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType, POP_BEATS, POP_BEAT_MS, POP_HIT_T, POP_FIRST_GRACE_MS } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setSkillTapHandler, setPopRing } from '../ui'
+import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setPopRing, setSkillTapHandler } from '../ui'
 import { promotionBurst } from './confettiSystem'
-import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound } from './soundManager'
+import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound, playVacuumSound, playPopcornSound } from './soundManager'
+import { usingVacuum } from './carrySystem'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase } from './phaseGate'
 import { onClutterPoll, clutterEntry } from './clutterWatcher'
 import { registerSpreeHit } from './spreeSystem'
 
@@ -88,7 +89,7 @@ function judgeRhythmTap(): void {
   const t = (now - activeRhythm.beatStartMs) / POP_BEAT_MS
   if (t >= POP_HIT_T) {
     activeRhythm.hits++
-    playPerfectSound(activeRhythm.hits)   // ascending pop-pop-pop
+    playPopcornSound(activeRhythm.hits)   // ascending pop-pop-pop, popcorn's own sample
   } else {
     // Too early — same rules as the skill check: an attempted-and-missed
     // timing breaks the streak and says so; not engaging stays neutral.
@@ -161,7 +162,7 @@ function enableClick(id: string) {
 
   if (type === 'hold') {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: POINTER_MAX_DIST } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: pointerMaxDist() } },
       () => {
         if (pendingCleans.has(id) || activeHold || activeRhythm) return
         const syncEnt = findClutterEntity(id)
@@ -195,14 +196,16 @@ function enableClick(id: string) {
     // so the pointer events now match the other mess items exactly (hover + down).
   } else {
     pointerEventsSystem.onPointerDown(
-      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: POINTER_MAX_DIST } },
+      { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: pointerMaxDist() } },
       () => {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
 
-        playCleanSound()               // instant audio feedback on click
+        // Vacuum in hand slurps; anything else gets the standard clean sound.
+        if (usingVacuum()) playVacuumSound()
+        else playCleanSound()
         pendingCleans.add(id)
         disableClick(id)
         showCleanedToast()
@@ -351,6 +354,7 @@ export function initInteractionManager(
   function resolveSkillCheck(at: number): void {
     if (!activeHold) return
     const { id, zoneStart, zoneEnd } = activeHold
+    console.log(`[STICKY] skill check ${id}: at=${Math.round(at * 100)}% zone=${Math.round(zoneStart * 100)}–${Math.round(zoneEnd * 100)}% → ${at >= zoneStart && at <= zoneEnd ? 'HIT' : 'MISS'}`)
     activeHold = null
     cancelEmote()
     stopStickySound()
@@ -374,22 +378,34 @@ export function initInteractionManager(
     }
   }
 
-  // The mobile SCRUB/POP button routes here. Rhythm first — it and the hold
-  // are mutually exclusive, so whichever is active owns the tap.
+  // The tap/release is judged against the progress LAST DRAWN on the bar, not
+  // wall-clock time at input-processing. On mobile the marker the player aims
+  // with renders 1-3 frames (plus touch latency) behind Date.now(), so a
+  // wall-clock judgment lands 100-300ms late — against a 264-550ms zone that
+  // made visually-correct taps systematic misses on slow phones ("hit the
+  // right part of the bar but the patch stays"). What you see is what's judged.
+  let lastDrawnProgress = 0
+
+  // TWO tap paths, both live. The global inputSystem polls below catch presses
+  // anywhere on the WORLD — but a touch that lands ON a UI element is consumed
+  // by the UI layer and never reaches them, so a visual-only pill was a dead
+  // zone exactly where players aim (playtest: "popcorn near-impossible").
+  // The pills therefore call in here for on-pill taps. Both paths are
+  // judge-once safe: rhythm's `tapped` flag and resolveSkillCheck's
+  // activeHold-null both make a second call in the same instant a no-op.
   setSkillTapHandler(() => {
     if (activeRhythm) { judgeRhythmTap(); return }
     if (!activeHold) return
-    const heldMs = Date.now() - activeHold.startMs
-    if (heldMs <= 250) return
-    resolveSkillCheck(heldMs / holdDurationMs())
+    if (Date.now() - activeHold.startMs <= 250) return
+    resolveSkillCheck(lastDrawnProgress)
   })
 
-  // ── Rhythm Pop frame system — beat progression, desktop taps, finish ─────────
+  // ── Rhythm Pop frame system — beat progression, taps, finish ─────────────────
   engine.addSystem(() => {
     if (!activeRhythm) return
-    // Desktop tap = pointer press anywhere: the cursor is camera-locked, so a
-    // global press IS the tap (mobile goes through the POP! button above).
-    if (!isMobile() && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+    // A press anywhere IS the tap (the first-beat grace inside judgeRhythmTap
+    // keeps the popcorn-starting click from counting as beat 1).
+    if (inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
       judgeRhythmTap()
     }
     const elapsed = Date.now() - activeRhythm.beatStartMs
@@ -443,18 +459,19 @@ export function initInteractionManager(
     // stays the no-skill fallback on both platforms.
     if (isMobile()) {
       if (heldMs > 250 && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
-        resolveSkillCheck(heldMs / holdDurationMs())
+        resolveSkillCheck(lastDrawnProgress)
         return
       }
     } else if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
-      resolveSkillCheck(heldMs / holdDurationMs())
+      resolveSkillCheck(lastDrawnProgress)
       return
     }
 
     // Read live, not captured at hold-start: the Mopping Speed upgrade shortens
     // this, and the bar, the completion check and the emote must all agree.
     const progress = heldMs / holdDurationMs()
-    updateHoldBar(Math.min(1, progress))
+    lastDrawnProgress = Math.min(1, progress)
+    updateHoldBar(lastDrawnProgress)
 
     if (progress >= 1) {
       const { id } = activeHold
@@ -543,6 +560,9 @@ export function initInteractionManager(
 
   room.onMessage('cleanRejected', (data) => {
     if (data.itemId.startsWith(GLASS_ID_PREFIX)) return  // handled by glassSystem
+    // The server logs WHY (see the cleanItem handler) — pair this with
+    // sdk-server-logs when chasing "item won't clean" reports.
+    console.log(`[CLEAN] server rejected ${data.itemId}`)
     pendingCleans.delete(data.itemId)
     pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
     if (activeHold?.id === data.itemId) {

@@ -1,4 +1,4 @@
-import ReactEcs, { ReactEcsRenderer, ScreenInsetArea, UiEntity, Label } from '@dcl/sdk/react-ecs'
+import ReactEcs, { ReactEcsRenderer, UiEntity, Label } from '@dcl/sdk/react-ecs'
 import { GameButton } from './client/uiButton'
 import { engine, EasingFunction, timers } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
@@ -13,12 +13,13 @@ import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
 import { getHaulDebug } from './client/carrySystem'
 import { cycleMobileLight } from './client/setup'
+import { toggleMusicMute, isMusicMuted } from './client/musicManager'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
 import { tierColorForRank } from './client/rankBadgeSystem'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
-import { readCanvasInfo, getSafeArea, pct as saPct } from './client/safeArea'
+import { readCanvasInfo, getSafeArea, getScreenInsets, pct as saPct } from './client/safeArea'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
 import { TITLE_XP, rankForXp } from './shared/progression'
 
@@ -214,6 +215,16 @@ const ADMIN_MARGIN        = 4
 // ─────────────────────────────────────────────────────────────────────────────
 
 let isAdmin = false
+
+// Admin achievement-cycle buttons: gear → index of the stage the NEXT click sets.
+const ACH_STAGES = ['zero', 'half', 'almost', 'full'] as const
+const ADMIN_ACH_GEARS = [
+  { gear: 'Gold_Dustpan', label: 'Dustpan' },
+  { gear: 'Gold_Platter', label: 'Platter' },
+  { gear: 'Ice_Bucket',   label: 'IceBucket' },
+  { gear: 'Disco_Ball',   label: 'Disco' },
+]
+const achStageIdx = new Map<string, number>()
 
 // ── Image toast stack ─────────────────────────────────────────────────────────
 
@@ -438,6 +449,12 @@ export function setHoldBarZone(start: number | null, end = 0) {
 // stored callback avoids an import cycle). A UI button is the only RELIABLE tap
 // target on touch: screen taps outside interactables go to the camera and never
 // reach inputSystem, which is why the tap-anywhere version didn't register.
+// Mobile skill-tap plumbing. TWO paths, both needed: the InteractionManager's
+// global input poll catches taps anywhere on the WORLD, but a touch that lands
+// ON a UI element is consumed by the UI layer and never reaches that poll —
+// a visual-only pill was therefore a dead zone exactly where players aim
+// (playtest: "popcorn near-impossible, POP pill unresponsive"). So the pills
+// call in here directly for on-pill taps, and the poll covers everywhere else.
 let skillTapHandler: (() => void) | null = null
 export function setSkillTapHandler(fn: () => void) { skillTapHandler = fn }
 
@@ -754,19 +771,35 @@ const scrimActive = (): boolean => {
   return isLobby || waiting || shouldShowCareerIntro(isLobby || waiting)
 }
 
-const ui = () => (
-  <UiEntity uiTransform={{ width: '100%', height: '100%' }}>
-    {scrimActive() && (
+// BALANCED inset container instead of the SDK's ScreenInsetArea: the stock
+// component insets each side by its own device margin, so with a notch on one
+// side the safe region's centre sits half-a-notch off the PHYSICAL centre —
+// and every centred row with it ("all the centred UI is ~1cm right of the DCL
+// cursor", playtest). Insetting both horizontal sides by max(left, right)
+// keeps edge anchors notch-safe while making container-centre == physical
+// centre, where the crosshair is. Same data source as the SDK component.
+const ui = () => {
+  const inset = getScreenInsets()
+  const h = Math.max(inset.left, inset.right)
+  return (
+    <UiEntity uiTransform={{ width: '100%', height: '100%' }}>
+      {scrimActive() && (
+        <UiEntity
+          uiTransform={{ positionType: 'absolute', position: { top: 0, left: 0 }, width: '100%', height: '100%' }}
+          uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
+        />
+      )}
       <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { top: 0, left: 0 }, width: '100%', height: '100%' }}
-        uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.82 } }}
-      />
-    )}
-    <ScreenInsetArea uiTransform={{ width: '100%', height: '100%' }}>
-      {uiBody()}
-    </ScreenInsetArea>
-  </UiEntity>
-)
+        uiTransform={{
+          positionType: 'absolute',
+          position: { top: inset.top, left: h, right: h, bottom: inset.bottom },
+        }}
+      >
+        {uiBody()}
+      </UiEntity>
+    </UiEntity>
+  )
+}
 
 // Hoisted render literals — rebuilt per frame otherwise.
 const FULL_SCREEN_SCRIM_C = { width: '100%' as const, height: '100%' as const }
@@ -1355,6 +1388,22 @@ const uiBody = () => {
           when there is nothing in hand to track (round start resets it anyway). */}
       {!isOpen && <CarryChip S={S} />}
 
+      {/* Music mute — radio + party + finale only; SFX stay (they're gameplay
+          feedback). Top-left inside the inset area: notch-safe, clear of the
+          mobile toast stack (36% down) and the centre timer on both platforms. */}
+      <GameButton
+        value={isMusicMuted() ? 'MUSIC: OFF' : 'MUSIC: ON'}
+        variant="secondary"
+        fontSize={Math.round(13 * S)}
+        onMouseDown={() => toggleMusicMute()}
+        uiTransform={{
+          positionType: 'absolute',
+          position: { top: Math.round(10 * S), left: Math.round(10 * S) },
+          width:  Math.round(104 * S),
+          height: Math.round(30 * S),
+        }}
+      />
+
       {/* Shop access — available at ANY time, not just between shifts.
           Upgrades apply the moment they are bought, so buying Movement Speed or
           Strength mid-shift is a "feel it immediately" moment; gating it to the
@@ -1557,7 +1606,7 @@ const uiBody = () => {
         >
           <Label
             value={holdZoneStart !== null
-              ? (mobile ? 'Hit SCRUB in the green!' : 'Release in the green!')
+              ? (mobile ? 'Tap in the green!' : 'Release in the green!')
               : 'Cleaning…'}
             fontSize={Math.round(HOLD_BAR_FONT * S)}
             color={holdZoneStart !== null ? WHITE : COLOR_DIM}
@@ -1627,21 +1676,33 @@ const uiBody = () => {
             />
           </UiEntity>
 
-          {/* Mobile skill input — the button IS the timing tap on touch. Bigger
-              while the tick is in the green, as a "NOW!" signal you can feel. */}
-          {mobile && holdZoneStart !== null && (
-            <GameButton
-              value="SCRUB!"
-              variant="primary"
-              fontSize={Math.round((holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd ? 40 : 32) * S)}
-              uiTransform={{
-                width:  Math.round(300 * S),
-                height: Math.round(100 * S),
-                margin: { top: Math.round(16 * S) },
-              }}
-              onMouseDown={() => skillTapHandler?.()}
-            />
-          )}
+          {/* Mobile skill target — a plain UiEntity with onMouseDown (not the
+              react-ecs Button, whose extra chrome was in the mix when taps
+              died). UI consumes touches that land on it, so it MUST handle
+              them itself; taps off the pill reach the InteractionManager's
+              global poll instead — two paths, judge-once safe either way.
+              Gold + bigger while the tick is in the green. */}
+          {mobile && holdZoneStart !== null && (() => {
+            const inZone = holdBarProgress >= holdZoneStart && holdBarProgress <= holdZoneEnd
+            return (
+              <UiEntity
+                uiTransform={{
+                  width:  Math.round(300 * S),
+                  height: Math.round(100 * S),
+                  margin: { top: Math.round(16 * S) },
+                  borderRadius: Math.round(30 * S),
+                  justifyContent: 'center', alignItems: 'center',
+                }}
+                uiBackground={{ color: inZone
+                  ? { r: 1, g: 0.82, b: 0.25, a: 1 }
+                  : { r: 0.35, g: 0.2, b: 0.5, a: 0.9 } }}
+                onMouseDown={() => skillTapHandler?.()}
+              >
+                <Label value="SCRUB!" fontSize={Math.round((inZone ? 40 : 32) * S)}
+                  color={inZone ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE} />
+              </UiEntity>
+            )
+          })()}
         </UiEntity>
       )}
 
@@ -1713,15 +1774,25 @@ const uiBody = () => {
                 />
               ))}
             </UiEntity>
-            {/* Mobile input — same pattern as the SCRUB button. */}
+            {/* Mobile tap target — same two-path handling as the SCRUB pill.
+                Purple at rest, gold ONLY when the ring lands (an always-amber
+                pill read as "gold from start" and lied about the timing). */}
             {mobile && (
-              <GameButton
-                value="POP!"
-                variant="primary"
-                fontSize={Math.round(32 * S)}
-                uiTransform={{ width: Math.round(260 * S), height: Math.round(92 * S), margin: { top: Math.round(12 * S) } }}
+              <UiEntity
+                uiTransform={{
+                  width: Math.round(260 * S), height: Math.round(92 * S),
+                  margin: { top: Math.round(12 * S) },
+                  borderRadius: Math.round(28 * S),
+                  justifyContent: 'center', alignItems: 'center',
+                }}
+                uiBackground={{ color: landed
+                  ? { r: 1, g: 0.82, b: 0.25, a: 1 }
+                  : { r: 0.35, g: 0.2, b: 0.5, a: 0.9 } }}
                 onMouseDown={() => skillTapHandler?.()}
-              />
+              >
+                <Label value="POP!" fontSize={Math.round((landed ? 38 : 32) * S)}
+                  color={landed ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE} />
+              </UiEntity>
             )}
           </UiEntity>
         )
@@ -1795,6 +1866,13 @@ const uiBody = () => {
         const spinIdx   = Math.floor((1 - Math.pow(1 - spinT, 2)) * wheel.length * 3)
         const shownTitle = spinning ? wheel[spinIdx % wheel.length] : finalTitle
         const pad = Math.round(16 * S)
+        // FIXED card + label geometry. An auto-sized card re-measures on every
+        // 100ms title swap — different widths recentre the box, and on mobile a
+        // long title could line-wrap and change its HEIGHT ("roulette jitter").
+        // Sized to the longest wheel line ("TONIGHT: LOST PROPERTY NIGHT"), the
+        // spin now only repaints glyphs inside an immovable box.
+        const cardW  = Math.round(640 * S)
+        const titleH = Math.round(48 * S)
         return (
           <UiEntity
             uiTransform={{
@@ -1807,6 +1885,7 @@ const uiBody = () => {
           >
             <UiEntity
               uiTransform={{
+                width:         cardW,
                 flexDirection: 'column',
                 alignItems:    'center',
                 padding: { top: pad, bottom: pad, left: pad * 2, right: pad * 2 },
@@ -1815,13 +1894,16 @@ const uiBody = () => {
               uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.78 * fade } }}
             >
               <Label value={`TONIGHT: ${shownTitle}`} fontSize={Math.round(38 * S)}
+                textAlign="middle-center"
+                uiTransform={{ width: '100%', height: titleH }}
                 color={spinning
                   ? { r: 1, g: 1, b: 1, a: 0.75 }
                   : { r: 1, g: 0.82, b: 0.25, a: fade }} />
               {!spinning && (
                 <Label value={finalBlurb} fontSize={Math.round(26 * S)}
+                  textAlign="middle-center"
                   color={{ r: 1, g: 1, b: 1, a: fade }}
-                  uiTransform={{ margin: { top: Math.round(8 * S) } }} />
+                  uiTransform={{ width: '100%', margin: { top: Math.round(8 * S) } }} />
               )}
             </UiEntity>
           </UiEntity>
@@ -2023,6 +2105,58 @@ const uiBody = () => {
               const rank = rankForXp(c.xp)
               if (rank <= 0) return   // already at the bottom rung
               room.send('adminGrant', { money: 0, xp: TITLE_XP[rank - 1] - c.xp })
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          {/* Gear achievements — each click SETS the next stage in the cycle
+              (zero → half → almost → full), so one walk of the button covers the
+              pedestal's whole lifecycle: red requirement, orange "N to go",
+              nearly-there, unlocked + click-to-equip. Server-side it's a set,
+              not an add — every test starts from a known state, and revoking
+              below target also un-equips the gear if worn. Label shows what
+              the NEXT click will set. */}
+          {ADMIN_ACH_GEARS.map(({ gear, label }) => (
+            <GameButton
+              id={gear}
+              value={`${label}: set ${ACH_STAGES[achStageIdx.get(gear) ?? 0]}`}
+              variant="secondary"
+              fontSize={ADMIN_BTN_FONT}
+              onMouseDown={() => {
+                const idx = achStageIdx.get(gear) ?? 0
+                room.send('adminAchievement', { gear, stage: ACH_STAGES[idx] })
+                achStageIdx.set(gear, (idx + 1) % ACH_STAGES.length)
+              }}
+              uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+            />
+          ))}
+          {/* One-click whole-wall states: every pedestal unlocked (walk the
+              entrance, equip each item, check the in-hand models), and the
+              full reset back to red requirements. 'full' IS the real unlock
+              path — same server code as earning it. Cycle indices are re-aimed
+              so each per-gear button's next click still makes sense. */}
+          <GameButton
+            id="ach_unlock_all"
+            value="Unlock ALL gear"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              for (const { gear } of ADMIN_ACH_GEARS) {
+                room.send('adminAchievement', { gear, stage: 'full' })
+                achStageIdx.set(gear, 0)   // next per-gear click: zero (re-lock one)
+              }
+            }}
+            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
+          />
+          <GameButton
+            id="ach_lock_all"
+            value="Re-lock ALL gear"
+            variant="secondary"
+            fontSize={ADMIN_BTN_FONT}
+            onMouseDown={() => {
+              for (const { gear } of ADMIN_ACH_GEARS) {
+                room.send('adminAchievement', { gear, stage: 'zero' })
+                achStageIdx.set(gear, 1)   // next per-gear click: half (progress text)
+              }
             }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />

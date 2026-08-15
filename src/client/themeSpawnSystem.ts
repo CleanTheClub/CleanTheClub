@@ -24,7 +24,7 @@ import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase, gameState } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase, gameState } from './phaseGate'
 import { onClutterPoll, ClutterEntry } from './clutterWatcher'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
@@ -152,7 +152,7 @@ function enableClick(itemId: string) {
       opts: {
         button: InputAction.IA_POINTER,
         hoverText: stream === 'recycle' ? 'Clean (Recycling)' : 'Clean (General)',
-        maxDistance: POINTER_MAX_DIST,
+        maxDistance: pointerMaxDist(),
       },
     },
     () => {

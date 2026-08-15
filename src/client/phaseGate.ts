@@ -9,6 +9,7 @@
 // change (e.g. a round-reset) can't silently re-register pointer events.
 
 import { engine, Transform } from '@dcl/sdk/ecs'
+import { isMobile } from '@dcl/sdk/platform'
 import { GameState } from '../shared/schemas'
 import { isActive, isKnown } from './participation'
 
@@ -30,9 +31,18 @@ export const MAX_REACH_VERT_M = 3
 // Pointer-event maxDistance is measured from the CAMERA, not the player — and
 // the mobile third-person camera floats 3-5m behind the avatar, so a 4m cutoff
 // refused interactions while standing ON the item ("like there's no pointer
-// event", worst on furniture). Prompts therefore use this camera-based range;
-// withinReach (player-based, above) remains the true accept gate on click.
-export const POINTER_MAX_DIST = 7
+// event", worst on furniture). Raised to 7 for that; but in OPEN areas nothing
+// pulls the mobile camera in, it extends fully, and camera→item exceeded 7
+// even standing next to the item (the outdoor test bags: three collider
+// variants, all equally untappable — the ray length was the bottleneck, not
+// the collider). Platform-split: mobile's budget covers the full camera boom;
+// desktop keeps tight prompts. withinReach (player-based, above) remains the
+// true accept gate on click, so the looser ray cannot be exploited.
+// A function, not a const: isMobile() may not answer correctly at module-load
+// time, and every caller passes it at pointer-registration time anyway.
+export function pointerMaxDist(): number {
+  return isMobile() ? 14 : 7
+}
 
 export function withinReach(pos: { x: number; y: number; z: number } | undefined | null): boolean {
   if (!pos) return true   // unknown item position — don't block the interaction

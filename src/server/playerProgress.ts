@@ -128,6 +128,33 @@ export function bumpKindCount(address: string, kind: string, n = 1): void {
   dirty = true
 }
 
+/**
+ * Admin test tool: SET one achievement's progress to a stage — a set, not an
+ * add, so every test starts from a known state. Wipes all keys that feed the
+ * achievement, then writes the stage value to the primary key. Dropping below
+ * target also un-equips the gear if worn, so the in-hand model can never show
+ * gear the record no longer justifies (and 'zero' → 'full' → click-to-equip
+ * exercises the whole pedestal flow end to end).
+ */
+export type AchievementStage = 'zero' | 'half' | 'almost' | 'full'
+
+export function adminSetAchievement(
+  address: string, gear: string, stage: AchievementStage,
+): { ok: boolean; current: number; target: number } {
+  const def = ACHIEVEMENTS.find((a) => a.gear === gear)
+  const rec = records.get(address.toLowerCase())
+  if (!def || !rec) return { ok: false, current: 0, target: 0 }
+  for (const k of def.keys) delete rec.kindCounts[k]
+  const value = stage === 'zero' ? 0
+    : stage === 'half'   ? Math.floor(def.target / 2)
+    : stage === 'almost' ? def.target - 1
+    : def.target
+  if (value > 0) rec.kindCounts[def.keys[0]] = value
+  if (value < def.target && rec.flexGear === gear) rec.flexGear = ''
+  dirty = true
+  return { ok: true, current: value, target: def.target }
+}
+
 // ── In-memory state ───────────────────────────────────────────────────────────
 const records = new Map<string, ProgressRecord>()   // address → record (guests included)
 const guests  = new Set<string>()                   // addresses excluded from persistence

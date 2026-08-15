@@ -30,7 +30,13 @@ const PARTY_EMOTE_SRC   = 'assets/scene/Emotes/PartyPhone_emote.glb'
 const AM_UPPER_BODY   = 0
 // Real carry clip (1s loop, left arm posed under the box to match the
 // left-hand attach; replaces the PartyPhone placeholder).
-const CARRY_POSE_SRC  = 'assets/scene/Emotes/Carry_emote.glb'
+// Carry fused with the stock idle (scripts/one-off: fuse_emote.py): the
+// carrying LEFT arm keeps Carry_emote's keys UNCHANGED (so carrySystem's
+// computed hand counter-rotation stays valid), while head/torso/right arm/legs
+// come from the explorer's idle — the free arm and body idle naturally instead
+// of holding a stiff two-armed pose. 1s carry loop tiled twice into the 2s
+// idle cycle, seam-free.
+const CARRY_POSE_SRC  = 'assets/scene/Emotes/CarryIdle_emote.glb'
 let carryPoseWanted = false
 const PARTY_EMOTE_MS    = 9_700  // match clip duration exactly
 // (Step-to-item constants removed with the mechanic — see playStepEmote.)

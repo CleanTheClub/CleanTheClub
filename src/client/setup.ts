@@ -10,6 +10,7 @@ import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
+import { sweepSceneryPointerColliders } from './sceneItemHelpers'
 import { engine, Entity, Transform, LightSource } from '@dcl/sdk/ecs'
 import { Color3 } from '@dcl/sdk/math'
 import { isMobile } from '@dcl/sdk/platform'
@@ -197,4 +198,13 @@ export function initClient() {
   initStickyHazardSystem()
   initLeaderboardSystem()
   initNpcCrowdSystem()
+  // LAST: every interactive system above has registered its pointer entities,
+  // so anything left holding CL_POINTER is scenery shadowing item taps.
+  sweepSceneryPointerColliders()
+
+  // (The three-bag mobile tap experiment that used to run here is retired —
+  // it proved the mobile client can't reliably raycast GLB mesh colliders,
+  // and the fix now lives in sceneItemHelpers' restored, properly-sized tap
+  // proxies. The bags outside are ordinary rubbish items again; delete them
+  // in Creator Hub whenever.)
 }

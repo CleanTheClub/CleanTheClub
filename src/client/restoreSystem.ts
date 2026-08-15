@@ -22,7 +22,7 @@ import { platformSettled } from './platformWait'
 import { onLocalEnterScene } from './localPlayer'
 import { room } from '../shared/messages'
 import { setupClickProxy } from './sceneItemHelpers'
-import { clicksAllowed, onPhaseChange, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { clicksAllowed, onPhaseChange, pointerMaxDist, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { playHoverSound, playCleanSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
@@ -168,7 +168,7 @@ function enableClick(s: ItemState) {
 
   pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
   pointerEventsSystem.onPointerDown(
-    { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: POINTER_MAX_DIST } },
+    { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText, maxDistance: pointerMaxDist() } },
     () => {
       if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
       if (s.pendingClean) return

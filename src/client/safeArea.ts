@@ -22,7 +22,22 @@ import { engine, UiCanvasInformation } from '@dcl/sdk/ecs'
 // a Foundation workaround exists but is undocumented). If the root read fails,
 // scan for the component on ANY entity before giving up, and log which path
 // worked once so field reports carry their own diagnosis.
-type CanvasInfo = { width: number; height: number; interactableArea?: { top: number; left: number; right: number; bottom: number } }
+type Insets = { top: number; left: number; right: number; bottom: number }
+type CanvasInfo = { width: number; height: number; interactableArea?: Insets; screenInsetArea?: Insets }
+
+const NO_INSETS: Insets = { top: 0, left: 0, right: 0, bottom: 0 }
+
+/**
+ * DEVICE screen insets (notch, status bar, home indicator) — the same field
+ * the SDK's ScreenInsetArea component positions itself from. Exposed so the
+ * UI root can build a horizontally BALANCED inset container: the stock
+ * component insets left and right unequally, which put "centred" UI a
+ * notch-half off the physical screen centre (playtest: "all the centered UI
+ * is ~1cm right of the DCL cursor").
+ */
+export function getScreenInsets(): Insets {
+  return readCanvasInfo()?.screenInsetArea ?? NO_INSETS
+}
 let loggedSource = ''
 
 // 100ms memo — this is called from ~6 UI sites per RENDER (and the fallback

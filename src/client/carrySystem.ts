@@ -18,7 +18,7 @@ import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { DUMPSTER_PREFIX, BIN_CAPACITY, BIN_STINK_FRACTION, themeModelSrc, MODEL_SIZE_M, ITEM_MINI_TARGET_M } from '../shared/config'
 import { carryGearModel, GEAR_DEFAULT } from '../shared/progression'
 import { requestSetup } from './spawnDirector'
-import { POINTER_MAX_DIST, gameState } from './phaseGate'
+import { pointerMaxDist, gameState } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty, upgradeLevel, getFlexGear } from './progressionStore'
@@ -271,6 +271,16 @@ const ITEM_SLOTS = [
   { pos: { x: -0.04, y: 0.31, z:  0.00 }, rot: { x: -20, y: 330, z: 18 } },
 ]
 
+// Per-gear pile drop, metres. ITEM_SLOTS is tuned for containers with WALLS
+// (the pile pokes out of the box/crate/caddy opening), so on the flat
+// Gold_Platter the same heights floated the rubbish above the tray. Lowered
+// onto the platter surface; every other gear keeps the box-tuned pile.
+const MINI_PILE_DROP: Record<string, number> = { Gold_Platter: 0.13 }
+let appliedPileDrop = 0
+
+const pileDropFor = (src: string) =>
+  MINI_PILE_DROP[src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')] ?? 0
+
 let carryAnchor: Entity | null = null
 let carryRig: Entity | null = null
 let bagEntity: Entity | null = null
@@ -476,6 +486,20 @@ function refreshCarriedBag(): void {
   // No minis while hauling (the bin IS the held prop) — and none on the
   // vacuum: sucked rubbish is INSIDE it, so the machine swells instead.
   const visible = holdTest || haulDisplay || vacMode ? [] : carriedModels.slice(-MAX_VISIBLE_ITEMS)
+  // Gear changed to/from the platter → re-seat the recycled slots at the new
+  // pile height (positions are otherwise only written at slot creation).
+  const pileDrop = pileDropFor(heldContainerSrc(holdTestSrc))
+  if (pileDrop !== appliedPileDrop) {
+    appliedPileDrop = pileDrop
+    for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
+      const s = slotEntities[i]
+      if (!s) continue
+      const def = ITEM_SLOTS[i]
+      Transform.getMutable(s).position = {
+        x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y - pileDrop, z: BAG_OFFSET.z + def.pos.z,
+      }
+    }
+  }
   for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
     const src = visible[i]
     if (src) {
@@ -484,7 +508,7 @@ function refreshCarriedBag(): void {
         const def = ITEM_SLOTS[i]
         Transform.create(slot, {
           parent:   carryRig ?? undefined,
-          position: { x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y, z: BAG_OFFSET.z + def.pos.z },
+          position: { x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y - pileDrop, z: BAG_OFFSET.z + def.pos.z },
           rotation: Quaternion.fromEulerDegrees(def.rot.x, def.rot.y, def.rot.z),
           scale:    { x: ITEM_MINI_SCALE, y: ITEM_MINI_SCALE, z: ITEM_MINI_SCALE },
         })
@@ -761,7 +785,7 @@ export function initCarrySystem(): void {
         pointerEventsSystem.onPointerDown(
           // Slightly longer reach than items — bins are destinations you walk
           // at, and cutting the prompt at 4m felt unresponsive on approach.
-          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: POINTER_MAX_DIST } },
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: pointerMaxDist() } },
           () => {
             if (!known) return
             // Overflowed stream: the bin dispenses its FULL BAG instead of
@@ -811,7 +835,7 @@ export function initCarrySystem(): void {
         const clickEnt = setupClickProxy(gltfEnt, false)
         pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
         pointerEventsSystem.onPointerDown(
-          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: POINTER_MAX_DIST } },
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: pointerMaxDist() } },
           () => {
             // Only a FULL bin dumps here; the return leg belongs at the station.
             if (hauling === '' || haulStage !== 'out') { playMissSound(); return }
@@ -962,7 +986,7 @@ export function initCarrySystem(): void {
         MeshCollider.setBox(returnTarget)
         Transform.getMutable(returnTarget).scale = { x: 1.4, y: 1.4, z: 1.4 }
         pointerEventsSystem.onPointerDown(
-          { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: POINTER_MAX_DIST } },
+          { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: pointerMaxDist() } },
           () => {
             if (haulStage !== 'back') {
               console.log(`[HAUL] return click IGNORED — haulStage='${haulStage}' (expected 'back')`)

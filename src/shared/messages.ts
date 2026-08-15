@@ -13,6 +13,12 @@ export const Messages = {
    * Admin-gated server-side.
    */
   adminForceTheme:  Schemas.Map({ themeId: Schemas.String }),
+  /**
+   * Admin testing tool — SET a gear achievement's progress to a stage
+   * ('zero' | 'half' | 'almost' | 'full') so pedestal texts, payout lines and
+   * the equip flow can be walked through every state. Admin-gated server-side.
+   */
+  adminAchievement: Schemas.Map({ gear: Schemas.String, stage: Schemas.String }),
   startMatch:       Schemas.Map({ dummy: Schemas.Boolean }),  // any player — start a match from the lobby
   /** Sent on join so the server can map address → display name for the leaderboard. */
   registerPlayer:   Schemas.Map({ displayName: Schemas.String }),

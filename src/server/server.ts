@@ -15,6 +15,7 @@ import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, peekProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
   progressStorageStatus, setCareersRestoredHandler, bumpKindCount, setFlexGear,
+  adminSetAchievement, AchievementStage,
 } from './playerProgress'
 
 // ── Leaderboard ───────────────────────────────────────────────
@@ -1497,30 +1498,37 @@ export function initServer() {
     }, delayMs)
   }
 
+  // Every rejection logs its reason — "the patch/item won't clean" reports are
+  // undiagnosable otherwise (the client only sees a bare cleanRejected).
+  function rejectClean(to: string, itemId: string, reason: string): void {
+    console.log(`[SERVER] cleanRejected ${itemId} from ${to}: ${reason}`)
+    room.send('cleanRejected', { itemId }, { to: [to] })
+  }
+
   room.onMessage('cleanItem', (data, context) => {
     if (!context) return
     if (!paced(context.from, 'clean', 125)) return   // 8/s ceiling, silent
     if (getPhase() !== 'playing') {   // reject during lobby/countdown and intermission
-      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      rejectClean(context.from, data.itemId, `phase is '${getPhase()}'`)
       return
     }
     // Spectators can watch but not clean. Enforced here rather than only in the
     // client's pointer gating, since a crafted message would bypass that entirely
     // and let a non-participant earn a wage.
     if (!activePlayers.has(context.from)) {
-      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      rejectClean(context.from, data.itemId, 'not enrolled this round (spectator)')
       return
     }
     const entity = itemEntities.get(data.itemId)
     if (!entity || ClutterSync.getOrNull(entity)?.isCleaned) {
-      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      rejectClean(context.from, data.itemId, !entity ? 'unknown itemId' : 'already cleaned server-side')
       return
     }
     // Disaster stages clean IN ORDER — the stain is under the pile, the polish
     // needs a mopped surface. Locked stages are invisible client-side anyway;
     // this stops a crafted message skipping to the finale bonus.
     if (data.itemId.startsWith(DISASTER_PREFIX) && !disasterStageUnlocked(data.itemId)) {
-      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      rejectClean(context.from, data.itemId, 'disaster stage locked')
       return
     }
     // Carry gate — full hands can't pick up more carryable mess (rubbish, glasses,
@@ -1529,7 +1537,7 @@ export function initServer() {
     // A hauled dumpster bag IS your hands — no pickups until it's emptied.
     const isCarryItem = carryStreamFor(data.itemId) !== null
     if (isCarryItem && (haulingBy.has(context.from) || carriedTotal(context.from) >= carryCapacityFor(context.from))) {
-      room.send('cleanRejected', { itemId: data.itemId }, { to: [context.from] })
+      rejectClean(context.from, data.itemId, haulingBy.has(context.from) ? 'hauling a bin' : 'hands full')
       sendCarried(context.from)
       return
     }
@@ -1864,6 +1872,29 @@ export function initServer() {
     }
     setForcedTheme(data.themeId === '' ? null : (data.themeId as ThemeId))
     console.log(`[SERVER] adminForceTheme: ${data.themeId === '' ? 'cleared (random)' : `pinned '${data.themeId}'`} by ${context.from}`)
+  })
+
+  room.onMessage('adminAchievement', (data, context) => {
+    if (!context) return
+    if (!ADMIN_ADDRESSES.includes(context.from.toLowerCase())) {
+      console.log(`[SERVER] adminAchievement rejected — not an admin: ${context.from}`)
+      return
+    }
+    const address = context.from
+    const stage = data.stage as AchievementStage
+    if (!['zero', 'half', 'almost', 'full'].includes(stage)) return
+    executeTask(async () => {
+      await ensureProgressLoaded()
+      const r = adminSetAchievement(address, data.gear, stage)
+      if (!r.ok) {
+        console.log(`[SERVER] adminAchievement: unknown gear '${data.gear}' — ignored`)
+        return
+      }
+      console.log(`[SERVER] adminAchievement: ${data.gear} → ${stage} (${r.current}/${r.target}) for ${address}`)
+      sendProgress(address)     // pedestals + payout lines re-render from this
+      sendCarried(address)      // un-equip on revoke must reach the carry visuals
+      scheduleProgressSave()
+    })
   })
 
   room.onMessage('adminGrant', (data, context) => {

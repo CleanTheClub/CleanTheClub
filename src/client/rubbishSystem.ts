@@ -12,7 +12,7 @@ import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, suckAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { startPopRhythm } from './InteractionManager'
 import { POP_NAME_PART } from '../shared/config'
@@ -128,7 +128,7 @@ function enableClick(itemId: string) {
         hoverText: rubbishTypes.get(itemId) === 'recycle' ? 'Clean (Recycling)' : 'Clean (General)',
         // Camera-based prompt range; the player-based withinReach gate on click
         // is the true accept distance.
-        maxDistance: POINTER_MAX_DIST,
+        maxDistance: pointerMaxDist(),
       },
     },
     () => {

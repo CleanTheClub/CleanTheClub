@@ -1,7 +1,9 @@
 import {
   engine, Entity, Transform, GltfContainer, GltfContainerLoadingState,
-  LoadingState, Name, MeshCollider, ColliderLayer } from '@dcl/sdk/ecs'
+  LoadingState, Name, MeshCollider, ColliderLayer, PointerEvents } from '@dcl/sdk/ecs'
 import { isMobile } from '@dcl/sdk/platform'
+import { ClutterSync } from '../shared/schemas'
+import { MODEL_SIZE_M } from '../shared/config'
 
 // ── Mobile tap targets ────────────────────────────────────────────────────────
 // Touch input has no cursor and no hover state: the player aims with a fingertip
@@ -30,7 +32,11 @@ import { isMobile } from '@dcl/sdk/platform'
 // is likely NOT collider size — look at the raised floor (items sit at y~0.95, i.e.
 // at the player's feet, where a third-person mobile camera aims poorly) before
 // raising this value.
+// Multiplies the model's MEASURED size (MODEL_SIZE_M) — small items get small
+// boxes (popcorns 1.93m apart stay well clear of each other) and big ones get
+// full coverage. The floor keeps tiny props from becoming untappable slivers.
 const MOBILE_TAP_SCALE = 1.4
+const MOBILE_TAP_MIN_M = 0.55
 
 // ── Tap proxy vs hover outline ────────────────────────────────────────────────
 // OFF (2026-08-11 playtest): "hover outline is visible on some items on mobile
@@ -42,24 +48,26 @@ const MOBILE_TAP_SCALE = 1.4
 // also broke the one-rule-per-item-TYPE principle: the same model behaved
 // differently depending on where it came from.
 //
-// Turning it off restores the outline everywhere and makes every item aim at
-// its own mesh. The proxy originally existed for iOS "can't always tap the
-// dance floor items", but the ACTUAL causes of those misses were found and
-// fixed separately afterwards (pointer maxDistance was refusing interactions
-// from the third-person camera distance, and the reach gate measured from the
-// wrong entity), so this is the experiment those fixes earned.
+// RE-ENABLED (2026-08-15) after the definitive A/B/C: three identical bags
+// outside the club with (8) mesh-mask only, (9) box only, (10) mesh+box. On
+// mobile, ONLY the box regions were tappable — the mesh-mask bag was near-dead
+// and the boxed bags responded exactly where the box volume was (their base:
+// the old proxy was origin-centred, half of it underground). Conclusion: the
+// MOBILE client's pointer raycast against GLB mesh colliders is unreliable;
+// primitive MeshCollider boxes work. Same class of mobile-client gap as
+// LightSource / AvatarLocomotionSettings. The earlier fixes (maxDistance from
+// the camera boom, reach-gate entity, scenery pointer sweep) were all real,
+// but none of them could make a mesh collider hittable on a client that can't
+// hit mesh colliders.
 //
-// Side effect, and an improvement: a GLB that fails to stream now has NO
-// collider at all instead of an invisible full-size tap box, so the "invisible
-// but still clickable and collectible" item can't happen.
+// Cost, accepted knowingly: proxied items lose the hover outline on MOBILE
+// (the ray hits the box, which has nothing to outline). Desktop is unaffected
+// — no proxy there, mesh path + outline as before.
 //
-// REVERT to true if small items become hard to tap again — it is one flag.
-// The proxy machinery below (createMobileTapTarget, hasBakedOffset, the addBox
-// params at the call sites) is INERT while this is false; it is kept as the
-// documented revert path, not as live behaviour. The mobile hover-tint that
-// substituted for the outline on proxied items was deleted outright — restore
-// it from git history alongside the flag if ever needed.
-const USE_MOBILE_TAP_PROXY = false
+// The proxy is now sized from MODEL_SIZE_M and LIFTED half its height, so the
+// box wraps the whole mesh instead of the bottom half (the "only at the base
+// of the bag" repro).
+const USE_MOBILE_TAP_PROXY = true
 
 // ── Blender-baked placements ──────────────────────────────────────────────────
 // 20 of the scene's GLBs (MainStructure, Elevator, the cushions, stools, chaise,
@@ -192,6 +200,7 @@ export function findGltfEntity(containerEntity: Entity): Entity | undefined {
 function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
   const g = GltfContainer.getOrNull(gltfEnt)
   if (!g) return false
+  pointerInteractive.add(gltfEnt)   // exempt from the scenery pointer sweep
   const mut = GltfContainer.getMutable(gltfEnt)
   const mask = g.visibleMeshesCollisionMask ?? 0
   mut.visibleMeshesCollisionMask =
@@ -206,6 +215,46 @@ function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
 }
 
 
+// ── Scenery pointer sweep ─────────────────────────────────────────────────────
+// Creator Hub authors PHYSICS+POINTER onto many scenery colliders — the twelve
+// "Floor - Concrete" hulls, the bin stands, graffiti, sofa hulls. An invisible
+// collider that carries CL_POINTER absorbs the pointer ray BEFORE it reaches an
+// item lying on/near it, so taps only landed where the item poked past the hull
+// (playtest: "I have to try multiple angles until I hit a spot I can
+// interact with"). This strips CL_POINTER from every GLB that is not
+// interactive, keeping physics intact.
+//
+// What survives untouched:
+//  • anything that went through applyPointerMask (items, bins, dumpsters,
+//    pedestal gear, restore props) — registered in `pointerInteractive`, and
+//    applyPointerMask sets its masks explicitly anyway, so even an item swept
+//    BEFORE its pop-in wiring self-heals;
+//  • entities with authored PointerEvents (the Creator Hub sit spots);
+//  • server-synced entities (ClutterSync) — client writes to those trip the
+//    validateBeforeChange guard.
+const pointerInteractive = new Set<Entity>()
+
+export function sweepSceneryPointerColliders(): void {
+  let swept = 0
+  for (const [entity, g] of engine.getEntitiesWith(GltfContainer)) {
+    if (pointerInteractive.has(entity)) continue
+    if (PointerEvents.getOrNull(entity)) continue
+    if (ClutterSync.getOrNull(entity)) continue
+    // Undefined mask = renderer default, which is PHYSICS+POINTER for invisible
+    // meshes and none for visible ones.
+    const invisible = g.invisibleMeshesCollisionMask ?? (ColliderLayer.CL_PHYSICS | ColliderLayer.CL_POINTER)
+    const visible   = g.visibleMeshesCollisionMask ?? 0
+    const strippedInv = invisible & ~ColliderLayer.CL_POINTER
+    const strippedVis = visible & ~ColliderLayer.CL_POINTER
+    if (strippedInv === g.invisibleMeshesCollisionMask && strippedVis === visible) continue
+    const mut = GltfContainer.getMutable(entity)
+    mut.invisibleMeshesCollisionMask = strippedInv
+    if (strippedVis !== visible) mut.visibleMeshesCollisionMask = strippedVis
+    swept++
+  }
+  console.log(`[POINTER] swept ${swept} scenery GLBs — CL_POINTER stripped (physics kept)`)
+}
+
 // Creates the invisible, enlarged mobile tap target as a child of the item, so it
 // inherits the item's position and scale (including being scaled away to nothing
 // when the item is hidden — a cleaned item must not stay tappable).
@@ -215,10 +264,17 @@ function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
 // job the player point light now does — and each disc cost a plane + PBR
 // material + per-hover material writes on the platform least able to afford it.
 function createMobileTapTarget(gltfEnt: Entity): Entity {
+  // Sized from the measured model table and lifted half a height, so the box
+  // WRAPS the mesh (origin-at-base convention) instead of straddling the
+  // floor. Unmeasured models get a conservative default.
+  const src  = GltfContainer.getOrNull(gltfEnt)?.src ?? ''
+  const name = src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')
+  const s    = Math.max(MOBILE_TAP_MIN_M, (MODEL_SIZE_M[name] ?? 0.7) * MOBILE_TAP_SCALE)
   const proxy = engine.addEntity()
   Transform.create(proxy, {
-    parent: gltfEnt,
-    scale:  { x: MOBILE_TAP_SCALE, y: MOBILE_TAP_SCALE, z: MOBILE_TAP_SCALE },
+    parent:   gltfEnt,
+    position: { x: 0, y: s * 0.45, z: 0 },
+    scale:    { x: s, y: s, z: s },
   })
   MeshCollider.setBox(proxy, ColliderLayer.CL_POINTER)
   return proxy

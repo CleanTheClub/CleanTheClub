@@ -15,7 +15,7 @@ import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, suckAndHide, cancelShrink } from './itemFx'
 import { requestSetup } from './spawnDirector'
-import { clicksAllowed, onPhaseChange, withinReach, POINTER_MAX_DIST, currentPhase } from './phaseGate'
+import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase } from './phaseGate'
 import { onClutterPoll } from './clutterWatcher'
 import { PICKUP_TOUCH_MS } from '../shared/config'
 
@@ -127,7 +127,7 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
     pointerEventsSystem.onPointerDown(
       // Glasses and bottles are glass — they fill the recycling pouch, and the
       // prompt says so, so the carry chip's green number can't be a mystery.
-      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean (Recycling)', maxDistance: POINTER_MAX_DIST } },
+      { entity: clickEntity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean (Recycling)', maxDistance: pointerMaxDist() } },
       () => {
         if (pendingCleans.has(itemId)) return
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
