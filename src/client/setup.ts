@@ -11,93 +11,16 @@ import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
 import { sweepSceneryPointerColliders } from './sceneItemHelpers'
-import { engine, Entity, Transform, LightSource } from '@dcl/sdk/ecs'
-import { Color3 } from '@dcl/sdk/math'
-import { isMobile } from '@dcl/sdk/platform'
-import { platformKnown } from './platformWait'
 
-// ── Mobile player light ───────────────────────────────────────────────────────
-// The mobile renderer resolves the club much darker than desktop (playtest:
-// "it's too dark"). One warm point light rides the local player. Platform
-// resolves asynchronously, so a one-shot system waits for it.
-// Admin diagnostic: cycle the player light's intensity on-device. The code
-// path provably runs ("[LIGHT] attached" logs) yet KJ sees no light on mobile —
-// cycling through OFF/soft/bright/BLAZING from the admin panel answers whether
-// LightSource renders on the mobile client at ANY intensity, or is simply
-// unimplemented there (like AvatarLocomotionSettings).
-// Player-facing labels now (the cycle button ships to ALL mobile players, not
-// just admins — see ui.tsx): "too dark on mobile" was a general complaint, and
-// the cycle still doubles as the LightSource-renders-at-all diagnostic. MAX is
-// the engine-default 16000cd — diagnostic value, deliberately kept.
-const LIGHT_LEVELS = [
-  { label: 'SOFT',   intensity: 1200 },
-  { label: 'BRIGHT', intensity: 4000 },
-  { label: 'MAX',    intensity: 16000 },
-  { label: 'OFF',    intensity: 0 },
-]
-let lightLevelIdx = 0
-let playerLight: Entity | null = null
-
-export function cycleMobileLight(): string {
-  if (playerLight === null) return 'no light (desktop?)'
-  lightLevelIdx = (lightLevelIdx + 1) % LIGHT_LEVELS.length
-  const lvl = LIGHT_LEVELS[lightLevelIdx]
-  const ls = LightSource.getMutableOrNull(playerLight)
-  if (!ls) return 'light lost'
-  ls.active = lvl.intensity > 0
-  ls.intensity = Math.max(1, lvl.intensity)
-  console.log(`[LIGHT] admin cycle → ${lvl.label}`)
-  return lvl.label
-}
-
-function initMobilePlayerLight(): void {
-  // Waits for a REAL platform answer rather than the shared degrade-to-desktop
-  // gate: an unknown platform means "no light", not "desktop", so timing out
-  // here silently costs mobile players the light entirely.
-  let waitedS = 0
-  const waitForPlatform = (dt: number) => {
-    waitedS += dt
-    if (!platformKnown()) {
-      if (waitedS > 30) {
-        console.log('[LIGHT] platform never resolved — skipping mobile player light')
-        engine.removeSystem(waitForPlatform)
-      }
-      return
-    }
-    engine.removeSystem(waitForPlatform)
-    if (!isMobile()) return
-    const light = engine.addEntity()
-    playerLight = light
-    // WORLD-SPACE + a per-frame follower — NOT parented to PlayerEntity.
-    // Player-parented transforms are the same silently-unimplemented-on-mobile
-    // class as AvatarLocomotionSettings and mesh-collider raycasts: if the
-    // parent isn't applied, the light renders at its LOCAL position — the
-    // scene corner — where its 10m range can never reach the club interior.
-    // That exactly matches "no light at ANY intensity" while the attach log
-    // proves the code ran, and would also explain it working "in the past"
-    // (an explorer update changing parenting behaviour). A follower reads the
-    // player transform scene-side every frame — one Transform write, and a
-    // frame of lag is invisible on a 10m fill light.
-    Transform.create(light, { position: { x: 16, y: 3, z: 16 } })
-    LightSource.create(light, {
-      active: true,
-      color: Color3.create(1, 0.93, 0.82),   // warm club glow, not a torch
-      // Candelas (engine default is a blinding 16000) — a soft personal fill.
-      // TUNE by eye on a real phone (the LIGHT button cycles levels live).
-      intensity: 1200,
-      range: 10,
-      type: LightSource.Type.Point({}),
-    })
-    engine.addSystem(() => {
-      const p = Transform.getOrNull(engine.PlayerEntity)?.position
-      if (!p) return
-      const tf = Transform.getMutableOrNull(light)
-      if (tf) tf.position = { x: p.x, y: p.y + 1.8, z: p.z }
-    })
-    console.log('[LIGHT] mobile player light attached (world-space follower)')
-  }
-  engine.addSystem(waitForPlatform)
-}
+// ── Mobile player light: REMOVED (2026-08-16) ─────────────────────────────────
+// The full story, for whoever considers re-adding one: mobile renders the club
+// darker than desktop, so a warm LightSource rode the local player. It never
+// rendered on device — not parented, not world-space-followed, not at the
+// engine-max 16000cd — the mobile explorer simply does not draw LightSource
+// (same silently-unimplemented class as AvatarLocomotionSettings and
+// mesh-collider raycasts). Mobile visibility is now handled where the mobile
+// renderer actually cooperates: higher emissive floors on the club's own neon
+// during dirty phases (see emissionSystem's mobile levels).
 import { initRestoreSystem } from './restoreSystem'
 import { initStinkSystem } from './stinkSystem'
 import { initSparkleSystem } from './sparkleSystem'
@@ -149,7 +72,6 @@ export function initClient() {
   })
   initRubbishSystem()
   initThemeSpawnSystem()   // click wiring for server-placed themed extras (theme_* slots)
-  initMobilePlayerLight()  // mobile renders the club too dark — see above
   initRestoreSystem([
     {
       itemId:         'test_reset',

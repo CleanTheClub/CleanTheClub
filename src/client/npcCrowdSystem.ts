@@ -190,13 +190,21 @@ function buildSpec(
 const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3)  // soft landing for the drop-in
 const easeInCubic  = (t: number) => t * t * t               // accelerating lift for the exit
 
-// Create a fresh avatar entity for `spec` at world height `y`. Each gets a unique id.
+// Create a fresh avatar entity for `spec` at world height `y`.
 // Per-session nonce so avatar ids never collide with a previously-cached identity in
 // the explorer. Without this, ids like `npc-dancer-Rave-1` repeat every deploy, and the
 // explorer shows the CACHED (old) nametag for any id it has seen before — which is why
 // renamed NPCs appear as a mix of old and new names until a full client restart.
+//
+// STABLE per spec WITHIN a session — no per-create counter. The counter minted
+// a brand-new id on every pop-in, and the explorer's per-id cache (the same
+// cache behind the stale-nametag story above) held a full avatar's wearables
+// for EVERY id ever seen: ~9 new avatars cached per intermission, unbounded —
+// the prime suspect for "mobile consistently crashes after a few rounds".
+// Reusing one id per NPC slot bounds the cache to the roster size, and lets
+// the explorer reuse the already-loaded avatar on re-spawn. The nonce alone
+// covers the across-deploys staleness the counter was mistakenly also solving.
 const NPC_SESSION_NONCE = Math.floor(Math.random() * 1e9).toString(36)
-let npcIdCounter = 0
 function createAvatarEntity(spec: NpcSpec, y: number): Entity {
   const entity = engine.addEntity()
   Transform.create(entity, {
@@ -205,7 +213,7 @@ function createAvatarEntity(spec: NpcSpec, y: number): Entity {
     scale:    { x: 1, y: 1, z: 1 },   // avatars stay at scale 1 always
   })
   AvatarShape.create(entity, {
-    id:                         `npc-${NPC_SESSION_NONCE}-${spec.kind}-${spec.name}-${++npcIdCounter}`,
+    id:                         `npc-${NPC_SESSION_NONCE}-${spec.kind}-${spec.name}`,
     name:                       spec.name,
     bodyShape:                  spec.bodyShape,
     wearables:                  spec.wearables,

@@ -13,7 +13,6 @@ import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow, promotionBurst } from './client/confettiSystem'
 import { crowdCheer } from './client/npcCrowdSystem'
 import { getHaulDebug } from './client/carrySystem'
-import { cycleMobileLight } from './client/setup'
 import { toggleMusicMute, isMusicMuted, playOwnerSting } from './client/musicManager'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
@@ -404,7 +403,6 @@ const CONFETTI_TEST: Array<{ label: string; outcome: 'suboptimal' | 'adequate' |
   { label: 'FINALE',  outcome: 'optimal',    finale: true  },
 ]
 let adminConfettiIdx = 0
-let adminLightLabel = 'SOFT'
 // When the themed-round story card started showing (round start / scene entry).
 // Long hold + late fade: reading time first, THEN the screen declutters.
 let themeStoryStartMs   = -1
@@ -2138,29 +2136,6 @@ const uiBody = () => {
         </UiEntity>
       </UiEntity>
 
-      {/* ── Mobile light toggle — ALL mobile players ─────────────────────────
-           Was admin-gated as a diagnostic, but KJ's mobile account has no
-           admin tools and "too dark" was a general mobile complaint anyway —
-           so the personal light cycle ships as a player feature (and still
-           answers the does-LightSource-render-at-all question on any device).
-           Mid-left edge: below the toast stack's landing zone, above the
-           joystick cluster. */}
-      {mobile && (
-        <GameButton
-          id="mobileLightCycle"
-          value={`LIGHT: ${adminLightLabel}`}
-          variant="secondary"
-          fontSize={Math.round(14 * S)}
-          onMouseDown={() => { adminLightLabel = cycleMobileLight() }}
-          uiTransform={{
-            positionType: 'absolute',
-            position: { top: '58%', left: saPct(getSafeArea().left + 0.015) },
-            width:  Math.round(150 * S),
-            height: Math.round(40 * S),
-          }}
-        />
-      )}
-
       {/* ── Admin panel — desktop only (right edge unsafe on mobile), and hidden
            while the side-panel shop owns the right edge (buttons overlapped the
            upgrade rows' cost buttons). ─────────────────────────────────────────── */}
@@ -2363,13 +2338,6 @@ const uiBody = () => {
                 launchCelebration(t.outcome, t.finale)
               }
             }}
-            uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
-          />
-          <GameButton
-            value={`Light: ${adminLightLabel}`}
-            variant="secondary"
-            fontSize={ADMIN_BTN_FONT}
-            onMouseDown={() => { adminLightLabel = cycleMobileLight() }}
             uiTransform={{ width: ADMIN_BTN_WIDTH, height: ADMIN_BTN_HEIGHT, margin: { bottom: ADMIN_MARGIN } }}
           />
           <GameButton

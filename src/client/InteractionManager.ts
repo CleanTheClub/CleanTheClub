@@ -46,10 +46,22 @@ let activeHold: ActiveHold | null = null
 // Both the width AND the position roll per hold: narrow zones are riskier, early
 // zones (from 15%) demand a snap reaction, late ones a patient nerve — so no two
 // patches feel alike.
-const SKILL_ZONE_MIN_W = 0.12
-const SKILL_ZONE_MAX_W = 0.25
+//
+// MOBILE gets a wider floor: field report pinned the failures to "smaller green
+// tap areas". The math agrees — with Mopping Speed maxed the hold is 1500ms, so
+// a 0.12 zone is a ~180ms window, and 100-200ms of touch latency eats it
+// whole. 0.17 of 1500ms ≈ 255ms, which the post-zone grace below then covers.
+const SKILL_ZONE_MIN_W        = 0.12
+const SKILL_ZONE_MIN_W_MOBILE = 0.17
+const SKILL_ZONE_MAX_W        = 0.25
+// Mobile touch latency compensation: a tap DECIDED while the tick was drawn in
+// the green can be PROCESSED this much later, when the (wall-clock-advancing)
+// bar has left the zone — the small-zone systematic miss. Judged as an
+// extension past zoneEnd only: early taps stay early.
+const MOBILE_SKILL_GRACE_MS   = 160
 function rollSkillZone(): { zoneStart: number; zoneEnd: number } {
-  const w = SKILL_ZONE_MIN_W + Math.random() * (SKILL_ZONE_MAX_W - SKILL_ZONE_MIN_W)
+  const minW = isMobile() ? SKILL_ZONE_MIN_W_MOBILE : SKILL_ZONE_MIN_W
+  const w = minW + Math.random() * (SKILL_ZONE_MAX_W - minW)
   const zoneStart = 0.15 + Math.random() * (0.95 - w - 0.15)
   return { zoneStart, zoneEnd: zoneStart + w }
 }
@@ -389,14 +401,18 @@ export function initInteractionManager(
   function resolveSkillCheck(at: number): void {
     if (!activeHold) return
     const { id, zoneStart, zoneEnd } = activeHold
-    console.log(`[STICKY] skill check ${id}: at=${Math.round(at * 100)}% zone=${Math.round(zoneStart * 100)}–${Math.round(zoneEnd * 100)}% → ${at >= zoneStart && at <= zoneEnd ? 'HIT' : 'MISS'}`)
+    // Post-zone grace on mobile (see MOBILE_SKILL_GRACE_MS) — mirrors the
+    // popcorn late-tap grace: judge what the player SAW when they committed.
+    const graceFrac = isMobile() ? MOBILE_SKILL_GRACE_MS / holdDurationMs() : 0
+    const hit = at >= zoneStart && at <= zoneEnd + graceFrac
+    console.log(`[STICKY] skill check ${id}: at=${Math.round(at * 100)}% zone=${Math.round(zoneStart * 100)}–${Math.round(zoneEnd * 100)}%${graceFrac > 0 ? `+${Math.round(graceFrac * 100)}` : ''} → ${hit ? 'HIT' : 'MISS'}`)
     activeHold = null
     cancelEmote()
     stopStickySound()
     showHoldBar(false)
     updateHoldBar(0)
 
-    if (at >= zoneStart && at <= zoneEnd) {
+    if (hit) {
       perfectStreak++
       flashPerfect(perfectStreak)
       playPerfectSound(perfectStreak)   // chime rises with the streak

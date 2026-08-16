@@ -17,6 +17,7 @@
 //  vivid  : phase === 'open'              — authored values fully restored (party mode)
 
 import { engine, Entity, GltfNodeModifiers, Name } from '@dcl/sdk/ecs'
+import { isMobile } from '@dcl/sdk/platform'
 import { gameState } from './phaseGate'
 import { TRANSFORM_DIM, TRANSFORM_MID, TRANSFORM_BRIGHT } from '../shared/config'
 
@@ -131,6 +132,21 @@ const EMISSION_LEVELS: Record<EmissionState, EmissionLevel> = {
   vivid:  null,                 // authored values restored — party mode, no blowout
 }
 
+// MOBILE floors — the phone renderer resolves the club far darker than desktop
+// AND does not draw LightSource at all (the player point light never rendered
+// at any intensity; removed 2026-08-16). The club's own ~45 neon nodes are the
+// only light mobile actually honours, so on phones the dirty-state glow never
+// fully dies: round start is readable, and the dirty→clean brightening arc —
+// the vibe — survives, compressed upward instead of starting from black.
+// Desktop keeps the authored drama above.
+const EMISSION_LEVELS_MOBILE: Record<EmissionState, EmissionLevel> = {
+  grungy: { intensity: 0.35 },
+  dim:    { intensity: 0.55 },
+  mid:    { intensity: 0.75 },
+  bright: null,
+  vivid:  null,
+}
+
 // How often to sample GameState and check for a state transition (seconds).
 const CHECK_INTERVAL_S = 0.5
 
@@ -240,7 +256,9 @@ export function initEmissionSystem(): void {
     if (state === lastState) return
     lastState = state
 
-    const level = EMISSION_LEVELS[state]
+    // Platform read per transition, not cached at init: isMobile() resolves
+    // asynchronously, and transitions are rare enough that a re-read is free.
+    const level = (isMobile() ? EMISSION_LEVELS_MOBILE : EMISSION_LEVELS)[state]
     const intensityStr = level === null ? 'restore authored' : `intensity=${level.intensity}`
     console.log(`[Emission] → "${state}"  ${intensityStr}  pct=${Math.round(pct * 100)}%`)
 
