@@ -124,12 +124,16 @@ function stop(entity: Entity) {
   AudioSource.getMutable(entity).playing = false
 }
 
-/** Next clip off the party wheel, with a ±4% pitch wobble for extra variety. */
+/** Next clip off the party wheel, with a ±7% pitch wobble for extra variety.
+ *  Widened from ±4% (playtest: wanted "more bg variety") — a full DJ-fader
+ *  range, so each intermission lands audibly faster or slower. Pitch and tempo
+ *  are coupled (no time-stretch in this engine); past ~±8% a track stops
+ *  reading as a different night and starts reading as a broken record. */
 function playNextParty(): void {
   const e = partyPool[partyIdx % partyPool.length]
   partyIdx++
   currentParty = e
-  AudioSource.getMutable(e).pitch = 0.97 + Math.random() * 0.08
+  AudioSource.getMutable(e).pitch = 0.93 + Math.random() * 0.14
   play(e)
 }
 
@@ -168,6 +172,16 @@ function radioEnt(layer = radioLayer): Entity {
  * hysteresis-guarded) layer swap; between those, zero writes. One layer plays
  * at a time — also the lightest possible footprint on mobile's audio voices.
  */
+// Radio gets a fresh subtle pitch each round / layer swap (±3%) — it is the
+// track players hear the MOST, previously identical every single round. A
+// transition-time write, so the write-free-while-playing rule holds. Subtler
+// than the party wheel's ±7%: the radio is ambience, and a plainly slowed
+// muffled loop reads as a fault, not variety.
+const RADIO_PITCH_SPREAD = 0.03
+function rollRadioPitch(e: Entity): void {
+  AudioSource.getMutable(e).pitch = 1 - RADIO_PITCH_SPREAD + Math.random() * RADIO_PITCH_SPREAD * 2
+}
+
 function radioStart(): void {
   radioOn = true
   if (musicMuted) return
@@ -176,6 +190,7 @@ function radioStart(): void {
   stop(radioEnt(radioLayer === 'bright' ? 'muffled' : 'bright'))
   const e = radioEnt()
   baseVol.set(e, radioVol(f))
+  rollRadioPitch(e)
   play(e)
 }
 
@@ -302,6 +317,7 @@ export function initMusicManager(): void {
     radioLayer = want
     const e = radioEnt()
     baseVol.set(e, radioVol(f))
+    rollRadioPitch(e)   // the station-change moment — a fresh pitch reads as intended
     play(e)
     console.log(`[Music] radio ${want === 'bright' ? 'BRIGHTENS' : 'muffles'} (clean ${Math.round(f * 100)}%)`)
   })

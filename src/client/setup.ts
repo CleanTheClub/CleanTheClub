@@ -25,11 +25,15 @@ import { platformKnown } from './platformWait'
 // cycling through OFF/soft/bright/BLAZING from the admin panel answers whether
 // LightSource renders on the mobile client at ANY intensity, or is simply
 // unimplemented there (like AvatarLocomotionSettings).
+// Player-facing labels now (the cycle button ships to ALL mobile players, not
+// just admins — see ui.tsx): "too dark on mobile" was a general complaint, and
+// the cycle still doubles as the LightSource-renders-at-all diagnostic. MAX is
+// the engine-default 16000cd — diagnostic value, deliberately kept.
 const LIGHT_LEVELS = [
-  { label: 'soft 1200',    intensity: 1200 },
-  { label: 'bright 4000',  intensity: 4000 },
-  { label: 'BLAZING 16000', intensity: 16000 },
-  { label: 'OFF',          intensity: 0 },
+  { label: 'SOFT',   intensity: 1200 },
+  { label: 'BRIGHT', intensity: 4000 },
+  { label: 'MAX',    intensity: 16000 },
+  { label: 'OFF',    intensity: 0 },
 ]
 let lightLevelIdx = 0
 let playerLight: Entity | null = null
@@ -64,17 +68,33 @@ function initMobilePlayerLight(): void {
     if (!isMobile()) return
     const light = engine.addEntity()
     playerLight = light
-    Transform.create(light, { parent: engine.PlayerEntity, position: { x: 0, y: 1.8, z: 0 } })
+    // WORLD-SPACE + a per-frame follower — NOT parented to PlayerEntity.
+    // Player-parented transforms are the same silently-unimplemented-on-mobile
+    // class as AvatarLocomotionSettings and mesh-collider raycasts: if the
+    // parent isn't applied, the light renders at its LOCAL position — the
+    // scene corner — where its 10m range can never reach the club interior.
+    // That exactly matches "no light at ANY intensity" while the attach log
+    // proves the code ran, and would also explain it working "in the past"
+    // (an explorer update changing parenting behaviour). A follower reads the
+    // player transform scene-side every frame — one Transform write, and a
+    // frame of lag is invisible on a 10m fill light.
+    Transform.create(light, { position: { x: 16, y: 3, z: 16 } })
     LightSource.create(light, {
       active: true,
       color: Color3.create(1, 0.93, 0.82),   // warm club glow, not a torch
       // Candelas (engine default is a blinding 16000) — a soft personal fill.
-      // TUNE by eye on a real phone.
+      // TUNE by eye on a real phone (the LIGHT button cycles levels live).
       intensity: 1200,
       range: 10,
       type: LightSource.Type.Point({}),
     })
-    console.log('[LIGHT] mobile player light attached')
+    engine.addSystem(() => {
+      const p = Transform.getOrNull(engine.PlayerEntity)?.position
+      if (!p) return
+      const tf = Transform.getMutableOrNull(light)
+      if (tf) tf.position = { x: p.x, y: p.y + 1.8, z: p.z }
+    })
+    console.log('[LIGHT] mobile player light attached (world-space follower)')
   }
   engine.addSystem(waitForPlatform)
 }

@@ -83,16 +83,32 @@ let activeRhythm: ActiveRhythm | null = null
 // principle as the scrub bar's lastDrawnProgress).
 const POP_LATE_GRACE_MS = 130
 
+// ONE physical tap can be delivered through BOTH tap paths (the on-pill UI
+// handler and the global inputSystem poll — mobile explorers differ on whether
+// a UI-consumed touch also reaches the poll). The current-beat judgment is
+// double-safe via `tapped`, but the late-grace credit was not: delivery #1
+// credited the previous beat (correct pop sound) and CLEARED the grace, so
+// delivery #2 of the same tap fell through to the current beat — inevitably
+// "too early" → MISSED + streak break over a hit that landed (mobile report:
+// "says missed when I get it right and hear correct feedback"). Any second
+// judge call within this window is the same tap, not a new one — beats are
+// 700ms apart, so no legitimate second tap can arrive this fast.
+const TAP_DEDUPE_MS = 120
+let lastTapJudgeMs = 0
+
 /** Starts the pop rhythm for an item. False = another minigame is running. */
 export function startPopRhythm(id: string, onDone: (hits: number) => void): boolean {
   if (activeRhythm || activeHold) return false
   activeRhythm = { id, beat: 0, beatStartMs: Date.now(), hits: 0, tapped: false, graceUntilMs: 0, onDone }
+  lastTapJudgeMs = 0
   return true
 }
 
 function judgeRhythmTap(): void {
   if (!activeRhythm) return
   const now = Date.now()
+  if (now - lastTapJudgeMs < TAP_DEDUPE_MS) return   // same tap, other path
+  lastTapJudgeMs = now
   // Late-tap grace — credit the PREVIOUS beat; the current beat's own tap
   // stays available, so this can't double-reward.
   if (activeRhythm.graceUntilMs > 0 && now <= activeRhythm.graceUntilMs) {

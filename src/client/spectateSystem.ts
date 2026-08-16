@@ -75,6 +75,19 @@ const PROBE_AT_S   = 1.5    // after the fly-in; ~0 distance means honored
 
 type TargetInfo = { name: string; title: string; rank: number }
 
+// A remote avatar's Transform can exist while reading EXACTLY (0,0,0) — seen
+// on mobile while the avatar streams in or comms hiccup: the component is
+// there, the data hasn't arrived. (0,0,0) is the scene CORNER, so chasing it
+// swept the whole rig to the edge of the scene, nowhere near the target
+// (mobile live test). Exact float zero on all three axes never happens for a
+// real standing player, so it's safe to treat as "no position yet".
+type Pos = { x: number; y: number; z: number }
+function validPos(p: Pos | null | undefined): Pos | null {
+  if (!p) return null
+  if (p.x === 0 && p.y === 0 && p.z === 0) return null
+  return p
+}
+
 let camEntity:   Entity | null = null
 let focusEntity: Entity | null = null
 
@@ -124,6 +137,9 @@ function refreshCandidates(): void {
 
   for (const [entity, data] of engine.getEntitiesWith(PlayerIdentityData, Transform)) {
     if (entity === engine.PlayerEntity) continue
+    // No real position yet (streaming in) → not watchable: selecting them
+    // would point the camera at the scene corner their transform reads.
+    if (!validPos(Transform.getOrNull(entity)?.position)) continue
     const address = data.address.toLowerCase()
     const info = rankInfoFor(address)
     if (info?.cleaning !== undefined) flagsKnown = true
@@ -183,7 +199,7 @@ export function enterSpectate(): void {
   if (candidates.length === 0) return
 
   setTarget(Math.min(targetIdx, candidates.length - 1))
-  const tPos = Transform.getOrNull(targetEntity!)?.position
+  const tPos = validPos(Transform.getOrNull(targetEntity!)?.position)
   if (!tPos) return
 
   // Start the orbit on the side the spectator is already viewing from, so the
@@ -314,10 +330,13 @@ function spectateSystem(dt: number): void {
     else targetEntity = null
   }
 
-  const tPos = targetEntity ? Transform.getOrNull(targetEntity)?.position : null
+  const tPos = targetEntity ? validPos(Transform.getOrNull(targetEntity)?.position) : null
   if (!tPos) {
-    // Nobody to watch. Hold the last shot briefly (a cleaner may be mid-respawn
-    // or the roster mid-refresh) before giving the camera back.
+    // Nobody to watch — or the target's transform went degenerate (origin
+    // sentinel, see validPos). Hold the last shot briefly (a cleaner may be
+    // mid-respawn, mid-stream, or the roster mid-refresh) before giving the
+    // camera back; the 0.5s roster rescan drops still-degenerate targets and
+    // setTarget moves on to a live one.
     noTargetFor += dt
     if (noTargetFor >= NO_TARGET_GRACE_S) exitSpectate('no_targets')
     return

@@ -27,14 +27,17 @@ const PRESS_MS = 140
 // few px inside its fixed outer box moves nothing else on screen. Sampled on
 // the same 100ms-quantized clock as every other decorative pulse, so an idle
 // screen isn't re-laid-out at frame rate.
-const WIGGLE_PERIOD_MS = 2200   // one burst per period
-const WIGGLE_BURST_MS  = 500    // burst length within the period
-const WIGGLE_AMP_PX    = 3
+// Tuned UP from ±3px/1.5 cycles (playtest: "should be much more obvious, like
+// a shake"): ±8px, two full left-right oscillations per burst. At the 100ms
+// sample rate that lands on alternating ±7px offsets — an unmistakable rattle.
+const WIGGLE_PERIOD_MS = 2000   // one burst per period
+const WIGGLE_BURST_MS  = 600    // burst length within the period
+const WIGGLE_AMP_PX    = 8
 const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
 function wiggleOffsetX(): number {
   const t = pulseNow() % WIGGLE_PERIOD_MS
   if (t >= WIGGLE_BURST_MS) return 0
-  return Math.round(WIGGLE_AMP_PX * Math.sin((t / WIGGLE_BURST_MS) * Math.PI * 3))
+  return Math.round(WIGGLE_AMP_PX * Math.sin((t / WIGGLE_BURST_MS) * Math.PI * 4))
 }
 
 const pressedAt = new Map<string, number>()

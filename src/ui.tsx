@@ -87,13 +87,13 @@ const TIMER_ICON_SIZE     = 64      // base size before MOBILE_SCALE
 const TIMER_FONT_SIZE     = 72      // countdown digits
 const TIMER_ICON_MARGIN   = 14      // gap between icon and digits
 
-// Timer status pill (FRENZY / LAST CALL) — its own FIXED slot between the
-// countdown and the progress bar. These used to stack inside the info strip,
-// where theme + contract chips pushed them down into the SPREE/PERFECT flash
-// zone (mid-screen) — during the final 20s, exactly when sprees fire, the two
-// texts overlapped. A fixed slot up by the timer can't collide with anything,
-// and pairs the state with the clock that defines it.
-const TIMER_STATUS_TOP    = 194
+// Timer status pill (FRENZY / LAST CALL) — rendered INSIDE the timer row,
+// right of the digits and vertically centred with them. History: stacked in
+// the info strip it drifted into the SPREE flash zone; moved to a fixed band
+// at y=194 it overlapped mobile's taller countdown digits (~215 bottom vs the
+// bar at 232 — no free band exists on phones). In-row flex placement cannot
+// overlap anything on any platform, and the row's one-time recentre at 0:20
+// is itself the "frenzy just started" attention snap.
 
 // Progress bar row — sits just below the timer, wider than before
 const BAR_ROW_TOP         = 232     // absolute top offset — just below timer (tune as needed)
@@ -404,7 +404,7 @@ const CONFETTI_TEST: Array<{ label: string; outcome: 'suboptimal' | 'adequate' |
   { label: 'FINALE',  outcome: 'optimal',    finale: true  },
 ]
 let adminConfettiIdx = 0
-let adminLightLabel = 'soft 1200'
+let adminLightLabel = 'SOFT'
 // When the themed-round story card started showing (round start / scene entry).
 // Long hold + late fade: reading time first, THEN the screen declutters.
 let themeStoryStartMs   = -1
@@ -424,12 +424,21 @@ const THEME_WHEEL = [...THEME_DEFS.map((td) => td.title), 'CLASSIC NIGHT']
 // width, so no theme name can ever touch the padding (feedback: theme text must
 // "always fit neatly inside the container"). Derived from the data rather than
 // hand-tuned: adding a longer theme title later shrinks the font instead of
-// silently overflowing. 0.60 ≈ conservative average glyph width (em fraction)
-// for this uppercase font.
-const THEME_CARD_W      = 640
+// silently overflowing. 0.65 ≈ average glyph width (em fraction) for this
+// uppercase font — raised from 0.60 after an in-world check still showed the
+// title touching the padding (2026-08-16 screenshot).
+const THEME_CARD_W      = 680
 const THEME_CARD_PAD    = 16
 const THEME_TITLE_CHARS = Math.max(...THEME_WHEEL.map((t) => t.length)) + 'TONIGHT: '.length
-const THEME_TITLE_FONT  = Math.min(38, Math.floor((THEME_CARD_W - THEME_CARD_PAD * 4) / (0.60 * THEME_TITLE_CHARS)))
+const THEME_TITLE_FONT  = Math.min(38, Math.floor((THEME_CARD_W - THEME_CARD_PAD * 4) / (0.65 * THEME_TITLE_CHARS)))
+// The BLURB needs an EXPLICIT height: DCL Labels wrap their text but do NOT
+// grow their layout box for the extra lines, so a two-line blurb painted past
+// the card's background (the "description doesn't fit the pill" report —
+// the container never knew the text was two lines tall). Estimated with the
+// same glyph math as the title; over-estimating just pads the card bottom.
+const THEME_BLURB_FONT  = 26
+const themeBlurbLines = (text: string, fontPx: number, innerW: number): number =>
+  Math.max(1, Math.ceil((text.length * 0.52 * fontPx) / innerW))
 // Beat between the payout card's centre-stage pop and the shop panel sliding in.
 const SHOP_AUTO_OPEN_DELAY_MS = 1500
 
@@ -1609,6 +1618,33 @@ const uiBody = () => {
             }}
           />
           <Label value={formatTime(seconds)} fontSize={timerFont} color={timerColor} />
+          {/* FRENZY / LAST CALL status pill — see the layout note at the old
+              TIMER_STATUS constant site. Mutually exclusive states share the
+              slot; the intro timer overlay never carries it (frenzy is a
+              round-END state, the intro plays at round start). */}
+          {phase === 'playing' && (lastCall || (seconds <= FRENZY_LAST_S && seconds > 0)) && (
+            <UiEntity
+              uiTransform={{
+                margin: { left: Math.round(16 * S) },
+                padding: {
+                  top: Math.round(5 * S), bottom: Math.round(5 * S),
+                  left: Math.round(14 * S), right: Math.round(14 * S),
+                },
+                borderRadius: Math.round(14 * S),
+              }}
+              uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
+            >
+              <Label
+                value={lastCall
+                  ? 'LAST CALL — doors open early!'
+                  : 'FRENZY! Sprees ×2'}
+                fontSize={Math.round(19 * S)}
+                color={lastCall
+                  ? { r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 200) }
+                  : { r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 120) }}
+              />
+            </UiEntity>
+          )}
         </UiEntity>
       )}
 
@@ -1668,45 +1704,6 @@ const uiBody = () => {
         </UiEntity>
       )}
 
-      {/* ── Timer status pill — FRENZY (final seconds) or LAST CALL (spotless
-           early). A fixed slot directly under the countdown: the state and the
-           clock that defines it read as one unit, and nothing else ever renders
-           here, so it can't collide with the SPREE/PERFECT flashes mid-screen
-           (the old strip placement did). Hidden during the intro, whose timer
-           overlay animates through this band. */}
-      {!isOpen && !introActive && phase === 'playing'
-        && (lastCall || (seconds <= FRENZY_LAST_S && seconds > 0)) && (
-        <UiEntity
-          uiTransform={{
-            positionType:   'absolute',
-            position:       { top: TIMER_STATUS_TOP, left: 0 },
-            width:          '100%',
-            flexDirection:  'row',
-            justifyContent: 'center',
-          }}
-        >
-          <UiEntity
-            uiTransform={{
-              padding: {
-                top: Math.round(4 * S), bottom: Math.round(4 * S),
-                left: Math.round(14 * S), right: Math.round(14 * S),
-              },
-              borderRadius: Math.round(14 * S),
-            }}
-            uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
-          >
-            <Label
-              value={lastCall
-                ? 'LAST CALL — spotless! Doors open early'
-                : 'FRENZY! Sprees count double'}
-              fontSize={Math.round(18 * S)}
-              color={lastCall
-                ? { r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 200) }
-                : { r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 120) }}
-            />
-          </UiEntity>
-        </UiEntity>
-      )}
 
       {/* ── Hold-to-clean bar — screen-space, shown only while holding a patch ───
            Width '100%' rather than VIRT_W: percentage width is the only sizing that
@@ -1806,8 +1803,8 @@ const uiBody = () => {
             return (
               <UiEntity
                 uiTransform={{
-                  width:  Math.round(300 * S),
-                  height: Math.round(100 * S),
+                  width:  Math.round(340 * S),
+                  height: Math.round(110 * S),
                   margin: { top: Math.round(16 * S) },
                   borderRadius: Math.round(30 * S),
                   justifyContent: 'center', alignItems: 'center',
@@ -1817,8 +1814,15 @@ const uiBody = () => {
                   : { r: 0.35, g: 0.2, b: 0.5, a: 0.9 } }}
                 onMouseDown={() => skillTapHandler?.()}
               >
+                {/* The Label carries its OWN handler: react-ecs pointer events
+                    do not bubble, so a tap landing on the text — dead centre,
+                    where players aim — could miss the pill's handler entirely
+                    (mobile report: "click scrub at the right time, nothing
+                    happens"). Double-fire from label+pill on one tap is safe:
+                    resolveSkillCheck nulls activeHold on the first call. */}
                 <Label value="SCRUB!" fontSize={Math.round((inZone ? 40 : 32) * S)}
-                  color={inZone ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE} />
+                  color={inZone ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE}
+                  onMouseDown={() => skillTapHandler?.()} />
               </UiEntity>
             )
           })()}
@@ -1899,7 +1903,7 @@ const uiBody = () => {
             {mobile && (
               <UiEntity
                 uiTransform={{
-                  width: Math.round(260 * S), height: Math.round(92 * S),
+                  width: Math.round(290 * S), height: Math.round(100 * S),
                   margin: { top: Math.round(12 * S) },
                   borderRadius: Math.round(28 * S),
                   justifyContent: 'center', alignItems: 'center',
@@ -1909,8 +1913,11 @@ const uiBody = () => {
                   : { r: 0.35, g: 0.2, b: 0.5, a: 0.9 } }}
                 onMouseDown={() => skillTapHandler?.()}
               >
+                {/* Same label-absorption guard as the SCRUB pill; the rhythm
+                    judge's tap dedupe makes a label+pill double-fire one tap. */}
                 <Label value="POP!" fontSize={Math.round((landed ? 38 : 32) * S)}
-                  color={landed ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE} />
+                  color={landed ? { r: 0.15, g: 0.1, b: 0, a: 1 } : WHITE}
+                  onMouseDown={() => skillTapHandler?.()} />
               </UiEntity>
             )}
           </UiEntity>
@@ -2023,13 +2030,22 @@ const uiBody = () => {
                 color={spinning
                   ? { r: 1, g: 1, b: 1, a: 0.75 }
                   : { r: 1, g: 0.82, b: 0.25, a: fade }} />
-              {!spinning && (
-                <Label value={finalBlurb} fontSize={Math.round(26 * S)}
-                  textAlign="middle-center"
-                  textWrap="wrap"
-                  color={{ r: 1, g: 1, b: 1, a: fade }}
-                  uiTransform={{ width: '100%', margin: { top: Math.round(8 * S) } }} />
-              )}
+              {!spinning && (() => {
+                const blurbFont = Math.round(THEME_BLURB_FONT * S)
+                const innerW    = cardW - pad * 4
+                const lines     = themeBlurbLines(finalBlurb, blurbFont, innerW)
+                return (
+                  <Label value={finalBlurb} fontSize={blurbFont}
+                    textAlign="middle-center"
+                    textWrap="wrap"
+                    color={{ r: 1, g: 1, b: 1, a: fade }}
+                    uiTransform={{
+                      width: '100%',
+                      height: Math.round(lines * blurbFont * 1.3),
+                      margin: { top: Math.round(8 * S) },
+                    }} />
+                )
+              })()}
             </UiEntity>
           </UiEntity>
         )
@@ -2122,17 +2138,17 @@ const uiBody = () => {
         </UiEntity>
       </UiEntity>
 
-      {/* ── Mobile admin: the Light diagnostic ONLY ──────────────────────────
-           The full admin panel is desktop-gated (right edge is explorer
-           territory on phones) — which made the "cycle the player light
-           on-device" diagnostic unreachable on the one platform it was built
-           to test, so the LightSource question sat unanswered. One button,
-           mid-left edge: below the toast stack's landing zone, above the
+      {/* ── Mobile light toggle — ALL mobile players ─────────────────────────
+           Was admin-gated as a diagnostic, but KJ's mobile account has no
+           admin tools and "too dark" was a general mobile complaint anyway —
+           so the personal light cycle ships as a player feature (and still
+           answers the does-LightSource-render-at-all question on any device).
+           Mid-left edge: below the toast stack's landing zone, above the
            joystick cluster. */}
-      {isAdmin && mobile && (
+      {mobile && (
         <GameButton
           id="mobileLightCycle"
-          value={`Light: ${adminLightLabel}`}
+          value={`LIGHT: ${adminLightLabel}`}
           variant="secondary"
           fontSize={Math.round(14 * S)}
           onMouseDown={() => { adminLightLabel = cycleMobileLight() }}

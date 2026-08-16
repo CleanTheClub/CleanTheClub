@@ -34,11 +34,15 @@ const WALL_ROTATION = Quaternion.create(0, 0.707099974155426, 0, -0.707099974155
 const WALL_X       = 2.95
 const WALL_CENTRE_Z = 15
 
-// Whole wall raised +0.75m (KJ, 2026-08-16 screenshot): with the CLUB OWNERS
-// row added below, the owners' captions sat right ON the upper-floor surface.
-// All four Y constants moved together so the sections keep their spacing.
+// Wall vertical layout, top to bottom (respaced 2026-08-16 after two in-world
+// checks: first the owners' captions sat on the upper-floor surface, then the
+// CLUB OWNERS heading landed INLINE with the cleaners' caption row at y≈9.2):
+//   11.40  TOP CLEANERS title
+//   10.15  cleaner portraits (captions hang to ~9.2)
+//    8.85  CLUB OWNERS heading          ← clear below the captions
+//    8.20  owner portraits (captions hang to ~7.7, floor is ~7.2)
 const TITLE_TEXT = 'TOP CLEANERS'
-const TITLE_Y    = 11.75
+const TITLE_Y    = 11.4
 const TITLE_FONT = 4
 
 const SLOT_COUNT = 6
@@ -243,15 +247,16 @@ export function updateWallOfFame(podium: PodiumEntry[]): void {
 // founding owner first (server-ordered by ownerSinceMs). Smaller than the
 // cleaners' portraits — it's a plaque, not a scoreboard — and the whole section
 // stays hidden until the club has its first owner, so the wall never advertises
-// an empty honor. Y verified in-world 2026-08-16: the first blind placement put
-// the captions on the upper-floor surface; the +0.75m wall shift fixed it.
+// an empty honor. Y values: see the wall layout table above TITLE_Y — the
+// heading must clear the cleaners' hanging captions, the owner captions must
+// clear the upper-floor surface.
 const OWNER_SLOT_COUNT   = 4
 const OWNER_SLOT_SIZE    = 0.8
 const OWNER_SLOT_PITCH   = 1.05
 const OWNER_TITLE_TEXT   = 'CLUB OWNERS'
-const OWNER_TITLE_Y      = 9.17
+const OWNER_TITLE_Y      = 8.85
 const OWNER_TITLE_FONT   = 1.6
-const OWNER_SLOT_Y       = 8.53
+const OWNER_SLOT_Y       = 8.2
 const OWNER_CAPTION_FONT = 0.42   // local units (parent scale 0.8)
 const OWNER_GOLD         = Color4.create(1, 0.85, 0.35, 1)
 
