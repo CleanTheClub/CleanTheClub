@@ -19,6 +19,24 @@ import { playHoverSound, playClickSound } from './soundManager'
 
 const PRESS_MS = 140
 
+// ── Wiggle — "you can afford this" attention cue ─────────────────────────────
+// A short horizontal shake burst every couple of seconds, opted into via the
+// `wiggle` prop (shop entry points + affordable buy buttons). POSITION, not
+// scale: per-frame size tweens force relayout and stutter on mobile's uneven
+// frame pacing (the PayoutShopCta lesson), while the inner button shifting a
+// few px inside its fixed outer box moves nothing else on screen. Sampled on
+// the same 100ms-quantized clock as every other decorative pulse, so an idle
+// screen isn't re-laid-out at frame rate.
+const WIGGLE_PERIOD_MS = 2200   // one burst per period
+const WIGGLE_BURST_MS  = 500    // burst length within the period
+const WIGGLE_AMP_PX    = 3
+const pulseNow = (): number => Math.floor(Date.now() / 100) * 100
+function wiggleOffsetX(): number {
+  const t = pulseNow() % WIGGLE_PERIOD_MS
+  if (t >= WIGGLE_BURST_MS) return 0
+  return Math.round(WIGGLE_AMP_PX * Math.sin((t / WIGGLE_BURST_MS) * Math.PI * 3))
+}
+
 const pressedAt = new Map<string, number>()
 const hovered   = new Set<string>()
 
@@ -31,12 +49,17 @@ export function GameButton(props: {
   onMouseDown?: () => void
   /** Stable feedback key; defaults to the label. */
   id?: string
+  /** Periodic attention shake — set while the action is worth shouting about
+   *  (e.g. an upgrade is affordable). */
+  wiggle?: boolean
 }) {
   const id = props.id ?? props.value
   const t  = props.uiTransform ?? {}
   const h  = typeof t.height === 'number' ? t.height : 60
   const isPressed = Date.now() - (pressedAt.get(id) ?? -PRESS_MS * 2) < PRESS_MS
   const innerSize = isPressed ? '92%' : '100%'
+  // No shake mid-press — the press shrink is its own feedback.
+  const shakeX = props.wiggle && !isPressed ? wiggleOffsetX() : 0
 
   return (
     <UiEntity
@@ -51,7 +74,7 @@ export function GameButton(props: {
         value={props.value}
         variant={props.variant ?? 'primary'}
         fontSize={props.fontSize}
-        uiTransform={{ width: innerSize, height: innerSize, borderRadius: Math.round(h * 0.24) }}
+        uiTransform={{ width: innerSize, height: innerSize, borderRadius: Math.round(h * 0.24), margin: { left: shakeX } }}
         onMouseEnter={() => {
           if (!hovered.has(id)) { hovered.add(id); playHoverSound() }
         }}

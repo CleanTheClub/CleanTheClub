@@ -34,14 +34,17 @@ const WALL_ROTATION = Quaternion.create(0, 0.707099974155426, 0, -0.707099974155
 const WALL_X       = 2.95
 const WALL_CENTRE_Z = 15
 
+// Whole wall raised +0.75m (KJ, 2026-08-16 screenshot): with the CLUB OWNERS
+// row added below, the owners' captions sat right ON the upper-floor surface.
+// All four Y constants moved together so the sections keep their spacing.
 const TITLE_TEXT = 'TOP CLEANERS'
-const TITLE_Y    = 11.0
+const TITLE_Y    = 11.75
 const TITLE_FONT = 4
 
 const SLOT_COUNT = 6
 const SLOT_SIZE  = 1.5    // portrait plane, metres
 const SLOT_PITCH = 1.8    // centre-to-centre; 6 slots span the old frames' footprint
-const SLOT_Y     = 9.4
+const SLOT_Y     = 10.15
 // Viewer facing the wall has world −Z on their left, so ascending z reads
 // left → right: #1 first.
 const SLOT_Z = (slot: number): number =>
@@ -168,6 +171,23 @@ async function fetchFaceUrl(address: string): Promise<string | null> {
   }
   const safe = mediaSafeUrl(raw)
   console.log(`[WALL OF FAME] ${address} snapshot: ${raw} → ${safe ?? 'REJECTED (host not in allowlist)'}`)
+  if (!safe) return null
+
+  // PROBE before painting (feedback 2026-08-15: "some pfps showing as white
+  // squares"). The renderer paints a plane WHITE when its texture fetch fails
+  // and gives the scene no failure callback — so a snapshot URL that 404s
+  // (a re-rooted content hash the peer never synced, or a stale
+  // profile-images entity) skipped the placeholder and rendered as a blank
+  // tile. One small GET decides it up front: bad snapshot → null → the dark
+  // placeholder stays, which is the designed missing-face presentation.
+  // A 404 returns null and gets negative-cached by faceUrlFor (that snapshot
+  // is not appearing mid-session); a network error THROWS so faceUrlFor's
+  // catch skips caching and the next broadcast retries.
+  const probe = await fetch(safe)
+  if (!probe.ok) {
+    console.log(`[WALL OF FAME] snapshot fetch ${probe.status} for ${address} — keeping placeholder`)
+    return null
+  }
   return safe
 }
 
@@ -211,6 +231,123 @@ export function updateWallOfFame(podium: PodiumEntry[]): void {
       const faceUrl = await faceUrlFor(entry.address)
       if (s.fetching === entry.address) s.fetching = ''
       // The podium may have changed while the fetch was in flight.
+      if (!faceUrl || s.painted === entry.address) return
+      s.painted = entry.address
+      paintFace(s.portrait, faceUrl)
+    })
+  }
+}
+
+// ── CLUB OWNERS roll of honor ─────────────────────────────────────────────────
+// Below the TOP CLEANERS row: everyone who has reached the ladder's last rung,
+// founding owner first (server-ordered by ownerSinceMs). Smaller than the
+// cleaners' portraits — it's a plaque, not a scoreboard — and the whole section
+// stays hidden until the club has its first owner, so the wall never advertises
+// an empty honor. Y verified in-world 2026-08-16: the first blind placement put
+// the captions on the upper-floor surface; the +0.75m wall shift fixed it.
+const OWNER_SLOT_COUNT   = 4
+const OWNER_SLOT_SIZE    = 0.8
+const OWNER_SLOT_PITCH   = 1.05
+const OWNER_TITLE_TEXT   = 'CLUB OWNERS'
+const OWNER_TITLE_Y      = 9.17
+const OWNER_TITLE_FONT   = 1.6
+const OWNER_SLOT_Y       = 8.53
+const OWNER_CAPTION_FONT = 0.42   // local units (parent scale 0.8)
+const OWNER_GOLD         = Color4.create(1, 0.85, 0.35, 1)
+
+type OwnerEntry = { address: string; displayName: string }
+let ownerTitleEnt: Entity | null = null
+const ownerSlots: Slot[] = []
+let lastOwnersKey = ' '
+
+/** Slot centres re-pack around the wall centre for however many owners exist,
+ *  so one owner hangs centred rather than stranded at the left edge. */
+const ownerSlotZ = (slot: number, count: number): number =>
+  WALL_CENTRE_Z + (slot - (count - 1) / 2) * OWNER_SLOT_PITCH
+
+function buildOwnersWall(): void {
+  ownerTitleEnt = engine.addEntity()
+  Transform.create(ownerTitleEnt, {
+    position: Vector3.create(WALL_X, OWNER_TITLE_Y, WALL_CENTRE_Z),
+    rotation: WALL_ROTATION,
+  })
+  TextShape.create(ownerTitleEnt, {
+    text: OWNER_TITLE_TEXT, fontSize: OWNER_TITLE_FONT,
+    textColor: OWNER_GOLD,
+    outlineColor: Color4.Black(), outlineWidth: 0.12,
+  })
+
+  for (let slot = 0; slot < OWNER_SLOT_COUNT; slot++) {
+    const portrait = engine.addEntity()
+    Transform.create(portrait, {
+      position: Vector3.create(WALL_X, OWNER_SLOT_Y, ownerSlotZ(slot, OWNER_SLOT_COUNT)),
+      rotation: WALL_ROTATION,
+      scale:    Vector3.create(OWNER_SLOT_SIZE, OWNER_SLOT_SIZE, OWNER_SLOT_SIZE),
+    })
+    MeshRenderer.setPlane(portrait)
+    paintPlaceholder(portrait)
+
+    const caption = engine.addEntity()
+    Transform.create(caption, {
+      parent: portrait,
+      position: { x: 0, y: CAPTION_Y, z: CAPTION_Z },
+    })
+    TextShape.create(caption, {
+      text: '', fontSize: OWNER_CAPTION_FONT, textColor: OWNER_GOLD,
+      outlineColor: Color4.Black(), outlineWidth: 0.12,
+    })
+
+    const s: Slot = { portrait, caption, painted: '', fetching: '' }
+    setVisible(s, false)
+    ownerSlots.push(s)
+  }
+  console.log(`[WALL OF FAME] CLUB OWNERS plaque armed (${OWNER_SLOT_COUNT} slots)`)
+}
+
+/**
+ * Called with the owners list from every leaderboardUpdate (same cadence as the
+ * podium). Entities are built lazily on the FIRST non-empty list — most
+ * sessions before anyone tops the ladder never pay for the plaque at all.
+ */
+export function updateOwnersWall(owners: OwnerEntry[]): void {
+  const key = owners.map((o) => o.address).join(',')
+  if (key === lastOwnersKey) return
+  lastOwnersKey = key
+  if (ownerTitleEnt === null) {
+    if (owners.length === 0) return
+    buildOwnersWall()
+    console.log(`[WALL OF FAME] owners: ${owners.map((o) => o.displayName).join(', ')}`)
+  }
+  if (ownerTitleEnt) {
+    VisibilityComponent.createOrReplace(ownerTitleEnt, { visible: owners.length > 0 })
+  }
+
+  const shown = Math.min(owners.length, OWNER_SLOT_COUNT)
+  for (let slot = 0; slot < OWNER_SLOT_COUNT; slot++) {
+    const s = ownerSlots[slot]
+    const entry = owners[slot]
+    if (!entry) {
+      if (s.painted !== '') { s.painted = ''; paintPlaceholder(s.portrait) }
+      setVisible(s, false)
+      continue
+    }
+    setVisible(s, true)
+    Transform.getMutable(s.portrait).position =
+      Vector3.create(WALL_X, OWNER_SLOT_Y, ownerSlotZ(slot, shown))
+
+    let name = entry.displayName.toUpperCase()
+    if (name.length > CAPTION_MAX_CHARS) name = name.slice(0, CAPTION_MAX_CHARS - 1) + '…'
+    const ts = TextShape.getMutable(s.caption)
+    // The star marks the FOUNDING owner — the roll's first entry by server order.
+    ts.text = slot === 0 ? `★ ${name}` : name
+    ts.textColor = OWNER_GOLD
+
+    if (s.painted === entry.address || s.fetching === entry.address) continue
+    if (s.painted !== '') { s.painted = ''; paintPlaceholder(s.portrait) }
+    s.fetching = entry.address
+    executeTask(async () => {
+      const faceUrl = await faceUrlFor(entry.address)
+      if (s.fetching === entry.address) s.fetching = ''
       if (!faceUrl || s.painted === entry.address) return
       s.painted = entry.address
       paintFace(s.portrait, faceUrl)

@@ -234,7 +234,11 @@ export const UPGRADES: UpgradeDef[] = [
   {
     id: 'vacuum',
     name: 'Vacuum',
-    description: 'Sweep up several pieces of mess at once.',
+    // "UP TO": the sweep takes the nearest loose rubbish within the server's
+    // radius, never past remaining hand space — so a click nets 1..N pieces,
+    // not always N. The copy must say so (feedback: "sweeps up to 2 items, not
+    // always 2 — make this clearer in the UI").
+    description: 'Each clean also sweeps up nearby mess.',
     // Level = EXTRA rubbish pieces swept per click (nearest first, within the
     // server's sweep radius, never past remaining carry space).
     levelValues: [0, 1, 2, 3],

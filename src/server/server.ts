@@ -8,9 +8,9 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setNextThemeOverride, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
-import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, achievementStates, UpgradeId } from '../shared/progression'
+import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, achievementStates, UpgradeId, TITLE_XP, JOB_TITLES } from '../shared/progression'
 import {
   ensureProgressLoaded, registerProgressPlayer, getProgress, peekProgress, awardShift,
   purchaseUpgrade, saveProgress, isGuestAddress, allProgressRecords, adminAdjust, todayStr,
@@ -160,10 +160,23 @@ function podiumEntries(): Array<{ address: string; displayName: string; total: n
     .map(([address, e]) => ({ address, displayName: e.displayName, total: e.total }))
 }
 
+// CLUB OWNERS roll of honor — everyone who has topped the ladder, founding
+// owner first (ownerSinceMs 0 = pre-tracking owner, sorts ahead by design).
+// Rides the leaderboard payload so the wall updates on the same cadence.
+const OWNERS_N = 4
+
+function ownersEntries(): Array<{ address: string; displayName: string }> {
+  return allProgressRecords()
+    .filter((r) => r.displayName && rankForXp(r.xp) >= TITLE_XP.length - 1)
+    .sort((a, b) => (a.ownerSinceMs || 0) - (b.ownerSinceMs || 0))
+    .slice(0, OWNERS_N)
+    .map((r) => ({ address: r.address, displayName: r.displayName }))
+}
+
 function leaderboardJson(): string {
   // Categories only — the client falls back to treating a bare array as the legacy
   // single-board shape, so an older client against a newer server still renders.
-  return JSON.stringify({ categories: buildCategories(), podium: podiumEntries() })
+  return JSON.stringify({ categories: buildCategories(), podium: podiumEntries(), owners: ownersEntries() })
 }
 
 function broadcastLeaderboard(to?: string[]): void {
@@ -849,6 +862,9 @@ export function initServer() {
   let slotModelTimer: ReturnType<typeof setTimeout> | null = null
 
   setThemeSpawnRoller((themeId) => {
+    // New round rolling = the previous intermission is over — re-arm the
+    // owner theme pick (see the ownerPickTheme handler below; same scope).
+    ownerPickUsed = false
     if (slotModelTimer) { clearTimeout(slotModelTimer); slotModelTimer = null }
     // Park everything and DELETE the GltfContainer — the explorer does not
     // reliably reload a GltfContainer whose src merely swaps in place (the bin
@@ -1153,6 +1169,13 @@ export function initServer() {
         newBest: res.newBest,
       }, res.promotedTo)
       if (res.promotedTo) console.log(`[PROGRESS] ${address} promoted to ${res.promotedTo}`)
+      // Coronation: reaching the TOP rank is a room-wide moment — every client
+      // gets the toast/cheer/sting; the new owner's own progressUpdate path
+      // additionally fires the full confetti barrage.
+      if (res.promotedTo === JOB_TITLES[JOB_TITLES.length - 1]) {
+        room.send('ownerCrowned', { address, displayName: res.record.displayName || 'A cleaner' })
+        console.log(`[OWNER] ${address} crowned CLUB OWNER`)
+      }
       // Poor-man's analytics — grep [METRICS] in server-logs for balance tuning.
       console.log(`[METRICS] shift: player=${address.slice(0, 8)} items=${items} clean=${Math.round(cleanedFraction * 100)}% passed=${rewards.passed} grade=${grade} contract=${contractDone} tip=$${tip} players=${playersPresent}`)
     }
@@ -1906,11 +1929,44 @@ export function initServer() {
     const address = context.from
     executeTask(async () => {
       await ensureProgressLoaded()
-      const { promotedTo } = adminAdjust(address, data.money, data.xp)
+      const { record, promotedTo } = adminAdjust(address, data.money, data.xp)
       console.log(`[SERVER] adminGrant: +$${data.money} +${data.xp}xp → ${address}${promotedTo ? ` (${promotedTo})` : ''}`)
       sendProgress(address, undefined, promotedTo)
       broadcastRanks()   // an admin rank grant changes the plate
+      // Same coronation broadcast as the shift path — the +1 Rank admin button
+      // is the only practical way to TEST the ceremony end to end.
+      if (promotedTo === JOB_TITLES[JOB_TITLES.length - 1]) {
+        room.send('ownerCrowned', { address, displayName: record.displayName || 'A cleaner' })
+        console.log(`[OWNER] ${address} crowned CLUB OWNER (admin grant)`)
+      }
       scheduleProgressSave()
     })
+  })
+
+  // ── CLUB OWNER privilege — pick the next round's theme ──────────────────────
+  // One pick per intermission, first owner wins; validated entirely here (rank,
+  // phase, theme id). The pick is a ONE-SHOT override in the RoundManager —
+  // normal rolling resumes the round after.
+  let ownerPickUsed = false
+  room.onMessage('ownerPickTheme', (data, context) => {
+    if (!context) return
+    if (!paced(context.from, 'ownerPick', 1_000)) return
+    const refuse = (reason: string) => {
+      console.log(`[OWNER] theme pick refused from ${context.from}: ${reason}`)
+      room.send('ownerPickResult', { ok: false, reason }, { to: [context.from] })
+    }
+    if (getPhase() !== 'open') { refuse('Theme picks open during the intermission'); return }
+    const rec = getProgress(context.from)
+    if (rankForXp(rec.xp) < TITLE_XP.length - 1) { refuse('Only a Club Owner can pick the theme'); return }
+    if (ownerPickUsed) { refuse("Tonight's theme is already chosen"); return }
+    const def = THEME_DEFS.find((t) => t.id === data.themeId)
+    if (data.themeId !== '' && !def) { refuse('Unknown theme'); return }
+    ownerPickUsed = true
+    setNextThemeOverride(data.themeId as ThemeId)
+    const themeTitle  = def?.title ?? 'CLASSIC NIGHT'
+    const displayName = rec.displayName || 'The Owner'
+    console.log(`[OWNER] ${displayName} (${context.from.slice(0, 8)}…) picked '${data.themeId || 'classic'}' for the next round`)
+    room.send('ownerPickResult', { ok: true, reason: '' }, { to: [context.from] })
+    room.send('ownerThemePicked', { themeTitle, displayName })
   })
 }

@@ -271,15 +271,27 @@ const ITEM_SLOTS = [
   { pos: { x: -0.04, y: 0.31, z:  0.00 }, rot: { x: -20, y: 330, z: 18 } },
 ]
 
-// Per-gear pile drop, metres. ITEM_SLOTS is tuned for containers with WALLS
-// (the pile pokes out of the box/crate/caddy opening), so on the flat
-// Gold_Platter the same heights floated the rubbish above the tray. Lowered
-// onto the platter surface; every other gear keeps the box-tuned pile.
-const MINI_PILE_DROP: Record<string, number> = { Gold_Platter: 0.13 }
-let appliedPileDrop = 0
+// Per-gear pile fit, metres, added to every ITEM_SLOTS position. ITEM_SLOTS is
+// tuned for containers with WALLS (the pile pokes out of the box/crate/caddy
+// opening); open flex gear needs the pile moved to its actual resting surface
+// (KJ screenshots 2026-08-16: bags hovered at shoulder height off the dustpan).
+// Offsets DERIVED FROM MESH BBOXES (scripts: GLB accessor min/max), not eyed:
+//   Gold_Platter  flat plate, rim y≈0.03            → drop to just above it
+//   Gold_Dustpan  pan floor y≈0.03, tray centre z≈+0.14 past the GEAR_FIT
+//                 shift (handle runs back/up)       → drop AND push forward
+//   Disco_Ball    open bowl, rim y≈0.21             → nestle slightly in
+// Ice_Bucket keeps the box-tuned pile on purpose — it has walls, and minis
+// poking out of the bucket mouth is the same read as the box.
+const MINI_PILE_FIT: Record<string, { x: number; y: number; z: number }> = {
+  Gold_Platter: { x: 0, y: -0.13, z: 0 },
+  Gold_Dustpan: { x: 0, y: -0.09, z: 0.20 },
+  Disco_Ball:   { x: 0, y: -0.03, z: 0 },
+}
+const NO_PILE_FIT = { x: 0, y: 0, z: 0 }
+let appliedPileFitKey = ''
 
-const pileDropFor = (src: string) =>
-  MINI_PILE_DROP[src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')] ?? 0
+const pileFitFor = (src: string) =>
+  MINI_PILE_FIT[src.slice(src.lastIndexOf('/') + 1).replace('.glb', '')] ?? NO_PILE_FIT
 
 let carryAnchor: Entity | null = null
 let carryRig: Entity | null = null
@@ -360,6 +372,33 @@ export function setCarryHoldTest(name: string | null): void {
     slotEntities.length = 0
   }
   refreshCarriedBag()
+}
+
+// ── Mop-time gear stow ────────────────────────────────────────────────────────
+// While a mop hold is active the held container (most visibly the Vacuum) is
+// STOWED — the mop emote is a two-handed animation, and a vacuum glued to the
+// left hand through it read as a glitch. Scale-hide on the anchor, NOT a rig
+// teardown: teardown would drop and re-stream the gear GLB every single patch
+// (and mobile has form on evicting GLBs — see the emote rewarm notes), while a
+// 0.001 scale is the same cheap trick the hauled station bins use. The
+// carriedModels queue, fill scale and stink emitter all survive untouched, so
+// un-stowing is exact. LOCAL-ONLY, like the rig itself for the local player.
+//
+// InteractionManager drives this every frame from the hold state machine
+// (stowed ⇔ a hold is active), so EVERY exit path — skill hit, miss, run to
+// 100%, cleanRejected, phase change, scene re-entry — restores the gear
+// without needing its own call. The setter diffs, so per-frame calls are free.
+let mopStowed = false
+export function setCarryStowedForMop(on: boolean): void {
+  if (mopStowed === on) return
+  mopStowed = on
+  applyMopStow()
+}
+function applyMopStow(): void {
+  if (!carryAnchor) return
+  const tf = Transform.getMutableOrNull(carryAnchor)
+  if (!tf) return
+  tf.scale = mopStowed ? { x: 0.001, y: 0.001, z: 0.001 } : { x: 1, y: 1, z: 1 }
 }
 
 function refreshCarriedBag(): void {
@@ -486,17 +525,20 @@ function refreshCarriedBag(): void {
   // No minis while hauling (the bin IS the held prop) — and none on the
   // vacuum: sucked rubbish is INSIDE it, so the machine swells instead.
   const visible = holdTest || haulDisplay || vacMode ? [] : carriedModels.slice(-MAX_VISIBLE_ITEMS)
-  // Gear changed to/from the platter → re-seat the recycled slots at the new
-  // pile height (positions are otherwise only written at slot creation).
-  const pileDrop = pileDropFor(heldContainerSrc(holdTestSrc))
-  if (pileDrop !== appliedPileDrop) {
-    appliedPileDrop = pileDrop
+  // Gear changed to/from a fitted container → re-seat the recycled slots at
+  // the new pile position (positions are otherwise only written at creation).
+  const pileFit = pileFitFor(heldContainerSrc(holdTestSrc))
+  const pileFitKey = `${pileFit.x}|${pileFit.y}|${pileFit.z}`
+  if (pileFitKey !== appliedPileFitKey) {
+    appliedPileFitKey = pileFitKey
     for (let i = 0; i < MAX_VISIBLE_ITEMS; i++) {
       const s = slotEntities[i]
       if (!s) continue
       const def = ITEM_SLOTS[i]
       Transform.getMutable(s).position = {
-        x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y - pileDrop, z: BAG_OFFSET.z + def.pos.z,
+        x: BAG_OFFSET.x + def.pos.x + pileFit.x,
+        y: BAG_OFFSET.y + def.pos.y + pileFit.y,
+        z: BAG_OFFSET.z + def.pos.z + pileFit.z,
       }
     }
   }
@@ -508,7 +550,11 @@ function refreshCarriedBag(): void {
         const def = ITEM_SLOTS[i]
         Transform.create(slot, {
           parent:   carryRig ?? undefined,
-          position: { x: BAG_OFFSET.x + def.pos.x, y: BAG_OFFSET.y + def.pos.y - pileDrop, z: BAG_OFFSET.z + def.pos.z },
+          position: {
+            x: BAG_OFFSET.x + def.pos.x + pileFit.x,
+            y: BAG_OFFSET.y + def.pos.y + pileFit.y,
+            z: BAG_OFFSET.z + def.pos.z + pileFit.z,
+          },
           rotation: Quaternion.fromEulerDegrees(def.rot.x, def.rot.y, def.rot.z),
           scale:    { x: ITEM_MINI_SCALE, y: ITEM_MINI_SCALE, z: ITEM_MINI_SCALE },
         })
@@ -525,6 +571,11 @@ function refreshCarriedBag(): void {
       GltfContainer.deleteFrom(slotEntities[i])
     }
   }
+
+  // A refresh can REBUILD the anchor (fresh Transform, scale 1) while a mop
+  // hold is mid-flight — e.g. a carriedUpdate landing during the hold — so the
+  // stow is re-applied after every rebuild, not only from the setter.
+  applyMopStow()
 }
 
 function currentRigRotation(): Quaternion {

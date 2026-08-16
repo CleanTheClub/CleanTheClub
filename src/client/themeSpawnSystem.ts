@@ -18,15 +18,16 @@ import { THEME_SLOT_PREFIX, DISASTER_PREFIX, DISASTER_BONUS, PICKUP_TOUCH_MS, PO
 import { registerDisasterHold, unregisterDynamicHold, startPopRhythm } from './InteractionManager'
 import { purchaseBurst } from './confettiSystem'
 import { classifyRubbish } from '../shared/glassDiscovery'
+import { watchGlb } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
+import { playHoverSound, playCleanSound, playMissSound, playVacuumSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, cancelShrink } from './itemFx'
 import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase, gameState } from './phaseGate'
 import { onClutterPoll, ClutterEntry } from './clutterWatcher'
-import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox } from './carrySystem'
+import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox, usingVacuum } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 
 const slotEntities  = new Map<string, Entity>()
@@ -206,8 +207,11 @@ function enableClick(itemId: string) {
         showNarrativeToast('Hands fill up — empty them at a bin!')
       }
       disableClick(itemId)
-      playCleanSound()
-      if (pos) playPickupEmote(pos)
+      // Same vacuum-vs-hands sound split as rubbishSystem — themed extras are
+      // swept by the same tool.
+      if (usingVacuum()) playVacuumSound()
+      else playCleanSound()
+      if (pos && !usingVacuum()) playPickupEmote(pos)
       room.send('cleanItem', { itemId })
       showCleanedToast()
       // Instant local feedback; the server's authoritative scale collapse lands
@@ -227,6 +231,13 @@ export function initThemeSpawnSystem() {
     let disasterLive = false
     let disasterAt: { x: number; y: number; z: number } | null = null
     for (const { entity, itemId, isCleaned } of entries) {
+      // GLB load watchdog for every replicated theme/disaster entity (watchGlb
+      // is idempotent). These never pass through setupClickProxy, so failed or
+      // wedged slot loads had no retry — the "keys invisible, stink visible"
+      // mobile report: the explorer never retries a failed fetch on its own,
+      // and slots re-load a model every round.
+      if (itemId.startsWith(THEME_SLOT_PREFIX) || itemId.startsWith(DISASTER_PREFIX)) watchGlb(entity)
+
       // Any uncleaned disaster stage keeps the beacon up over the spot.
       if (itemId.startsWith(DISASTER_PREFIX) && !isCleaned) {
         disasterLive = true

@@ -22,6 +22,7 @@ import { OUTCOME_ADEQUATE, HOLD_DURATION_MS } from '../shared/config'
 import { CareerState, getCareer, getCareerOrEmpty, getLastPayoutMs, getLastPromotion, getLastPurchase, getPrevShiftItems, upgradeLevel, requestPurchase, getAchievements } from './progressionStore'
 import { tierColorForRank } from './rankBadgeSystem'
 import { getSafeArea, pct } from './safeArea'
+import { toggleMusicMute, isMusicMuted } from './musicManager'
 
 // 100ms-quantized clock for decorative pulses — see ui.tsx's pulseNow: raw
 // per-frame sines force a UI update per node per frame even when idle.
@@ -124,7 +125,7 @@ export function affordableUpgradeCount(): number {
 // ─────────────────────────────────────────────────────────────────────────────
 // Career HUD — always-visible title, promotion progress and balance.
 // ─────────────────────────────────────────────────────────────────────────────
-export function CareerBar({ S, withShopButton = false }: { S: number; withShopButton?: boolean }) {
+export function CareerBar({ S, withShopButton = false, withMusicButton = false }: { S: number; withShopButton?: boolean; withMusicButton?: boolean }) {
   const c = getCareer()
   if (!c) return null   // no progressUpdate yet — render nothing rather than zeros
 
@@ -236,6 +237,22 @@ export function CareerBar({ S, withShopButton = false }: { S: number; withShopBu
       {withShopButton && (
         <UiEntity uiTransform={{ margin: { top: Math.round(8 * Z) } }}>
           <ShopButton S={S} />
+        </UiEntity>
+      )}
+      {/* Music mute, docked under the bar on MOBILE (all screens that show the
+          bar). The old floating top-left spot is explorer territory on phones
+          (back/menu chrome), and this stack is the one corner already proven
+          safe — same lesson as the UPGRADES dock above. Desktop keeps its own
+          safe-area top-left button in ui.tsx. */}
+      {withMusicButton && (
+        <UiEntity uiTransform={{ margin: { top: Math.round(8 * Z) } }}>
+          <GameButton
+            value={isMusicMuted() ? 'MUSIC: OFF' : 'MUSIC: ON'}
+            variant="secondary"
+            fontSize={Math.round(16 * S)}
+            uiTransform={{ width: Math.round(220 * S), height: Math.round(44 * S) }}
+            onMouseDown={() => toggleMusicMute()}
+          />
         </UiEntity>
       )}
     </UiEntity>
@@ -350,15 +367,25 @@ export function ShiftPayoutPanel(
 
   // Improvement vs the previous shift, shown only when it IS an improvement —
   // the point is momentum, and "beat your best" below covers the other side.
-  const prevItems  = getPrevShiftItems()
-  const itemsValue = prevItems >= 0 && shift.items > prevItems
-    ? `${shift.items}  (+${shift.items - prevItems} vs last)`
-    : String(shift.items)
+  const prevItems = getPrevShiftItems()
+  const improv    = prevItems >= 0 ? shift.items - prevItems : 0
 
-  const row = (label: string, value: string, color: Color4) => (
+  // ── Earnings hierarchy (feedback 2026-08-15) ────────────────────────────────
+  // shift.money already INCLUDES every bonus (the server sums them before
+  // awardShift), but the card used to show it as a mid-list "Earned" row with
+  // the bonuses itemised alongside at the same size — which read as wordy and
+  // ambiguous (were bonuses on top, or inside?). Now the TOTAL is the card's
+  // one big number, and the components (wages + each bonus) are a smaller
+  // tertiary breakdown that visibly sums to it.
+  const tiny     = Math.round(13 * Z)
+  const bonusSum = (shift.tip ?? 0) + (shift.earlyBonus ?? 0) + (shift.disasterBonus ?? 0)
+    + (shift.haulBonus ?? 0) + (shift.contractDone ? (shift.contractBonus ?? 0) : 0)
+  const baseWage = Math.max(0, shift.money - bonusSum)
+
+  const row = (label: string, value: string, color: Color4, size = small) => (
     <UiEntity uiTransform={{ flexDirection: 'row', justifyContent: 'space-between', width: Math.round(300 * Z) }}>
-      <Label value={label} fontSize={small} color={SUBTLE} />
-      <Label value={value} fontSize={small} color={color} />
+      <Label value={label} fontSize={size} color={SUBTLE} />
+      <Label value={value} fontSize={size} color={color} />
     </UiEntity>
   )
 
@@ -427,57 +454,53 @@ export function ShiftPayoutPanel(
           <Label value={`  ${Math.round(pct * 100)}% Clean`} fontSize={Math.round(26 * Z)} color={WHITE} />
         </UiEntity>
 
-        {/* UiEntity columns rather than JSX fragments — the DCL renderer's
-            jsxFactory has no fragment support. */}
-        {shift.passed ? (
-          <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-            {/* No "Shift Complete" heading — the outcome art above already says
-                it, and on a phone every redundant row costs real estate. */}
-            {row('Items cleaned', itemsValue, WHITE)}
-            {row('Earned',        money(shift.money), GOLD)}
-            {row('XP',            `+${shift.xp}`,     XP_FILL)}
-          </UiEntity>
-        ) : (
-          <UiEntity uiTransform={{ flexDirection: 'column', alignItems: 'center' }}>
-            {/* Docked pay is still pay — show exactly what was earned so a
-                below-standard shift never reads as "you got nothing" (playtest:
-                zero payout looked like a bug). */}
-            {row('Items cleaned', itemsValue, WHITE)}
-            {row('Partial pay',   money(shift.money), GOLD)}
-            {row('XP',            `+${shift.xp}`,     XP_FILL)}
-            {/* Teaching line, not a permanent fixture: genuinely useful while
-                learning the standard, pure clutter by shift 20. `shifts` counts
-                the shifts BEFORE this one, so a first-timer sees it at 0. */}
-            {c.shifts < HINT_SHIFTS && (
-              <Label
-                value={`Reach ${Math.round(OUTCOME_ADEQUATE * 100)}% cleanliness for full wages!`}
-                fontSize={small}
-                color={SUBTLE}
-                uiTransform={{ margin: { top: Math.round(6 * Z) } }}
-              />
-            )}
-          </UiEntity>
+        {/* THE headline — total take-home for the shift, one big gold number.
+            Everything below it is context. */}
+        <Label value={`+${money(shift.money)}`} fontSize={Math.round(40 * Z)} color={GOLD} />
+        {/* Items + XP condensed to one quiet line under the headline. */}
+        <Label
+          value={`${shift.items} items cleaned${improv > 0 ? ` (+${improv} vs last)` : ''}  ·  +${shift.xp} XP`}
+          fontSize={small}
+          color={WHITE}
+          uiTransform={{ margin: { top: Math.round(2 * Z), bottom: Math.round(8 * Z) } }}
+        />
+        {/* Teaching line for docked pay, not a permanent fixture: genuinely
+            useful while learning the standard, pure clutter by shift 20.
+            `shifts` counts the shifts BEFORE this one, so a first-timer sees
+            it at 0. (Docked pay is still pay — the headline shows exactly what
+            was earned, so a below-standard shift never reads as "nothing".) */}
+        {!shift.passed && c.shifts < HINT_SHIFTS && (
+          <Label
+            value={`Reach ${Math.round(OUTCOME_ADEQUATE * 100)}% cleanliness for full wages!`}
+            fontSize={small}
+            color={SUBTLE}
+            uiTransform={{ margin: { bottom: Math.round(6 * Z) } }}
+          />
         )}
 
-        {/* Bonus rows — each one earned, each one named. Older payloads without
-            these fields simply render nothing. */}
-        {(shift.tip ?? 0) > 0 && row('Patron tip', `+${money(shift.tip)}`, GOLD)}
+        {/* Tertiary breakdown — wages + each earned bonus, visibly summing to
+            the headline. Rendered smaller than the score line on purpose; shown
+            only when there IS something to break down (or pay was docked, which
+            deserves its label). Older payloads without these fields simply
+            render nothing. */}
+        {(bonusSum > 0 || !shift.passed) && row(shift.passed ? 'Wages' : 'Partial wages', money(baseWage), GOLD, tiny)}
+        {(shift.tip ?? 0) > 0 && row('Patron tip', `+${money(shift.tip)}`, GOLD, tiny)}
         {(shift.earlyBonus ?? 0) > 0 && row(
           `Closed ${Math.floor((shift.earlySeconds ?? 0) / 60)}:${String((shift.earlySeconds ?? 0) % 60).padStart(2, '0')} early`,
           `+${money(shift.earlyBonus!)}`,
-          GOLD,
+          GOLD, tiny,
         )}
-        {(shift.disasterBonus ?? 0) > 0 && row('Disaster cleared', `+${money(shift.disasterBonus!)}`, GOLD)}
-        {(shift.haulBonus ?? 0) > 0 && row('Dumpster runs', `+${money(shift.haulBonus!)}`, GOLD)}
+        {(shift.disasterBonus ?? 0) > 0 && row('Disaster cleared', `+${money(shift.disasterBonus!)}`, GOLD, tiny)}
+        {(shift.haulBonus ?? 0) > 0 && row('Dumpster runs', `+${money(shift.haulBonus!)}`, GOLD, tiny)}
         {shift.contractLabel && (shift.contractDone
-          ? row(shift.contractLabel, `+${money(shift.contractBonus)}`, theme.colors.success)
-          : row(shift.contractLabel, 'missed', SUBTLE))}
-        {shift.openingBonus && row('Opening shift bonus', '×2 XP', GOLD)}
-        {(shift.streakXp ?? 0) > 0 && row(`Day ${shift.streakDays} work streak`, `+${shift.streakXp} XP`, XP_FILL)}
+          ? row(shift.contractLabel, `+${money(shift.contractBonus)}`, theme.colors.success, tiny)
+          : row(shift.contractLabel, 'missed', SUBTLE, tiny))}
+        {shift.openingBonus && row('Opening shift bonus', '×2 XP', GOLD, tiny)}
+        {(shift.streakXp ?? 0) > 0 && row(`Day ${shift.streakDays} work streak`, `+${shift.streakXp} XP`, XP_FILL, tiny)}
         {/* Flex-gear progress — the two locked achievements you're closest to,
             so every shift visibly moves you toward a lobby showpiece. */}
         {nearestLockedAchievements(2).map((a) =>
-          row(a.title, `${a.current}/${a.target} ${a.noun.toLowerCase()}`, SUBTLE))}
+          row(a.title, `${a.current}/${a.target} ${a.noun.toLowerCase()}`, SUBTLE, tiny))}
         {shift.newBest && (
           <Label
             value="NEW PERSONAL BEST!"
@@ -629,8 +652,10 @@ export function PromotionBanner({ S, centerStage = false }: { S: number; centerS
         }}
         uiBackground={{ color: Color4.create(0, 0, 0, 0.8 * fade) }}
       >
+        {/* The FINAL rung gets its own headline — "PROMOTED!" undersells the
+            one promotion that ends the ladder. */}
         <Label
-          value="PROMOTED!"
+          value={promo.rank >= JOB_TITLES.length - 1 ? '★ NEW CLUB OWNER ★' : 'PROMOTED!'}
           fontSize={Math.round(26 * Z)}
           color={Color4.create(GOLD.r, GOLD.g, GOLD.b, fade)}
         />
@@ -664,14 +689,16 @@ const UPGRADE_ICONS: Record<string, string> = {
 // What the next level CONCRETELY buys, as "current → next" in the upgrade's own
 // units (playtest: the prose descriptions alone left the actual effect unclear).
 // Presentation-only, like the icons — levelValues stay the single gameplay truth.
-// Vacuum shows total pieces per clean (extra + the clicked one): "sweeps 1 → 2"
-// beats exposing the internal "+0 → +1 extra" bookkeeping.
+// Vacuum shows total pieces per clean (extra + the clicked one), and says "up
+// to": the sweep only takes what's actually nearby with hand space left, so
+// promising a flat "sweeps 2" read as a bug when a lone item swept alone
+// (feedback 2026-08-15).
 const UPGRADE_DELTA: Record<UpgradeId, (cur: number, next: number) => string> = {
   movementSpeed: (c, n) => `speed +${Math.round((c - 1) * 100)}% → +${Math.round((n - 1) * 100)}%`,
   moppingSpeed:  (c, n) => `mop ${(HOLD_DURATION_MS * c / 1000).toFixed(1)}s → ${(HOLD_DURATION_MS * n / 1000).toFixed(1)}s`,
   carryCapacity: (c, n) => `carry ${c} → ${n}`,
   portableBin:   (c, n) => `${c} → ${n} per shift`,
-  vacuum:        (c, n) => `sweeps ${c + 1} → ${n + 1} at once`,
+  vacuum:        (c, n) => `sweeps up to ${c + 1} → ${n + 1} at once`,
 }
 
 /** Level as filled/empty dots — reads at a glance where "Lv 2/4" needed parsing. */
@@ -775,6 +802,9 @@ function UpgradeRow({ def, S, width }: { def: UpgradeDef; S: number; width: numb
           value={statusLabel}
           variant={affordable ? 'primary' : 'secondary'}
           fontSize={Math.round(17 * S)}
+          // Affordable = buyable RIGHT NOW (unlocked, not maxed, in budget) —
+          // the wiggle marks exactly the rows where a click will succeed.
+          wiggle={affordable}
           uiTransform={{ width: Math.round(130 * S), height: Math.round(42 * S) }}
           // Still sent when unaffordable: the server is the authority and will
           // refuse and resync, which self-corrects a client showing stale money.
@@ -1049,13 +1079,17 @@ export function CareerIntroOverlay({ S }: { S: number }) {
   )
 }
 
-/** Small button that opens the shop; shown in the lobby and between shifts. */
+/** Small button that opens the shop; shown in the lobby and between shifts.
+ *  Wiggles while at least one upgrade is in budget — the standing "spend me"
+ *  nudge on every surface this button appears (lobby, waiting, mobile dock,
+ *  desktop corner), complementing the payout card's gold CTA. */
 export function ShopButton({ S }: { S: number }) {
   return (
     <GameButton
       value="UPGRADES"
       variant="secondary"
       fontSize={Math.round(20 * S)}
+      wiggle={affordableUpgradeCount() > 0}
       uiTransform={{ width: Math.round(220 * S), height: Math.round(56 * S) }}
       onMouseDown={() => setShopOpen(true)}
     />

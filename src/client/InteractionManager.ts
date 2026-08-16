@@ -10,7 +10,7 @@ import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
 import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setPopRing, setSkillTapHandler } from '../ui'
 import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound, playVacuumSound, playPopcornSound } from './soundManager'
-import { usingVacuum } from './carrySystem'
+import { usingVacuum, setCarryStowedForMop } from './carrySystem'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase } from './phaseGate'
@@ -69,20 +69,39 @@ let perfectStreak = 0
 // actual clean, so the server path is identical to a plain click.
 type ActiveRhythm = {
   id: string; beat: number; beatStartMs: number; hits: number; tapped: boolean
+  /** >now while the PREVIOUS beat's late-tap window is open (see grace note). */
+  graceUntilMs: number
   onDone: (hits: number) => void
 }
 let activeRhythm: ActiveRhythm | null = null
 
+// The gold window sits at the END of each beat, so mobile touch latency pushes
+// a visually-gold tap over the beat boundary — where it used to land in the
+// NEXT beat's "too early" zone: MISS + streak break for a well-timed tap.
+// A tap this soon after a rollover, when the beat that just ended went
+// UNTAPPED, is credited to that beat instead (same judge-what-the-player-saw
+// principle as the scrub bar's lastDrawnProgress).
+const POP_LATE_GRACE_MS = 130
+
 /** Starts the pop rhythm for an item. False = another minigame is running. */
 export function startPopRhythm(id: string, onDone: (hits: number) => void): boolean {
   if (activeRhythm || activeHold) return false
-  activeRhythm = { id, beat: 0, beatStartMs: Date.now(), hits: 0, tapped: false, onDone }
+  activeRhythm = { id, beat: 0, beatStartMs: Date.now(), hits: 0, tapped: false, graceUntilMs: 0, onDone }
   return true
 }
 
 function judgeRhythmTap(): void {
-  if (!activeRhythm || activeRhythm.tapped) return
+  if (!activeRhythm) return
   const now = Date.now()
+  // Late-tap grace — credit the PREVIOUS beat; the current beat's own tap
+  // stays available, so this can't double-reward.
+  if (activeRhythm.graceUntilMs > 0 && now <= activeRhythm.graceUntilMs) {
+    activeRhythm.graceUntilMs = 0
+    activeRhythm.hits++
+    playPopcornSound(activeRhythm.hits)
+    return
+  }
+  if (activeRhythm.tapped) return
   // The pointer-down that STARTED the rhythm arrives this same frame — ignore it.
   if (activeRhythm.beat === 0 && now - activeRhythm.beatStartMs < POP_FIRST_GRACE_MS) return
   activeRhythm.tapped = true
@@ -413,11 +432,16 @@ export function initInteractionManager(
     if (elapsed < POP_BEAT_MS) return
 
     if (activeRhythm.beat + 1 < POP_BEATS) {
+      // Rolling over an UNTAPPED beat opens its late-tap window.
+      activeRhythm.graceUntilMs = activeRhythm.tapped ? 0 : Date.now() + POP_LATE_GRACE_MS
       activeRhythm.beat++
       activeRhythm.beatStartMs = Date.now()
       activeRhythm.tapped = false
       return
     }
+    // Final beat: hold briefly before closing so a latency-late gold tap still
+    // lands — the normal judge counts it (t > 1 is inside the gold window).
+    if (!activeRhythm.tapped && elapsed < POP_BEAT_MS + POP_LATE_GRACE_MS) return
     // Beats done. At least ONE hit collects (zero-effort collection made the
     // rhythm decorative — playtest); full marks add the mastery layer. A blank
     // run flashes MISSED and the popcorn stays for a retry.
@@ -444,9 +468,19 @@ export function initInteractionManager(
       // forgets to hide the bar strands it on screen — reported on mobile as
       // "the scrub UI gets stuck". Cheaper to guarantee than to audit.
       if (barIsShown) { barIsShown = false; showHoldBar(false); updateHoldBar(0) }
+      // Same invariant guards the mop-time vacuum stow: no hold means the gear
+      // is back in hand, whichever of the many paths ended the hold. The
+      // setter diffs, so this per-frame call is free.
+      setCarryStowedForMop(false)
       return
     }
     barIsShown = true
+    // Vacuum stow — the mop emote is two-handed, and mopping with the vacuum
+    // still welded to the left hand read as a glitch. Vacuum ONLY (usingVacuum
+    // is false for box/crate/caddy tiers, showpieces and a hauled bin): hiding
+    // a hauled bin mid-mop would falsify visible haul state, and the humbler
+    // containers never drew the complaint.
+    setCarryStowedForMop(usingVacuum())
     const heldMs = Date.now() - activeHold.startMs
 
     // The skill input differs by platform. DESKTOP: release the held button —

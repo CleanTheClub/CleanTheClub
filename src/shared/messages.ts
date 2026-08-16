@@ -32,6 +32,12 @@ export const Messages = {
   equipGear:        Schemas.Map({ gear: Schemas.String }),
   /** Request to buy the next level of an upgrade. Server validates and pays. */
   buyUpgrade:       Schemas.Map({ upgradeId: Schemas.String }),
+  /**
+   * CLUB OWNER privilege — pick the NEXT round's theme ('' = classic). Server
+   * validates rank (top of the ladder), phase (intermission only) and that no
+   * owner has picked yet this intermission (first click wins the night).
+   */
+  ownerPickTheme:   Schemas.Map({ themeId: Schemas.String }),
   /** Opt in to the next shift. Takes effect when the next round starts. */
   signUpNext:       Schemas.Map({ dummy: Schemas.Boolean }),
   /** Withdraw a pending sign-up (back to spectating). */
@@ -81,6 +87,17 @@ export const Messages = {
 
   // ── Server → Client ─────────────────────────────────────────
   cleanRejected:    Schemas.Map({ itemId: Schemas.String }),
+  /**
+   * Broadcast when a player reaches CLUB OWNER (top of the ladder) — the whole
+   * room celebrates: toast, crowd cheer, coronation sting on every client.
+   * The new owner's own client additionally runs the full confetti barrage via
+   * its progressUpdate path.
+   */
+  ownerCrowned:     Schemas.Map({ address: Schemas.String, displayName: Schemas.String }),
+  /** Broadcast when an owner's theme pick is accepted — announces the night. */
+  ownerThemePicked: Schemas.Map({ themeTitle: Schemas.String, displayName: Schemas.String }),
+  /** Point-to-point verdict on an ownerPickTheme request (reason shown on refusal). */
+  ownerPickResult:  Schemas.Map({ ok: Schemas.Boolean, reason: Schemas.String }),
   /** Top-10 all-time leaderboard — sent to all on clean, to joining player on join. */
   leaderboardUpdate: Schemas.Map({ entriesJson: Schemas.String }),
   /**

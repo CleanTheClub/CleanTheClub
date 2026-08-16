@@ -105,16 +105,24 @@ const GLB_RELOAD_LIMIT     = 3
 const GLB_STATE_NAME: Record<number, string> = {
   0: 'UNKNOWN', 1: 'LOADING', 2: 'NOT_FOUND', 3: 'FINISHED_WITH_ERROR', 4: 'FINISHED',
 }
-type GlbWatch = { entity: Entity; lastState: number; reloads: number; stateAgeS: number }
+type GlbWatch = { entity: Entity; lastState: number; reloads: number; stateAgeS: number; lastSrc: string }
 const glbWatch: GlbWatch[] = []
 const glbWatched = new Set<Entity>()
 let glbWatchAcc = 0
 let glbWatchSystemAdded = false
 
-function watchGlb(entity: Entity): void {
+/**
+ * Exported (2026-08-15): theme slot + disaster entities need this watch too.
+ * They never route through setupClickProxy (pointer events bind straight to
+ * the replicated entity), so a failed/wedged slot GLB load had NO retry — and
+ * slots delete-recreate their GltfContainer EVERY round, multiplying the load
+ * opportunities that can fail on a memory-pressed phone. This was the "keys
+ * invisible but stink visible" report: themed keys spawns were unwatched.
+ */
+export function watchGlb(entity: Entity): void {
   if (glbWatched.has(entity)) return
   glbWatched.add(entity)
-  glbWatch.push({ entity, lastState: -1, reloads: 0, stateAgeS: 0 })
+  glbWatch.push({ entity, lastState: -1, reloads: 0, stateAgeS: 0, lastSrc: '' })
   if (!glbWatchSystemAdded) {
     glbWatchSystemAdded = true
     engine.addSystem(glbWatchdogSystem)
@@ -146,6 +154,16 @@ function glbWatchdogSystem(dt: number): void {
   const tick = glbWatchAcc
   glbWatchAcc = 0
   for (const w of glbWatch) {
+    // A NEW src on a watched entity (theme slots swap models every round) is a
+    // brand-new load — it gets a fresh reload budget and a fresh stuck clock,
+    // or a slot that ever exhausted its 3 reloads would stay unwatched for the
+    // rest of the session across every later round's model.
+    const srcNow = GltfContainer.getOrNull(w.entity)?.src ?? ''
+    if (srcNow !== w.lastSrc) {
+      w.lastSrc   = srcNow
+      w.reloads   = 0
+      w.stateAgeS = 0
+    }
     const st = GltfContainerLoadingState.getOrNull(w.entity)?.currentState
     if (st === w.lastState) {
       w.stateAgeS += tick

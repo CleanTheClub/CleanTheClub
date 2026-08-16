@@ -25,7 +25,7 @@ import {
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { Quaternion, Color4 } from '@dcl/sdk/math'
 import { playHoverSound, playClickSound } from './soundManager'
-import { updateWallOfFame, PodiumEntry, faceUrlFor, paintFace, paintPlaceholder } from './wallArtSystem'
+import { updateWallOfFame, updateOwnersWall, PodiumEntry, faceUrlFor, paintFace, paintPlaceholder } from './wallArtSystem'
 import { getUserData } from '~system/UserIdentity'
 import { room } from '../shared/messages'
 
@@ -416,11 +416,15 @@ export function initLeaderboardSystem(): void {
   // Handle real-time leaderboard updates pushed from the server
   room.onMessage('leaderboardUpdate', (data) => {
     try {
-      const parsed = JSON.parse(data.entriesJson) as { podium?: PodiumEntry[] }
+      const parsed = JSON.parse(data.entriesJson) as {
+        podium?: PodiumEntry[]
+        owners?: Array<{ address: string; displayName: string }>
+      }
       updateLeaderboardDisplay(parsed)
       // Same payload feeds the wall-of-fame frames (older servers send no
-      // podium → the frames keep their posters).
+      // podium → the frames keep their posters) and the CLUB OWNERS plaque.
       updateWallOfFame(Array.isArray(parsed?.podium) ? parsed.podium : [])
+      updateOwnersWall(Array.isArray(parsed?.owners) ? parsed.owners : [])
     } catch {
       console.log('[Leaderboard] Failed to parse leaderboardUpdate')
     }

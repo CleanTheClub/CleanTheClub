@@ -33,8 +33,16 @@ const TIER_COLORS: Color4[] = [
   Color4.create(1.00, 0.82, 0.30, 1),   // gold
 ]
 
+// CLUB OWNER (the ladder's last rung) gets its own treatment on top of the
+// shared gold tier: a brighter gold and star-framed title, so an owner reads
+// differently from a rank-10 manager at a glance — with zero per-frame cost
+// (renderPlate only runs on content change).
+const OWNER_RANK = TIER_FOR_RANK.length - 1
+const OWNER_GOLD = Color4.create(1, 0.9, 0.45, 1)
+
 /** Tier colour for a rank — exported so the promotion banner matches the plates. */
 export function tierColorForRank(rank: number): Color4 {
+  if (rank >= OWNER_RANK) return OWNER_GOLD
   return TIER_COLORS[TIER_FOR_RANK[Math.max(0, Math.min(rank, TIER_FOR_RANK.length - 1))]]
 }
 
@@ -166,18 +174,21 @@ function paintPill(p: Plate, fade: number): void {
 
 /** Applies name/title/colour + pill width. Only called when the content changes. */
 function renderPlate(p: Plate, info: RankInfo): void {
-  const tier = TIER_FOR_RANK[Math.max(0, Math.min(info.rank, TIER_FOR_RANK.length - 1))]
   p.fade = -1   // force a repaint so the new tier's glow is applied
   const nt = TextShape.getMutable(p.nameT)
   nt.text = info.name
+  // Owner plates: star-framed title in the brighter owner gold (see OWNER_RANK).
+  const isOwner = info.rank >= OWNER_RANK && info.title !== ''
+  const title = isOwner ? `★ ${info.title.toUpperCase()} ★` : info.title.toUpperCase()
   const tt = TextShape.getMutable(p.titleT)
-  tt.text = info.title.toUpperCase()
-  tt.textColor = TIER_COLORS[tier]
+  tt.text = title
+  tt.textColor = tierColorForRank(info.rank)
 
   // Y is divided by the band fraction because the stadium only occupies the
   // middle quarter of the texture; the rest is transparent padding.
-  // Caps run wider than lowercase, so the title's contribution is padded.
-  const chars = Math.max(info.name.length, Math.round(info.title.length * 1.15))
+  // Caps run wider than lowercase, so the title's contribution is padded —
+  // measured from the RENDERED title, stars included, so the pill fits them.
+  const chars = Math.max(info.name.length, Math.round(title.length * 1.15))
   Transform.getMutable(p.pill).scale = {
     x: PILL_PER_CHAR * chars + PILL_PAD,
     y: (info.title ? PILL_H : PILL_H * 0.6) / PILL_BAND,

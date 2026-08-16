@@ -196,6 +196,21 @@ function applyMusicForPhase(): void {
   }
 }
 
+/**
+ * Owner-coronation sting — the finale celebration track takes over the rest of
+ * this intermission (a NEW CLUB OWNER outranks the regular party wheel). Only
+ * fires during 'open': a mid-round crowning (admin grant) keeps the radio — the
+ * confetti and plate pop carry that moment. No restore logic needed: the phase
+ * watcher below already stops the finale track when the next round starts.
+ */
+export function playOwnerSting(): void {
+  if (musicMuted) return
+  if (gameState()?.phase !== 'open') return
+  stopParty()
+  play(finaleEntity)
+  console.log('[Music] → owner coronation (finale track for this intermission)')
+}
+
 /** Toggle background music (radio + party + finale). SFX untouched. */
 export function toggleMusicMute(): boolean {
   musicMuted = !musicMuted

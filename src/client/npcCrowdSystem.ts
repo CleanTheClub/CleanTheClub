@@ -241,6 +241,32 @@ function retriggerEmote(npc: Npc) {
   shape.expressionTriggerTimestamp = npc.stamp
 }
 
+// ── Coronation cheer ──────────────────────────────────────────────────────────
+// Someone just made CLUB OWNER: every visible DANCER claps for a beat. Sitters
+// keep their pose on purpose — an expression replaces the held sit emote and
+// would leave them standing in their seats. No manual restore needed: the
+// dance-loop re-trigger below resumes the dance once the cheer window closes
+// (it skips writes while cheering so it can't stomp the applause mid-clap).
+const CHEER_EMOTE = 'clap'
+const CHEER_MS    = 8_000
+let cheerUntilMs  = 0
+
+export function crowdCheer(): void {
+  cheerUntilMs = Date.now() + CHEER_MS
+  let cheering = 0
+  for (const npc of roster) {
+    if (npc.spec.kind !== 'dancer') continue
+    if (npc.phase !== 'in' && npc.phase !== 'idle') continue
+    if (npc.entity === null) continue
+    npc.stamp += 1
+    const shape = AvatarShape.getMutable(npc.entity)
+    shape.expressionTriggerId        = CHEER_EMOTE
+    shape.expressionTriggerTimestamp = npc.stamp
+    cheering++
+  }
+  console.log(`[NPC] coronation cheer — ${cheering} dancers applaud`)
+}
+
 function getPhase(): { phase: string; finale: boolean } {
   const gs = gameState()
   return gs ? { phase: gs.phase, finale: gs.isFinale } : { phase: 'playing', finale: false }
@@ -407,8 +433,11 @@ export function initNpcCrowdSystem(): void {
     }
 
     // ── Keep visible dancers looping by re-triggering the dance emote ──────────
+    // Paused while a coronation cheer plays (the re-trigger would cut the clap
+    // short); the accumulated timer then fires promptly after the window, so
+    // the dance resumes without a manual restore pass.
     sinceLoopMs += dtMs
-    if (sinceLoopMs >= DANCE_LOOP_MS) {
+    if (sinceLoopMs >= DANCE_LOOP_MS && Date.now() >= cheerUntilMs) {
       sinceLoopMs = 0
       for (const npc of roster) {
         if (npc.spec.kind !== 'dancer') continue

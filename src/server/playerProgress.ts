@@ -21,7 +21,7 @@ import { createPersistedDoc } from './persistence'
 import { ADMIN_ADDRESSES } from '../shared/config'
 import {
   UpgradeId, canPurchase, rankForXp, titleForXp, PurchaseRefusal,
-  ACHIEVEMENTS, achievementStates,
+  ACHIEVEMENTS, achievementStates, TITLE_XP,
 } from '../shared/progression'
 
 // ── Record shape ──────────────────────────────────────────────────────────────
@@ -58,6 +58,13 @@ export type ProgressRecord = {
   /** Equipped flex carrier ('' = none) — overrides the upgrade gear ladder.
    *  Only ever set through setFlexGear, which re-checks the achievement. */
   flexGear:     string
+  /**
+   * When this player FIRST reached Club Owner (ms epoch; 0 = never). Stamped by
+   * stampOwnerIfTop on every XP-changing path and never cleared — it orders the
+   * CLUB OWNERS wall (founding owner first). Owners who topped out before this
+   * field existed keep 0, which sorts them ahead: they were owners first.
+   */
+  ownerSinceMs: number
 }
 
 type ProgressDoc = {
@@ -80,7 +87,20 @@ const emptyRecord = (displayName = ''): ProgressRecord => ({
   dailyDay: '',
   kindCounts: {},
   flexGear: '',
+  ownerSinceMs: 0,
 })
+
+/**
+ * First crossing into the top rank stamps the coronation date (once, ever).
+ * Called on every XP-raising path — shift awards and admin grants alike — so
+ * the CLUB OWNERS wall order can't depend on which path promoted the player.
+ */
+function stampOwnerIfTop(rec: ProgressRecord): void {
+  if (rec.ownerSinceMs === 0 && rankForXp(rec.xp) >= TITLE_XP.length - 1) {
+    rec.ownerSinceMs = Date.now()
+    dirty = true
+  }
+}
 
 /** UTC day stamp — the boundary all daily mechanics share. */
 export const todayStr = (): string => new Date().toISOString().slice(0, 10)
@@ -108,6 +128,7 @@ function migrate(raw: any): ProgressRecord {
     }
   }
   if (typeof raw.flexGear === 'string') rec.flexGear = raw.flexGear
+  if (typeof raw.ownerSinceMs === 'number') rec.ownerSinceMs = Math.max(0, Math.floor(raw.ownerSinceMs))
   if (raw.kindCounts && typeof raw.kindCounts === 'object') {
     for (const [k, v] of Object.entries(raw.kindCounts)) {
       if (typeof v === 'number' && v > 0) rec.kindCounts[k] = Math.floor(v)
@@ -437,6 +458,7 @@ export function awardShift(
   rec.xp    += xpApplied
   rec.shifts += 1
   rec.lifetimeItems += Math.max(0, itemsCleaned)
+  stampOwnerIfTop(rec)
 
   const rankAfter = rankForXp(rec.xp)
   dirty = true
@@ -468,6 +490,7 @@ export function adminAdjust(
   rec.money = Math.max(0, rec.money + Math.round(money))
   rec.xp    = Math.max(0, rec.xp + Math.round(xp))
   dirty = true
+  stampOwnerIfTop(rec)
   const rankAfter = rankForXp(rec.xp)
   return { record: rec, promotedTo: rankAfter > rankBefore ? titleForXp(rec.xp) : null }
 }

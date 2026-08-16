@@ -10,10 +10,10 @@
 import { gameState } from './phaseGate'
 import { flashSpree } from '../ui'
 import { playSpreeSound } from './soundManager'
+import { FRENZY_LAST_S } from '../shared/config'
 
 const WINDOW_MS      = 2_500   // max gap between cleans that keeps a spree alive
 const MIN_SHOW       = 3       // sprees announce from ×3 — pairs happen by accident
-export const FRENZY_LAST_S = 20
 
 let count  = 0
 let lastMs = 0
@@ -25,11 +25,15 @@ function inFrenzy(): boolean {
 
 export function registerSpreeHit(): void {
   const now = Date.now()
-  const inc = inFrenzy() ? 2 : 1
+  const frenzy = inFrenzy()
+  const inc = frenzy ? 2 : 1
   count  = now - lastMs <= WINDOW_MS ? count + inc : inc
   lastMs = now
   if (count >= MIN_SHOW) {
-    flashSpree(count)
+    // The flash names the frenzy itself ("FRENZY SPREE ×N!") — the one moving
+    // element ties the event to the state, instead of a second static banner
+    // fighting it for the same screen space (the old overlap).
+    flashSpree(count, frenzy)
     playSpreeSound(count)
   }
 }

@@ -8,7 +8,7 @@ import { SceneItemDef } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCollectionToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
+import { playHoverSound, playCleanSound, playMissSound, playVacuumSound } from './soundManager'
 import { isCarryFull, shouldNudgeToBin, triggerBinNudge, noteCarriedModel, pulseCarryBox, usingVacuum } from './carrySystem'
 import { registerSpreeHit } from './spreeSystem'
 import { playPickupEmote } from './emoteManager'
@@ -145,7 +145,10 @@ export function initCollectibleGroup(cfg: CollectibleConfig) {
           showNarrativeToast('Hands fill up — empty them at a bin!')
         }
         disableClick(itemId)
-        playCleanSound()
+        // The vacuum already INHALES glassware visually (suckAndHide below) —
+        // it gets the slurp sound to match, same split as rubbishSystem.
+        if (usingVacuum()) playVacuumSound()
+        else playCleanSound()
         if (pos && !usingVacuum()) playPickupEmote(pos)
         room.send('cleanItem', { itemId })
         if (toastKind !== null) showCollectionToast(toastKind, countCollected(), reachableTotal())

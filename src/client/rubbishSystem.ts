@@ -1,13 +1,13 @@
 // Quick-click-to-clean system for the Rubbish group.
 
-import { Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, PointerEvents, InputAction, GltfContainer, VisibilityComponent } from '@dcl/sdk/ecs'
 import { isStateSyncronized } from '@dcl/sdk/network'
 import { onLocalEnterScene } from './localPlayer'
 import { discoverRubbish, RUBBISH_ID_PREFIX, RubbishType, classifyRubbish } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { room } from '../shared/messages'
 import { showCleanedToast, showNarrativeToast } from '../ui'
-import { playHoverSound, playCleanSound, playMissSound } from './soundManager'
+import { playHoverSound, playCleanSound, playMissSound, playVacuumSound } from './soundManager'
 import { playPickupEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { shrinkAndHide, suckAndHide, cancelShrink } from './itemFx'
@@ -66,6 +66,32 @@ type GltfRecord = {
 const gltfRecords = new Map<string, GltfRecord>()
 
 let items: ReturnType<typeof discoverRubbish> = []
+
+// ── Vacuum sweep visuals ──────────────────────────────────────────────────────
+// A vacuum click also cleans up to N NEARBY pieces SERVER-side (the sweep).
+// Those confirmations land through the ClutterSync watcher, which used to
+// snap-hide them — the clicked item flew into the nozzle while its swept
+// neighbours just blinked out (feedback: swept items should "move to the
+// vacuum"). The watcher can't know WHO cleaned an item, so sweep-suck is
+// inferred: we're wearing the vacuum, we clicked a clean within the last
+// moment, and the item is within sweep range of us. A neighbour cleaned by
+// another player in that same instant would false-positive — it flies to us
+// instead of blinking out, which at nozzle-height and sub-half-second reads
+// fine either way.
+const SWEEP_SUCK_WINDOW_MS = 1_500   // click → server → CRDT → poll, with slack
+const SWEEP_SUCK_RANGE_M   = 8       // sweep radius (3m) + click reach, generous
+const SWEEP_SUCK_S         = 0.45
+let lastVacuumClickMs = -1
+
+function shouldSuckSweep(rec: GltfRecord): boolean {
+  if (Date.now() - lastVacuumClickMs > SWEEP_SUCK_WINDOW_MS) return false
+  if (!usingVacuum()) return false
+  const p = Transform.getOrNull(engine.PlayerEntity)?.position
+  const ip = Transform.getOrNull(rec.containerEntity)?.position
+  if (!p || !ip) return false
+  const dx = p.x - ip.x, dy = p.y - ip.y, dz = p.z - ip.z
+  return dx * dx + dy * dy + dz * dz <= SWEEP_SUCK_RANGE_M * SWEEP_SUCK_RANGE_M
+}
 
 // itemId → recycling stream, so the hover prompt teaches the sort before pickup.
 const rubbishTypes = new Map<string, RubbishType>()
@@ -156,6 +182,9 @@ function enableClick(itemId: string) {
       pendingCleans.add(itemId)
       noteCarriedModel(GltfContainer.getOrNull(containerEntity)?.src)
       registerSpreeHit()
+      // Arms the sweep-suck window: neighbours the server sweeps off this
+      // click fly to the nozzle instead of blinking out (see shouldSuckSweep).
+      if (usingVacuum()) lastVacuumClickMs = Date.now()
       // First pickup of a brand-new career: point at the nearest bin once, so
       // "my hands fill up and I have to walk somewhere" is taught rather than
       // discovered by hitting the capacity wall.
@@ -164,7 +193,12 @@ function enableClick(itemId: string) {
         showNarrativeToast('Hands fill up — empty them at a bin!')
       }
       disableClick(itemId)
-      playCleanSound()
+      // Vacuum slurps, hands get the generic clean ding. (The slurp's ONLY
+      // call site used to be InteractionManager's quick-click branch — dead
+      // since every CLUTTER_DEFS entry went sceneGlb — so the sound never
+      // played anywhere: "i cant hear the vacuum sound".)
+      if (usingVacuum()) playVacuumSound()
+      else playCleanSound()
       // Vacuum pickups skip the bend-down emote — the machine does the work.
       if (pos && !usingVacuum()) playPickupEmote(pos)
       room.send('cleanItem', { itemId })
@@ -230,7 +264,21 @@ export function initRubbishSystem() {
 
       if (isCleaned) {
         disableClick(itemId)
-        if (!pendingVisualHide.has(itemId)) setVisible(itemId, false)
+        if (!pendingVisualHide.has(itemId)) {
+          const rec = gltfRecords.get(itemId)
+          if (rec && shouldSuckSweep(rec)) {
+            // Server-swept neighbour of our own vacuum click: inhale it like
+            // the clicked item instead of snap-hiding. Safe here because the
+            // server never writes scene-rubbish Transforms (only the
+            // ClutterSync flag), so nothing fights the tween; suckAndHide
+            // restores position+rotation for the respawn, and setVisible on
+            // completion parks scale + VisibilityComponent exactly as the
+            // snap path would have.
+            suckAndHide(rec.containerEntity, SWEEP_SUCK_S, () => setVisible(itemId, false))
+          } else {
+            setVisible(itemId, false)
+          }
+        }
       } else {
         pendingVisualHide.delete(itemId)
         setVisible(itemId, true)

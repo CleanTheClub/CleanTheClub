@@ -67,8 +67,24 @@ function isActiveItem(id: string): boolean {
 let forcedTheme: ThemeId | null = null
 export function setForcedTheme(id: ThemeId | null): void { forcedTheme = id }
 
+// CLUB OWNER's pick — ONE-SHOT, unlike the sticky admin pin: applies to the
+// next rolled round, then normal rolling resumes. Set via the server's
+// ownerPickTheme handler (rank-validated there).
+let nextThemeOverride: ThemeId | null = null
+export function setNextThemeOverride(id: ThemeId): void { nextThemeOverride = id }
+
 function rollTheme(): ThemeId {
   if (forcedTheme !== null) return forcedTheme
+  // The owner's pick wins over the milestone spring-cleaning pin ON PURPOSE:
+  // the privilege must visibly work whenever it's exercised, or it reads as
+  // broken exactly on the rounds players are most excited about. Spring
+  // cleaning returns on the next milestone cycle. The categoriser guard
+  // mirrors the warm-up rule below — themes can't run without it.
+  if (nextThemeOverride !== null && categoryFor) {
+    const picked = nextThemeOverride
+    nextThemeOverride = null
+    return picked
+  }
   // Warm-up round teaches the full loop; themes need the categoriser installed.
   if (roundNumber === 0 || !categoryFor) return ''
   // BOSS ROUND: every milestone round is Spring Cleaning — the whole club

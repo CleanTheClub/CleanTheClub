@@ -4,24 +4,25 @@ import { engine, EasingFunction, timers } from '@dcl/sdk/ecs'
 import { Color4 } from '@dcl/sdk/math'
 import { getUserData } from '~system/UserIdentity'
 import { isMobile } from '@dcl/sdk/platform'
-import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS, POP_HIT_T } from './shared/config'
+import { ADMIN_ADDRESSES, DEBUG, MILESTONE_EVERY, THEME_DEFS, POP_HIT_T, FRENZY_LAST_S } from './shared/config'
 import { room } from './shared/messages'
 import { playToastSound } from './client/soundManager'
 import { tweenColor, applyEasing } from './client/tween'
 import { theme } from './client/theme'
 import { isWaitingForMatch, gameState } from './client/phaseGate'
-import { launchCelebration, stopCelebrationNow } from './client/confettiSystem'
+import { launchCelebration, stopCelebrationNow, promotionBurst } from './client/confettiSystem'
+import { crowdCheer } from './client/npcCrowdSystem'
 import { getHaulDebug } from './client/carrySystem'
 import { cycleMobileLight } from './client/setup'
-import { toggleMusicMute, isMusicMuted } from './client/musicManager'
+import { toggleMusicMute, isMusicMuted, playOwnerSting } from './client/musicManager'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
 import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
 import { tierColorForRank } from './client/rankBadgeSystem'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, getScreenInsets, pct as saPct } from './client/safeArea'
-import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion } from './client/progressionStore'
-import { TITLE_XP, rankForXp } from './shared/progression'
+import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion, upgradeLevel } from './client/progressionStore'
+import { TITLE_XP, rankForXp, upgradeValue } from './shared/progression'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
@@ -85,6 +86,14 @@ const TIMER_ROW_TOP       = 120     // absolute top offset from canvas (virtual 
 const TIMER_ICON_SIZE     = 64      // base size before MOBILE_SCALE
 const TIMER_FONT_SIZE     = 72      // countdown digits
 const TIMER_ICON_MARGIN   = 14      // gap between icon and digits
+
+// Timer status pill (FRENZY / LAST CALL) — its own FIXED slot between the
+// countdown and the progress bar. These used to stack inside the info strip,
+// where theme + contract chips pushed them down into the SPREE/PERFECT flash
+// zone (mid-screen) — during the final 20s, exactly when sprees fire, the two
+// texts overlapped. A fixed slot up by the timer can't collide with anything,
+// and pairs the state with the clock that defines it.
+const TIMER_STATUS_TOP    = 194
 
 // Progress bar row — sits just below the timer, wider than before
 const BAR_ROW_TOP         = 232     // absolute top offset — just below timer (tune as needed)
@@ -327,11 +336,17 @@ export function showNarrativeToast(text: string) {
   }, durationMs + NARRATIVE_GAP_MS)
 }
 
+// Own wallet address, for telling our ownerCrowned broadcast from someone
+// else's. '' until getUserData answers — the compare below just misses the
+// "self" wording in that (sub-second) window, nothing worse.
+let ownAddress = ''
+
 async function checkAdmin() {
   try {
     const { data } = await getUserData({})
-    if (data?.userId && ADMIN_ADDRESSES.includes(data.userId.toLowerCase())) {
-      isAdmin = true
+    if (data?.userId) {
+      ownAddress = data.userId.toLowerCase()
+      if (ADMIN_ADDRESSES.includes(ownAddress)) isAdmin = true
     }
     if (DEBUG) isAdmin = true
   } catch (_) {}
@@ -345,10 +360,9 @@ function formatTime(s: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-// Rounds continue indefinitely in V2, so this can no longer clamp to a fixed list —
-// the old version labelled every round past the 5th "Final Round", which would be
-// wrong on every shift from then on. Milestone rounds (every 5th) keep a special
-// label since they still trigger the celebration hold.
+// DEBUG-only now: the "Round N — Milestone" label was cut from the player HUD
+// (feedback 2026-08-15) — milestone rounds already announce themselves via the
+// SPRING CLEANING theme card/chip, so the label was a second voice saying less.
 function getRoundLabel(n: number): string {
   const isMilestone = (n + 1) % MILESTONE_EVERY === 0
   return isMilestone ? `Round ${n + 1} — Milestone` : `Round ${n + 1}`
@@ -406,6 +420,16 @@ const THEME_ROULETTE_MS   = 1_600
 // Hoisted — building this inside the render allocated a fresh array every
 // frame for the full 9s the roulette card is up.
 const THEME_WHEEL = [...THEME_DEFS.map((td) => td.title), 'CLASSIC NIGHT']
+// Title font auto-fits the LONGEST possible wheel line inside the card's padded
+// width, so no theme name can ever touch the padding (feedback: theme text must
+// "always fit neatly inside the container"). Derived from the data rather than
+// hand-tuned: adding a longer theme title later shrinks the font instead of
+// silently overflowing. 0.60 ≈ conservative average glyph width (em fraction)
+// for this uppercase font.
+const THEME_CARD_W      = 640
+const THEME_CARD_PAD    = 16
+const THEME_TITLE_CHARS = Math.max(...THEME_WHEEL.map((t) => t.length)) + 'TONIGHT: '.length
+const THEME_TITLE_FONT  = Math.min(38, Math.floor((THEME_CARD_W - THEME_CARD_PAD * 4) / (0.60 * THEME_TITLE_CHARS)))
 // Beat between the payout card's centre-stage pop and the shop panel sliding in.
 const SHOP_AUTO_OPEN_DELAY_MS = 1500
 
@@ -473,6 +497,10 @@ const PERFECT_FLASH_MS  = 700
 let perfectFlashStartMs = -1
 let perfectFlashStreak  = 0
 let perfectFlashKind: 'perfect' | 'miss' | 'spree' = 'perfect'
+// Spree flash during the closing frenzy reads "FRENZY SPREE ×N!" in the frenzy
+// colour — the event flash carries the state, so no second banner is needed
+// anywhere near it (frenzy + spree text used to overlap mid-screen).
+let perfectFlashFrenzy  = false
 export function flashPerfect(streak: number) {
   perfectFlashStartMs = Date.now()
   perfectFlashStreak  = streak
@@ -483,10 +511,11 @@ export function flashMiss() {
   perfectFlashStreak  = 0
   perfectFlashKind    = 'miss'
 }
-export function flashSpree(combo: number) {
+export function flashSpree(combo: number, frenzy = false) {
   perfectFlashStartMs = Date.now()
   perfectFlashStreak  = combo
   perfectFlashKind    = 'spree'
+  perfectFlashFrenzy  = frenzy
 }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
@@ -605,11 +634,49 @@ function uiStateSystem(dt: number): void {
   }
 }
 
+// ── Owner coronation + theme-pick state ───────────────────────────────────────
+// These handlers live HERE, not in a dedicated module: ui.tsx is the one place
+// that can call showNarrativeToast without creating an import cycle (everything
+// else that toasts is already imported BY ui). See carrySystem's header for the
+// house rule this follows.
+// roundNumber whose intermission has already spent its owner pick (-1 = none).
+let themePickTakenRound = -2
+let ownerPickModalOpen  = false
+
 export function setupUi() {
   checkAdmin()
   room.onMessage('storageStatus', (data) => {
     try { storageStatus = JSON.parse(data.statusJson) } catch { storageStatus = null }
   })
+
+  // Coronation — a room-wide moment: everyone gets the toast, the crowd's
+  // applause and the finale-track sting. The new owner's own client already
+  // fired the full confetti barrage from its progressUpdate (progressionStore);
+  // bystanders get a smaller burst so the moment still lands visually.
+  room.onMessage('ownerCrowned', (data) => {
+    const self = ownAddress !== '' && data.address.toLowerCase() === ownAddress
+    showNarrativeToast(self
+      ? 'YOU OWN THE CLUB NOW — take a bow!'
+      : `${data.displayName} just made CLUB OWNER — give it up!`)
+    crowdCheer()
+    playOwnerSting()
+    if (!self) promotionBurst()
+  })
+
+  // Owner theme pick — announcement closes the picker everywhere (first owner
+  // won the night) and pins the "taken" flag to this intermission's round.
+  room.onMessage('ownerThemePicked', (data) => {
+    themePickTakenRound = getGameState()?.roundNumber ?? -1
+    ownerPickModalOpen  = false
+    showNarrativeToast(`Tonight: ${data.themeTitle} — chosen by Owner ${data.displayName}`)
+  })
+  room.onMessage('ownerPickResult', (data) => {
+    if (!data.ok) {
+      ownerPickModalOpen = false
+      showNarrativeToast(data.reason)
+    }
+  })
+
   engine.addSystem(uiStateSystem)
   ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: VIRTUAL_W, virtualHeight: VIRTUAL_H })
 }
@@ -737,14 +804,16 @@ function CarryChip({ S }: { S: number }) {
           />
         )}
 
-        {/* Portable Bin: empty on the spot, uses remaining in the label. Greyed
-            (secondary) with empty hands — the server re-validates regardless. */}
+        {/* Portable Bin: "EMPTY 1/2" = uses left / uses per shift (feedback:
+            the prose version was too long for the chip). The shop row already
+            teaches what the upgrade does; here the count is what matters.
+            Greyed (secondary) with empty hands — the server re-validates. */}
         {getPortableLeft() > 0 && (
           <GameButton
-            value={`EMPTY ON THE SPOT — ${getPortableLeft()} left`}
+            value={`EMPTY ${getPortableLeft()}/${upgradeValue('portableBin', upgradeLevel('portableBin'))}`}
             variant={gen + rec > 0 ? 'primary' : 'secondary'}
             fontSize={Math.round(20 * S)}
-            uiTransform={{ width: Math.round(150 * S), height: Math.round(44 * S), margin: { left: Math.round(12 * S) } }}
+            uiTransform={{ width: Math.round(116 * S), height: Math.round(44 * S), margin: { left: Math.round(12 * S) } }}
             onMouseDown={() => requestPortableEmpty()}
           />
         )}
@@ -816,7 +885,6 @@ const uiBody = () => {
   const seconds       = gs?.secondsLeft ?? 0
   const phase         = gs?.phase ?? 'lobby'
   const roundNumber   = gs?.roundNumber ?? 0
-  const isMilestoneRound = (roundNumber + 1) % MILESTONE_EVERY === 0
   const outcome       = gs?.outcome ?? ''
   const isFinale      = gs?.isFinale ?? false
   const pct           = Math.min(1, cleaned / total)
@@ -887,12 +955,14 @@ const uiBody = () => {
   const flashText      = perfectFlashKind === 'perfect'
     ? (perfectFlashStreak > 1 ? `PERFECT ×${perfectFlashStreak}!` : 'PERFECT!')
     : perfectFlashKind === 'spree'
-    ? `SPREE ×${perfectFlashStreak}!`
+    ? (perfectFlashFrenzy ? `FRENZY SPREE ×${perfectFlashStreak}!` : `SPREE ×${perfectFlashStreak}!`)
     : 'MISSED!'
   const flashColor     = perfectFlashKind === 'perfect'
     ? { r: 1, g: 0.82, b: 0.25, a: perfectAlpha }
     : perfectFlashKind === 'spree'
-    ? { r: 1, g: 0.62, b: 0.2,  a: perfectAlpha }
+    ? (perfectFlashFrenzy
+      ? { r: 1, g: 0.45, b: 0.25, a: perfectAlpha }
+      : { r: 1, g: 0.62, b: 0.2,  a: perfectAlpha })
     : { r: 1, g: 0.35, b: 0.3,  a: perfectAlpha }
 
   // Deposit flash — reads carrySystem's last-deposit state (no setter import,
@@ -1102,7 +1172,7 @@ const uiBody = () => {
 
         {/* Absolutely positioned, so it sits in the same bottom-left spot here as
             it does in the in-shift HUD rather than jumping between screens. */}
-        <CareerBar S={S} />
+        <CareerBar S={S} withMusicButton={mobile} />
       </UiEntity>
     )
   }
@@ -1329,7 +1399,7 @@ const uiBody = () => {
           <ShopButton S={S} />
         </UiEntity>
 
-        <CareerBar S={S} />
+        <CareerBar S={S} withMusicButton={mobile} />
       </UiEntity>
     )
   }
@@ -1346,7 +1416,7 @@ const uiBody = () => {
            renders only during the intermission, and only once a payout has arrived. */}
       {/* Hidden while the side panel is open: the bar's top-right anchor sits in
           the panel's footprint, and the panel header already shows the wallet. */}
-      {!shopAsPanel && <CareerBar S={S} withShopButton={mobile && !isShopOpen()} />}
+      {!shopAsPanel && <CareerBar S={S} withShopButton={mobile && !isShopOpen()} withMusicButton={mobile} />}
       {/* The whole intermission in one centred card — outcome art, grade, score,
           payout and countdown. Self-centring, so it can't overflow. */}
       {isOpen && <ShiftPayoutPanel S={S} imageSrc={topImageSrc} pct={pct} seconds={seconds} />}
@@ -1389,20 +1459,29 @@ const uiBody = () => {
       {!isOpen && <CarryChip S={S} />}
 
       {/* Music mute — radio + party + finale only; SFX stay (they're gameplay
-          feedback). Top-left inside the inset area: notch-safe, clear of the
-          mobile toast stack (36% down) and the centre timer on both platforms. */}
-      <GameButton
-        value={isMusicMuted() ? 'MUSIC: OFF' : 'MUSIC: ON'}
-        variant="secondary"
-        fontSize={Math.round(13 * S)}
-        onMouseDown={() => toggleMusicMute()}
-        uiTransform={{
-          positionType: 'absolute',
-          position: { top: Math.round(10 * S), left: Math.round(10 * S) },
-          width:  Math.round(104 * S),
-          height: Math.round(30 * S),
-        }}
-      />
+          feedback). DESKTOP ONLY here: top-left just inside the LIVE safe area
+          (explorer chrome + chat aware), not a guessed corner — the fixed
+          10,10 spot sat under the explorer's own top-left UI. On mobile the
+          top-left corner belongs to the explorer outright, so the button docks
+          under the career bar instead (CareerBar's withMusicButton — the same
+          validated real estate as the mobile UPGRADES dock). */}
+      {!mobile && (
+        <GameButton
+          value={isMusicMuted() ? 'MUSIC: OFF' : 'MUSIC: ON'}
+          variant="secondary"
+          fontSize={Math.round(13 * S)}
+          onMouseDown={() => toggleMusicMute()}
+          uiTransform={{
+            positionType: 'absolute',
+            position: {
+              top:  saPct(getSafeArea().top + 0.015),
+              left: saPct(getSafeArea().left + 0.012),
+            },
+            width:  Math.round(104 * S),
+            height: Math.round(30 * S),
+          }}
+        />
+      )}
 
       {/* Shop access — available at ANY time, not just between shifts.
           Upgrades apply the moment they are bought, so buying Movement Speed or
@@ -1586,6 +1665,46 @@ const uiBody = () => {
             color={COLOR_DIM}
             uiTransform={{ width: barLabelW, margin: { left: BAR_LABEL_GAP } }}
           />
+        </UiEntity>
+      )}
+
+      {/* ── Timer status pill — FRENZY (final seconds) or LAST CALL (spotless
+           early). A fixed slot directly under the countdown: the state and the
+           clock that defines it read as one unit, and nothing else ever renders
+           here, so it can't collide with the SPREE/PERFECT flashes mid-screen
+           (the old strip placement did). Hidden during the intro, whose timer
+           overlay animates through this band. */}
+      {!isOpen && !introActive && phase === 'playing'
+        && (lastCall || (seconds <= FRENZY_LAST_S && seconds > 0)) && (
+        <UiEntity
+          uiTransform={{
+            positionType:   'absolute',
+            position:       { top: TIMER_STATUS_TOP, left: 0 },
+            width:          '100%',
+            flexDirection:  'row',
+            justifyContent: 'center',
+          }}
+        >
+          <UiEntity
+            uiTransform={{
+              padding: {
+                top: Math.round(4 * S), bottom: Math.round(4 * S),
+                left: Math.round(14 * S), right: Math.round(14 * S),
+              },
+              borderRadius: Math.round(14 * S),
+            }}
+            uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.65 } }}
+          >
+            <Label
+              value={lastCall
+                ? 'LAST CALL — spotless! Doors open early'
+                : 'FRENZY! Sprees count double'}
+              fontSize={Math.round(18 * S)}
+              color={lastCall
+                ? { r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 200) }
+                : { r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 120) }}
+            />
+          </UiEntity>
         </UiEntity>
       )}
 
@@ -1865,13 +1984,14 @@ const uiBody = () => {
         const spinT     = Math.min(1, qt / THEME_ROULETTE_MS)
         const spinIdx   = Math.floor((1 - Math.pow(1 - spinT, 2)) * wheel.length * 3)
         const shownTitle = spinning ? wheel[spinIdx % wheel.length] : finalTitle
-        const pad = Math.round(16 * S)
+        const pad = Math.round(THEME_CARD_PAD * S)
         // FIXED card + label geometry. An auto-sized card re-measures on every
         // 100ms title swap — different widths recentre the box, and on mobile a
         // long title could line-wrap and change its HEIGHT ("roulette jitter").
-        // Sized to the longest wheel line ("TONIGHT: LOST PROPERTY NIGHT"), the
-        // spin now only repaints glyphs inside an immovable box.
-        const cardW  = Math.round(640 * S)
+        // The title FONT is derived from the longest wheel line (see
+        // THEME_TITLE_FONT), so the spin only repaints glyphs inside an
+        // immovable box and every title clears the padding.
+        const cardW  = Math.round(THEME_CARD_W * S)
         const titleH = Math.round(48 * S)
         return (
           <UiEntity
@@ -1893,8 +2013,12 @@ const uiBody = () => {
               }}
               uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.78 * fade } }}
             >
-              <Label value={`TONIGHT: ${shownTitle}`} fontSize={Math.round(38 * S)}
+              {/* nowrap: the fixed titleH box fits exactly one line, and the
+                  font is pre-sized so one line is all any title needs — a wrap
+                  here could only mean clipping. */}
+              <Label value={`TONIGHT: ${shownTitle}`} fontSize={Math.round(THEME_TITLE_FONT * S)}
                 textAlign="middle-center"
+                textWrap="nowrap"
                 uiTransform={{ width: '100%', height: titleH }}
                 color={spinning
                   ? { r: 1, g: 1, b: 1, a: 0.75 }
@@ -1902,6 +2026,7 @@ const uiBody = () => {
               {!spinning && (
                 <Label value={finalBlurb} fontSize={Math.round(26 * S)}
                   textAlign="middle-center"
+                  textWrap="wrap"
                   color={{ r: 1, g: 1, b: 1, a: fade }}
                   uiTransform={{ width: '100%', margin: { top: Math.round(8 * S) } }} />
               )}
@@ -1923,13 +2048,13 @@ const uiBody = () => {
         <UiEntity
           uiTransform={{ width: stripWidth, flexDirection: 'column', alignItems: 'center' }}
         >
-          {/* Round label — only when it MEANS something. Endless rounds make a
-              plain "Round 7" noise in an already-tight strip (and unreadable on
-              mobile), but a milestone round is worth announcing. Kept always in
-              DEBUG, where the round number is a testing tool. */}
-          {!isFinale && (DEBUG || isMilestoneRound) && (
+          {/* Round label — DEBUG only, where the round number is a testing tool.
+              Removed from the player HUD entirely: endless rounds made "Round 7"
+              noise, and milestone rounds are already announced by the SPRING
+              CLEANING theme card, so "Round 5 — Milestone" was redundant. */}
+          {!isFinale && DEBUG && (
             <Label
-              value={DEBUG ? `[DEBUG] ${getRoundLabel(roundNumber)}` : getRoundLabel(roundNumber)}
+              value={`[DEBUG] ${getRoundLabel(roundNumber)}`}
               fontSize={roundFont}
               color={COLOR_SUBTLE}
               uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
@@ -1988,32 +2113,37 @@ const uiBody = () => {
             </UiEntity>
           )}
 
-          {/* Closing-time frenzy — final seconds, sprees count double. Suppressed
-              during last call: everything is already clean, there is nothing to
-              spree on, and the countdown means "victory lap" not "hurry". */}
-          {!isOpen && phase === 'playing' && !lastCall && seconds <= 20 && seconds > 0 && (
-            <Label
-              value="FRENZY! Sprees count double"
-              fontSize={Math.round(24 * S)}
-              color={{ r: 1, g: 0.45, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 120) }}
-              uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
-            />
-          )}
-
-          {/* Last call — spotless club, doors opening early. */}
-          {!isOpen && phase === 'playing' && lastCall && (
-            <Label
-              value="LAST CALL — spotless! Doors open early"
-              fontSize={Math.round(24 * S)}
-              color={{ r: 1, g: 0.82, b: 0.25, a: 0.7 + 0.3 * Math.sin(pulseNow() / 200) }}
-              uiTransform={{ margin: { bottom: LABEL_MARGIN_SMALL } }}
-            />
-          )}
+          {/* FRENZY and LAST CALL moved to the fixed timer-status pill (see
+              TIMER_STATUS_TOP) — stacked here they drifted down into the
+              SPREE flash zone and overlapped it. */}
 
           {/* The intermission countdown moved into the shift report card — it was
               the other half of the two-competing-UIs problem. */}
         </UiEntity>
       </UiEntity>
+
+      {/* ── Mobile admin: the Light diagnostic ONLY ──────────────────────────
+           The full admin panel is desktop-gated (right edge is explorer
+           territory on phones) — which made the "cycle the player light
+           on-device" diagnostic unreachable on the one platform it was built
+           to test, so the LightSource question sat unanswered. One button,
+           mid-left edge: below the toast stack's landing zone, above the
+           joystick cluster. */}
+      {isAdmin && mobile && (
+        <GameButton
+          id="mobileLightCycle"
+          value={`Light: ${adminLightLabel}`}
+          variant="secondary"
+          fontSize={Math.round(14 * S)}
+          onMouseDown={() => { adminLightLabel = cycleMobileLight() }}
+          uiTransform={{
+            positionType: 'absolute',
+            position: { top: '58%', left: saPct(getSafeArea().left + 0.015) },
+            width:  Math.round(150 * S),
+            height: Math.round(40 * S),
+          }}
+        />
+      )}
 
       {/* ── Admin panel — desktop only (right edge unsafe on mobile), and hidden
            while the side-panel shop owns the right edge (buttons overlapped the
@@ -2294,6 +2424,93 @@ const uiBody = () => {
               )}
             </UiEntity>
           ))}
+        </UiEntity>
+      )}
+
+      {/* ── OWNER'S PICK — choose tonight's theme ─────────────────────────────
+           Club Owners only, intermission only, until some owner has picked.
+           Bottom-centre with the CarryChip's safe-area anchoring (the chip is
+           hidden during the intermission, so the slot is free on both
+           platforms). First owner to confirm wins the night — the server
+           enforces it; the picked/refused broadcasts close this UI. */}
+      {isOpen && !ownerPickModalOpen
+        && getCareerOrEmpty().nextTitle === null
+        && themePickTakenRound !== roundNumber && (
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: { bottom: saPct(getSafeArea().bottom + 0.03), left: 0 },
+            width: '100%',
+            flexDirection: 'row',
+            justifyContent: 'center',
+          }}
+        >
+          <GameButton
+            value="★ OWNER'S PICK — TONIGHT'S THEME"
+            variant="primary"
+            fontSize={Math.round(20 * S)}
+            wiggle={true}
+            uiTransform={{ width: Math.round(400 * S), height: Math.round(56 * S) }}
+            onMouseDown={() => { ownerPickModalOpen = true }}
+          />
+        </UiEntity>
+      )}
+
+      {/* Theme menu — LAST in the tree so it draws over everything else. Two
+          fixed columns rather than flex-wrap: deterministic layout that fits
+          the short mobile viewport with room to spare. */}
+      {isOpen && ownerPickModalOpen && (
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute', position: { top: 0, left: 0 },
+            width: '100%', height: '100%',
+            flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
+          }}
+          uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.85 } }}
+        >
+          <Label
+            value="OWNER'S PICK — TONIGHT'S THEME"
+            fontSize={Math.round(30 * S)}
+            color={{ r: 1, g: 0.82, b: 0.25, a: 1 }}
+            uiTransform={{ margin: { bottom: Math.round(6 * S) } }}
+          />
+          <Label
+            value="Your call, boss. First owner to pick sets the night."
+            fontSize={Math.round(18 * S)}
+            color={COLOR_SUBTLE}
+            uiTransform={{ margin: { bottom: Math.round(16 * S) } }}
+          />
+          <UiEntity uiTransform={{ flexDirection: 'row' }}>
+            {[0, 1].map((col) => (
+              <UiEntity
+                key={String(col)}
+                uiTransform={{
+                  flexDirection: 'column',
+                  margin: { left: Math.round(8 * S), right: Math.round(8 * S) },
+                }}
+              >
+                {[...THEME_DEFS.map((t) => ({ id: t.id as string, title: t.title })), { id: '', title: 'CLASSIC NIGHT' }]
+                  .filter((_, i) => i % 2 === col)
+                  .map((t) => (
+                    <GameButton
+                      id={`ownerPick_${t.id || 'classic'}`}
+                      value={t.title}
+                      variant="secondary"
+                      fontSize={Math.round(17 * S)}
+                      uiTransform={{ width: Math.round(300 * S), height: Math.round(46 * S), margin: { bottom: Math.round(8 * S) } }}
+                      onMouseDown={() => { room.send('ownerPickTheme', { themeId: t.id }) }}
+                    />
+                  ))}
+              </UiEntity>
+            ))}
+          </UiEntity>
+          <GameButton
+            value="CANCEL"
+            variant="secondary"
+            fontSize={Math.round(18 * S)}
+            uiTransform={{ width: Math.round(200 * S), height: Math.round(48 * S), margin: { top: Math.round(10 * S) } }}
+            onMouseDown={() => { ownerPickModalOpen = false }}
+          />
         </UiEntity>
       )}
     </UiEntity>

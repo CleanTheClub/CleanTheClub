@@ -159,6 +159,13 @@ export const THEME_SMALL_MODELS = new Set([
 ])
 
 
+// ── Closing-time frenzy ───────────────────────────────────────────────────────
+// Final seconds of a round: each clean counts DOUBLE toward the spree combo.
+// Shared by spreeSystem (the scoring) and ui.tsx (the pill under the timer) —
+// lives here because those two import in opposite directions and a shared
+// constant in either would cycle.
+export const FRENZY_LAST_S = 20
+
 // ── Rhythm Pop (popcorn) ──────────────────────────────────────────────────────
 // Clicking ANY popcorn — scene-placed or theme-spawned, one rule per item type —
 // starts a 3-beat circular rhythm: a ring shrinks onto a POP! disc each beat,

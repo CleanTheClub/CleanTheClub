@@ -1,4 +1,5 @@
 import { engine, Entity, Transform, EasingFunction } from '@dcl/sdk/ecs'
+import { Quaternion } from '@dcl/sdk/math'
 import { tweenValue } from './tween'
 
 // ─── Shrink-and-hide ────────────────────────────────────────────────────────────
@@ -67,21 +68,32 @@ export function cancelShrink(entity: Entity): void {
 }
 
 // ─── Suck-to-player (vacuum pickup) ────────────────────────────────────────────
-// The vacuum doesn't pluck items — it INHALES them: the item accelerates toward
-// the player while shrinking, like dust into a nozzle.
+// The vacuum doesn't pluck items — it INHALES them: the item lifts off with a
+// spin, then accelerates into the nozzle while shrinking, like dust caught in
+// the airstream (feedback 2026-08-15: the straight-line version wanted "más
+// gracia" — the arc + spin are what read as being CAUGHT rather than dragged).
 //
-// The item's ORIGINAL position is captured and restored the moment it finishes
-// (it's invisible by then) — these composite entities are reused for respawns,
-// and an item that respawned wherever the player had been standing would be a
-// far worse bug than any visual polish. Same restore on cancel (rejected clean).
-const suckOrigins = new Map<Entity, { x: number; y: number; z: number }>()
+// The item's ORIGINAL position AND rotation are captured and restored the
+// moment it finishes (it's invisible by then) — these composite entities are
+// reused for respawns, and an item that respawned wherever the player had been
+// standing (or mid-spin) would be a far worse bug than any visual polish.
+// Same restore on cancel (rejected clean).
+const SUCK_ARC_M    = 0.35   // peak lift of the flight arc, metres
+const SUCK_SPIN_DEG = 540    // total yaw while in flight
+const suckOrigins = new Map<Entity, {
+  pos: { x: number; y: number; z: number }
+  rot: Quaternion
+}>()
 
 function restoreSuckOrigin(entity: Entity): void {
   const orig = suckOrigins.get(entity)
   if (!orig) return
   suckOrigins.delete(entity)
   const tr = Transform.getMutableOrNull(entity)
-  if (tr) tr.position = { x: orig.x, y: orig.y, z: orig.z }
+  if (tr) {
+    tr.position = { x: orig.pos.x, y: orig.pos.y, z: orig.pos.z }
+    tr.rotation = orig.rot
+  }
 }
 
 export function suckAndHide(
@@ -95,7 +107,8 @@ export function suckAndHide(
   if (!t) { onComplete?.(); return }
   const from      = { x: t.scale.x, y: t.scale.y, z: t.scale.z }
   const start     = { x: t.position.x, y: t.position.y, z: t.position.z }
-  suckOrigins.set(entity, start)
+  const startRot  = Quaternion.create(t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w)
+  suckOrigins.set(entity, { pos: start, rot: startRot })
 
   const sys = tweenValue(
     0,
@@ -107,11 +120,20 @@ export function suckAndHide(
       // Chase the player's LIVE position — they keep moving mid-suck.
       const p = Transform.getOrNull(engine.PlayerEntity)?.position ?? start
       const target = { x: p.x, y: p.y + 0.6, z: p.z }   // roughly nozzle height
+      // sin(kπ) arc on top of the straight-line lerp: up and over into the
+      // nozzle. With the eased k the peak lands late in the flight, so the item
+      // visibly lifts off before it dives — the "caught by the airstream" beat.
+      const lift = Math.sin(k * Math.PI) * SUCK_ARC_M
       tr.position = {
         x: start.x + (target.x - start.x) * k,
-        y: start.y + (target.y - start.y) * k,
+        y: start.y + (target.y - start.y) * k + lift,
         z: start.z + (target.z - start.z) * k,
       }
+      // Accelerating yaw sells the swirl; restored with the origin on finish.
+      tr.rotation = Quaternion.multiply(
+        startRot,
+        Quaternion.fromEulerDegrees(0, k * SUCK_SPIN_DEG, 0),
+      )
       const s = 1 - k
       tr.scale = { x: from.x * s, y: from.y * s, z: from.z * s }
     },
