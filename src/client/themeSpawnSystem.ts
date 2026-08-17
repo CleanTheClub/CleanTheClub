@@ -38,13 +38,14 @@ const lastState     = new Map<string, boolean>()
 // entity with no collider yet (playtest console) — so the watcher retries
 // unwired live slots each poll until enableClick's load gate passes.
 const wiredSlots    = new Set<string>()
-// Visibility we last WROTE per slot. Tracked separately from lastState because
-// the cleaned-state change guard below skips unchanged slots — and a slot whose
-// state doesn't change across a round boundary then keeps whatever visibility it
-// had. A disaster stage left live at round end stayed visible and clickable
+// Visibility we last WROTE per slot (keyed with the model's load state — see
+// the reconcile block). Tracked separately from lastState because the
+// cleaned-state change guard below skips unchanged slots — and a slot whose
+// state doesn't change across a round boundary then keeps whatever visibility
+// it had. A disaster stage left live at round end stayed visible and clickable
 // while the server parked it at ~0 scale: "tiny bin bags are visible and
 // interactable where a disaster zone was last round" (playtest).
-const slotVisible   = new Map<string, boolean>()
+const slotVisible   = new Map<string, string>()
 
 function slotModelLoaded(entity: Entity): boolean {
   return GltfContainerLoadingState.getOrNull(entity)?.currentState === LoadingState.FINISHED
@@ -118,6 +119,17 @@ function updateDisasterMarker(live: boolean, at: { x: number; y: number; z: numb
 // slightly after the round starts (delete-then-recreate, see the roller), so
 // click wiring re-registers when the model lands, keeping hover text truthful.
 const lastSrc       = new Map<string, string>()
+
+// ── Ghost-item reporting ──────────────────────────────────────────────────────
+// A live slot whose model NEVER reaches FINISHED — the watchdog's forced
+// reloads included — is stink and a tap target with no mesh. After a generous
+// window (long enough for the watchdog to exhaust its retries) the item is
+// reported and the server clears it from the round, uncredited (field ask:
+// "why don't we just remove unloaded items from rounds?"). Keyed per model so
+// a slot that gets a NEW model next round earns a fresh chance to load.
+const GHOST_AFTER_MS  = 30_000
+const unloadedSinceMs = new Map<string, number>()
+const ghostReported   = new Set<string>()   // `${itemId}|${src}`
 
 // Toast throttles mirror rubbishSystem's (the miss blip plays every time).
 const TOAST_COOLDOWN_MS = 3_000
@@ -292,13 +304,40 @@ export function initThemeSpawnSystem() {
         enableClick(itemId)
       }
 
+      // Ghost detection (see GHOST_AFTER_MS above).
+      if (isCleaned === false && src !== '' && !slotModelLoaded(entity)) {
+        const since = unloadedSinceMs.get(itemId)
+        if (since === undefined) {
+          unloadedSinceMs.set(itemId, Date.now())
+        } else if (Date.now() - since > GHOST_AFTER_MS && !ghostReported.has(`${itemId}|${src}`)) {
+          ghostReported.add(`${itemId}|${src}`)
+          console.log(`[THEME] '${itemId}' (${src}) never loaded in ${GHOST_AFTER_MS / 1000}s — reporting ghost`)
+          showNarrativeToast('Cleared a glitched item — it never loaded in.')
+          room.send('ghostItem', { itemId })
+        }
+      } else {
+        unloadedSinceMs.delete(itemId)
+      }
+
       // Reconcile visibility EVERY poll (write only on an actual change), so a
       // parked slot can never be left showing regardless of state history.
+      // Two mobile lessons live here (the "keys invisible — seems like a
+      // visibility toggle" reports):
+      //  (a) a visibility write that lands while the slot's GLB is still
+      //      STREAMING can miss the meshes that arrive after it — the load
+      //      state is part of the change key, so completion re-runs the write;
+      //  (b) VISIBLE = component DELETED, never {visible:true} — an absent
+      //      component is the renderer default and has nothing to mis-apply.
       const wantVisible = !isCleaned
-      if (slotVisible.get(itemId) !== wantVisible) {
-        slotVisible.set(itemId, wantVisible)
-        VisibilityComponent.createOrReplace(entity, { visible: wantVisible })
-        if (!wantVisible) disableClick(itemId)   // parked means untappable too
+      const visKey = `${wantVisible}|${slotModelLoaded(entity) ? 'loaded' : 'streaming'}`
+      if (slotVisible.get(itemId) !== visKey) {
+        slotVisible.set(itemId, visKey)
+        if (wantVisible) {
+          if (VisibilityComponent.getOrNull(entity)) VisibilityComponent.deleteFrom(entity)
+        } else {
+          VisibilityComponent.createOrReplace(entity, { visible: false })
+          disableClick(itemId)   // parked means untappable too
+        }
       }
 
       if (lastState.get(itemId) === isCleaned) continue

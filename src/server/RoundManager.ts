@@ -335,6 +335,24 @@ function syncGameState() {
   gs.lastCall      = lastCall
 }
 
+/**
+ * Wind down an ABANDONED round — the last active cleaner left mid-round
+ * (field report: the remaining spectator sat watching an empty club, locked
+ * out until the full clock ran dry). Pulls the deadline to a few seconds out
+ * and lets ALL the normal end-of-round machinery run (grades, intermission,
+ * sign-up promotion), rather than inventing a second exit path. If the leaver
+ * returns within the reconnect grace they re-enrol into the next round.
+ */
+const ABANDON_WIND_DOWN_MS = 4_000
+export function abandonRound(): void {
+  if (phase !== 'playing' || roundStartMs === 0) return
+  const remainingMs = getRoundDurationMs() - (Date.now() - roundStartMs)
+  if (remainingMs <= ABANDON_WIND_DOWN_MS) return
+  roundStartMs = Date.now() - (getRoundDurationMs() - ABANDON_WIND_DOWN_MS)
+  console.log(`[ROUND] abandoned — no active cleaners left; winding down in ${ABANDON_WIND_DOWN_MS / 1000}s`)
+  syncGameState()
+}
+
 function clearAllRespawns() {
   for (const [id, t] of respawnTimers) { clearTimeout(t); respawnTimers.delete(id) }
 }

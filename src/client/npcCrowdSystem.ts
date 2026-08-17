@@ -52,8 +52,16 @@ const SIT_SPOT_PREFIX = 'Sit Spot_'
 // Players must always win that contest, so mobile gets a much smaller crowd.
 // The club still reads as populated; there are simply fewer extras.
 const MAX_SITTERS_DESKTOP = 16
-const MAX_SITTERS_MOBILE  = 4
-const MAX_DANCERS_MOBILE  = 4
+// Mobile trimmed 4+4 → 3+2 (2026-08-17): the crowd is only VISIBLE during
+// intermissions, but every distinct NPC id keeps a full avatar (wearables +
+// textures) resident in the explorer's per-id cache for the whole session —
+// mid-round included. That resident cache is baseline memory pressure, and a
+// REAL second player's avatar streaming in on top of it is the leading suspect
+// for the mid-round mobile crash. Five cached NPC avatars instead of eight
+// buys that moment headroom. If crashes persist, the next experiment is
+// MAX_*_MOBILE = 0 — a desktop-only crowd — to confirm or clear the theory.
+const MAX_SITTERS_MOBILE  = 2
+const MAX_DANCERS_MOBILE  = 3
 
 const SIT_DISCOVERY_TIMEOUT_MS = 10_000
 const SITTER_BODY_CYCLE = [FEMALE, MALE]

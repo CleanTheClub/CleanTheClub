@@ -63,6 +63,18 @@ export function GameButton(props: {
   const innerSize = isPressed ? '92%' : '100%'
   // No shake mid-press — the press shrink is its own feedback.
   const shakeX = props.wiggle && !isPressed ? wiggleOffsetX() : 0
+  // Wiggle also paints the button RED (feedback: the shake alone wasn't
+  // drawing the eye to "worth clicking right now") — motion plus colour, one
+  // signal. CONDITIONAL SPREAD, not always-present props: an explicit
+  // `color={undefined}` still overrides the variant's text colour in the
+  // react-ecs prop merge — which made every non-wiggling primary button render
+  // white-on-white, i.e. textless (field report, one deploy of pain).
+  const alertProps = props.wiggle
+    ? {
+        uiBackground: { color: { r: 0.85, g: 0.16, b: 0.18, a: 1 } },
+        color: { r: 1, g: 1, b: 1, a: 1 },
+      }
+    : {}
 
   return (
     <UiEntity
@@ -77,6 +89,7 @@ export function GameButton(props: {
         value={props.value}
         variant={props.variant ?? 'primary'}
         fontSize={props.fontSize}
+        {...alertProps}
         uiTransform={{ width: innerSize, height: innerSize, borderRadius: Math.round(h * 0.24), margin: { left: shakeX } }}
         onMouseEnter={() => {
           if (!hovered.has(id)) { hovered.add(id); playHoverSound() }

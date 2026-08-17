@@ -210,7 +210,21 @@ export function setCareersRestoredHandler(fn: (addresses: string[]) => void): vo
 
 export function ensureProgressLoaded(): Promise<unknown> {
   loadStarted = true
-  return doc.ensureLoaded().then((stored) => {
+  return doc.ensureLoaded().then(applyStoredDoc).catch((e) => {
+    // Saves stay blocked (loadConfirmed false), so nothing is overwritten.
+    // The persistence layer keeps retrying in the background — if the store
+    // comes back, applyStoredDoc runs late (see the onLateLoad registration)
+    // and every connected player's real career is restored mid-session.
+    console.log('[PROGRESS] load failed — progression will not persist until the store recovers:', e)
+  })
+}
+
+// Runs for the FOREGROUND load and for a background LATE load alike: the merge
+// is additive over session records (the boot-race design), which is exactly
+// the right behavior when careers arrive minutes into a session too — what was
+// earned during the outage stacks on top of the restored career.
+function applyStoredDoc(stored: ProgressDoc | null): void {
+  {
     if (mergeDone) return
     mergeDone = true
     if (!stored || !stored.players) return
@@ -278,11 +292,14 @@ export function ensureProgressLoaded(): Promise<unknown> {
       dirty = true   // the merged truth should reach the store at the next checkpoint
       onCareersRestored?.(restored)
     }
-  }).catch((e) => {
-    // Saves stay blocked (loadConfirmed false), so nothing is overwritten.
-    console.log('[PROGRESS] load failed — progression will not persist this session:', e)
-  })
+  }
 }
+
+// Background recovery: a load that succeeds after the foreground window gave
+// up flows through the SAME merge, restoring careers mid-session (every
+// connected player has a session record by then, so they all land in
+// `restored` and get their corrected state pushed).
+doc.onLateLoad(applyStoredDoc)
 
 /**
  * Whether this address belongs to a guest account.

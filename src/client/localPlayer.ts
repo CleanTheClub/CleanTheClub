@@ -13,8 +13,10 @@
 // silently disable every re-entry reset for the whole session.
 
 import { timers } from '@dcl/sdk/ecs'
-import { onEnterSceneObservable } from '@dcl/sdk/observables'
+import { onEnterSceneObservable, onLeaveSceneObservable } from '@dcl/sdk/observables'
+import { isMobile } from '@dcl/sdk/platform'
 import { getUserData } from '~system/UserIdentity'
+import { room } from '../shared/messages'
 
 const RESOLVE_ATTEMPTS = 10
 
@@ -46,6 +48,25 @@ function scheduleRetry(attempt: number): void {
 
 export function initLocalPlayer(): void {
   resolveOwnAddress(0)
+
+  // ── Deliberate-exit announcement — DESKTOP ONLY ─────────────────────────────
+  // Split presence policy by device (KJ: "best of both worlds"):
+  //  • DESKTOP announces walking/teleporting out, so the server ejects from the
+  //    round immediately — a desktop scene keeps running (and heartbeating) in
+  //    a background tab, so the leave observable firing really does mean the
+  //    player chose to go.
+  //  • MOBILE stays silent here on purpose: its equivalent event can fire on
+  //    app switches and boundary flickers, and its players rely on the 60s
+  //    presence timeout + reconnect grace to survive suspends — the exact
+  //    forgiveness this announcement would destroy.
+  // Best-effort by nature: the runtime may be torn down before the message
+  // ships, in which case the presence timeout catches it as before.
+  onLeaveSceneObservable.add((p) => {
+    if (isMobile()) return
+    if (!isLocalEnter(p.userId)) return   // remote players leaving are not our exit
+    console.log('[LOCAL] leaving scene (desktop) — announcing exit')
+    room.send('leavingScene', { dummy: true })
+  })
 }
 
 /** Runs cb with the (lowercased) own address — immediately if already known. */

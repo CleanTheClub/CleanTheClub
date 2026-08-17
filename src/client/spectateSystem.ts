@@ -69,7 +69,8 @@ const FOCUS_LERP_K = 6.0
 const ENGAGE_TRANSITION_S = 0.8   // fly-in/out between real and virtual camera
 const RESCAN_S     = 0.5    // candidate roster scan cadence
 const RAY_INTERVAL_S = 0.15 // wall-ray cadence — stale-tolerant, camArm eases
-const NO_TARGET_GRACE_S = 3 // targets gone this long → give the camera back
+const NO_TARGET_GRACE_S = 8 // targets gone/unstreamed this long → give the camera back
+                            // (was 3 — too short for a mobile avatar transform to stream in)
 const GS_NULL_EXIT_S = 2    // GameState missing this long → bail out safely
 const PROBE_AT_S   = 1.5    // after the fly-in; ~0 distance means honored
 
@@ -137,9 +138,11 @@ function refreshCandidates(): void {
 
   for (const [entity, data] of engine.getEntitiesWith(PlayerIdentityData, Transform)) {
     if (entity === engine.PlayerEntity) continue
-    // No real position yet (streaming in) → not watchable: selecting them
-    // would point the camera at the scene corner their transform reads.
-    if (!validPos(Transform.getOrNull(entity)?.position)) continue
+    // NO position filter here. It briefly lived here and starved the WATCH
+    // button on mobile, where remote avatar transforms read the origin
+    // sentinel for LONG stretches, not just streaming blips ("watch live not
+    // working on mobile, fine on desktop"). Candidates are listable on
+    // presence alone; only the CAMERA paths must refuse to chase an origin.
     const address = data.address.toLowerCase()
     const info = rankInfoFor(address)
     if (info?.cleaning !== undefined) flagsKnown = true
@@ -193,14 +196,19 @@ export function stepSpectateZoom(dir: 1 | -1): void {
   radius = Math.min(RADIUS_MAX_M, Math.max(RADIUS_MIN_M, radius + dir * ZOOM_STEP_M))
 }
 
-export function enterSpectate(): void {
-  if (spectating || !camEntity || !focusEntity) return
+/** Try to start spectating. False = nobody watchable RIGHT NOW (avatar still
+ *  streaming, or no cleaners) — the caller says so instead of a dead button. */
+export function enterSpectate(): boolean {
+  if (spectating || !camEntity || !focusEntity) return false
   refreshCandidates()
-  if (candidates.length === 0) return
+  if (candidates.length === 0) return false
 
   setTarget(Math.min(targetIdx, candidates.length - 1))
-  const tPos = validPos(Transform.getOrNull(targetEntity!)?.position)
-  if (!tPos) return
+  // Target position may not have streamed yet (mobile). Enter anyway from a
+  // club-centre fallback — the per-frame chase swoops onto the real target the
+  // moment its transform turns valid, and the (extended) no-target grace gives
+  // it time before bailing. Refusing here was a dead WATCH button on phones.
+  const tPos = validPos(Transform.getOrNull(targetEntity!)?.position) ?? { x: 16, y: 1.2, z: 16 }
 
   // Start the orbit on the side the spectator is already viewing from, so the
   // fly-in is a short hop rather than a swing around the room. Fallback only if
@@ -223,7 +231,7 @@ export function enterSpectate(): void {
     MainCamera.createOrReplace(engine.CameraEntity, { virtualCameraEntity: camEntity })
   } catch (err) {
     console.log(`[SPECTATE] MainCamera assign FAILED: ${err}`)
-    return
+    return false
   }
 
   // Freeze locomotion: the avatar stays parked where the player left it instead
@@ -239,6 +247,7 @@ export function enterSpectate(): void {
   gsNullFor   = 0
   rayAcc      = RAY_INTERVAL_S   // first wall-ray fires immediately
   console.log(`[SPECTATE] enter — watching ${targetAddress} (${candidates.length} candidates)`)
+  return true
 }
 
 export function exitSpectate(reason: string): void {

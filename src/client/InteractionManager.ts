@@ -7,7 +7,7 @@ import { ClutterSync } from '../shared/schemas'
 import { CLUTTER_DEFS, PICKUP_TOUCH_MS, InteractionType, POP_BEATS, POP_BEAT_MS, POP_HIT_T, POP_FIRST_GRACE_MS } from '../shared/config'
 import { holdDurationMs } from './upgradeEffects'
 import { GLASS_ID_PREFIX } from '../shared/glassDiscovery'
-import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, setPopRing, setSkillTapHandler } from '../ui'
+import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, flashMiss, flashHoldCancel, setPopRing, setSkillTapHandler } from '../ui'
 import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound, playVacuumSound, playPopcornSound } from './soundManager'
 import { usingVacuum, setCarryStowedForMop } from './carrySystem'
@@ -366,6 +366,13 @@ export function initInteractionManager(
   // treats every item as freshly unseen and correctly re-enables uncleaned ones.
   onLocalEnterScene(() => {
     if (activeHold) {
+      // Labeled (field debugging): a hold dying with NO hit/miss flash was
+      // reported as "bar just disappears, patch remains — weird". Every
+      // silent clear path now names itself on screen, so the next repro
+      // screenshot identifies the culprit. This one fires if the mobile
+      // explorer emits a spurious scene re-entry mid-hold.
+      flashHoldCancel('interrupted — scene re-entry')
+      console.log('[STICKY] hold cleared: scene re-entry')
       showHoldBar(false)
       stopStickySound()
       activeHold = null
@@ -437,6 +444,28 @@ export function initInteractionManager(
   // right part of the bar but the patch stays"). What you see is what's judged.
   let lastDrawnProgress = 0
 
+  // MOBILE goes one step further: full latency COMPENSATION. lastDrawnProgress
+  // is what's on screen when the tap is PROCESSED — but the player decided
+  // ~100-300ms earlier, and by processing time the bar has moved on (the
+  // still-unresolved "hit the green, no result" reports survived the grace
+  // window alone). A short history of drawn positions lets the judge rewind to
+  // where the bar was when the finger actually committed.
+  const MOBILE_TOUCH_COMP_MS = 200
+  const drawnHistory: Array<{ ms: number; p: number }> = []
+  function drawnProgressAgo(agoMs: number): number {
+    const target = Date.now() - agoMs
+    let best = lastDrawnProgress
+    for (let i = drawnHistory.length - 1; i >= 0; i--) {
+      best = drawnHistory[i].p
+      if (drawnHistory[i].ms <= target) break
+    }
+    return best
+  }
+  /** The progress a tap should be judged at, per platform. */
+  function judgedProgress(): number {
+    return isMobile() ? drawnProgressAgo(MOBILE_TOUCH_COMP_MS) : lastDrawnProgress
+  }
+
   // TWO tap paths, both live. The global inputSystem polls below catch presses
   // anywhere on the WORLD — but a touch that lands ON a UI element is consumed
   // by the UI layer and never reaches them, so a visual-only pill was a dead
@@ -448,7 +477,7 @@ export function initInteractionManager(
     if (activeRhythm) { judgeRhythmTap(); return }
     if (!activeHold) return
     if (Date.now() - activeHold.startMs <= 250) return
-    resolveSkillCheck(lastDrawnProgress)
+    resolveSkillCheck(judgedProgress())
   })
 
   // ── Rhythm Pop frame system — beat progression, taps, finish ─────────────────
@@ -525,7 +554,7 @@ export function initInteractionManager(
     // stays the no-skill fallback on both platforms.
     if (isMobile()) {
       if (heldMs > 250 && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
-        resolveSkillCheck(lastDrawnProgress)
+        resolveSkillCheck(judgedProgress())
         return
       }
     } else if (heldMs > 60 && !inputSystem.isPressed(InputAction.IA_POINTER)) {
@@ -537,6 +566,8 @@ export function initInteractionManager(
     // this, and the bar, the completion check and the emote must all agree.
     const progress = heldMs / holdDurationMs()
     lastDrawnProgress = Math.min(1, progress)
+    drawnHistory.push({ ms: Date.now(), p: lastDrawnProgress })
+    if (drawnHistory.length > 40) drawnHistory.shift()
     updateHoldBar(lastDrawnProgress)
 
     if (progress >= 1) {
@@ -575,6 +606,9 @@ export function initInteractionManager(
 
       if (isCleaned) {
         if (activeHold?.id === itemId) {
+          // See the re-entry label above — normally "another player got it".
+          flashHoldCancel('someone else got it!')
+          console.log(`[STICKY] hold cleared: ${itemId} confirmed cleaned by someone else`)
           showHoldBar(false)
           activeHold = null
         }
@@ -632,6 +666,8 @@ export function initInteractionManager(
     pendingCleans.delete(data.itemId)
     pendingVisualHide.delete(data.itemId)  // cancels timer if not yet fired
     if (activeHold?.id === data.itemId) {
+      // See the re-entry label above — server refused while the hold ran.
+      flashHoldCancel('rejected — try again')
       showHoldBar(false)
       activeHold = null
     }

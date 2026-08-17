@@ -13,9 +13,9 @@ import { isWaitingForMatch, gameState } from './client/phaseGate'
 import { launchCelebration, stopCelebrationNow, promotionBurst } from './client/confettiSystem'
 import { crowdCheer } from './client/npcCrowdSystem'
 import { getHaulDebug } from './client/carrySystem'
-import { toggleMusicMute, isMusicMuted, playOwnerSting } from './client/musicManager'
+import { playOwnerSting } from './client/musicManager'
 import { isSignedUp, signUpForNextShift, cancelSignUp } from './client/participation'
-import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetCount, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
+import { isSpectating, enterSpectate, exitSpectate, nextSpectateTarget, spectateTargetInfo, stepSpectateOrbit, stepSpectateZoom } from './client/spectateSystem'
 import { tierColorForRank } from './client/rankBadgeSystem'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
@@ -503,11 +503,16 @@ export function setPopRing(t: number | null, hits: number) {
 const PERFECT_FLASH_MS  = 700
 let perfectFlashStartMs = -1
 let perfectFlashStreak  = 0
-let perfectFlashKind: 'perfect' | 'miss' | 'spree' = 'perfect'
+let perfectFlashKind: 'perfect' | 'miss' | 'spree' | 'cancel' = 'perfect'
 // Spree flash during the closing frenzy reads "FRENZY SPREE ×N!" in the frenzy
 // colour — the event flash carries the state, so no second banner is needed
 // anywhere near it (frenzy + spree text used to overlap mid-screen).
 let perfectFlashFrenzy  = false
+// 'cancel' text — names WHICH silent path ended a mop hold. Field debugging
+// aid that doubles as honest UX: the bar vanishing with no explanation was
+// reported as "weird and hard to diagnose"; now the screen says why (and the
+// tester's screenshot tells us exactly which code path to fix).
+let cancelFlashText = ''
 export function flashPerfect(streak: number) {
   perfectFlashStartMs = Date.now()
   perfectFlashStreak  = streak
@@ -523,6 +528,12 @@ export function flashSpree(combo: number, frenzy = false) {
   perfectFlashStreak  = combo
   perfectFlashKind    = 'spree'
   perfectFlashFrenzy  = frenzy
+}
+/** A mop hold ended without a hit/miss resolution — say why on screen. */
+export function flashHoldCancel(label: string) {
+  perfectFlashStartMs = Date.now()
+  perfectFlashKind    = 'cancel'
+  cancelFlashText     = label
 }
 
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t }
@@ -957,12 +968,17 @@ const uiBody = () => {
   const perfectPop     = Math.min(1, perfectElapsed / 250)
   const perfectEase    = 1 - Math.pow(1 - perfectPop, 3)
   const perfectAlpha   = perfectElapsed < 400 ? 1 : Math.max(0, 1 - (perfectElapsed - 400) / (PERFECT_FLASH_MS - 400))
-  const flashSizes     = perfectFlashKind === 'perfect' ? [34, 64] : perfectFlashKind === 'spree' ? [26, 44] : [24, 40]
+  const flashSizes     = perfectFlashKind === 'perfect' ? [34, 64]
+    : perfectFlashKind === 'spree' ? [34, 56]   // badge multiplier — bigger since the kicker carries the words
+    : perfectFlashKind === 'cancel' ? [20, 28]
+    : [24, 40]
   const perfectFont    = Math.round(lerp(flashSizes[0], flashSizes[1], perfectEase) * S)
   const flashText      = perfectFlashKind === 'perfect'
     ? (perfectFlashStreak > 1 ? `PERFECT ×${perfectFlashStreak}!` : 'PERFECT!')
     : perfectFlashKind === 'spree'
     ? (perfectFlashFrenzy ? `FRENZY SPREE ×${perfectFlashStreak}!` : `SPREE ×${perfectFlashStreak}!`)
+    : perfectFlashKind === 'cancel'
+    ? `✕ ${cancelFlashText}`
     : 'MISSED!'
   const flashColor     = perfectFlashKind === 'perfect'
     ? { r: 1, g: 0.82, b: 0.25, a: perfectAlpha }
@@ -970,6 +986,8 @@ const uiBody = () => {
     ? (perfectFlashFrenzy
       ? { r: 1, g: 0.45, b: 0.25, a: perfectAlpha }
       : { r: 1, g: 0.62, b: 0.2,  a: perfectAlpha })
+    : perfectFlashKind === 'cancel'
+    ? { r: 0.8, g: 0.8, b: 0.85, a: perfectAlpha }
     : { r: 1, g: 0.35, b: 0.3,  a: perfectAlpha }
 
   // Deposit flash — reads carrySystem's last-deposit state (no setter import,
@@ -1179,7 +1197,7 @@ const uiBody = () => {
 
         {/* Absolutely positioned, so it sits in the same bottom-left spot here as
             it does in the in-shift HUD rather than jumping between screens. */}
-        <CareerBar S={S} withMusicButton={mobile} />
+        <CareerBar S={S} withMusicButton={true} />
       </UiEntity>
     )
   }
@@ -1224,13 +1242,18 @@ const uiBody = () => {
           </UiEntity>
         </UiEntity>
 
-        {/* Next-shift countdown keeps ticking while watching, so a signed-up
-            spectator knows exactly when the camera hands back. */}
-        {isOpen ? (
-          <UiEntity uiTransform={{ ...FULL_WIDTH_ROW, positionType: 'absolute', position: { top: mobile ? '19%' : Math.round(86 * S) } }}>
-            <Label value={`Next shift in ${seconds}s`} fontSize={Math.round(22 * S)} color={COLOR_SUBTLE} />
-          </UiEntity>
-        ) : null}
+        {/* The clock never disappears while watching (field report: "as a
+            player I want to know how long until I can actually play") — the
+            round countdown mid-shift, the next-shift countdown in between. */}
+        <UiEntity uiTransform={{ ...FULL_WIDTH_ROW, positionType: 'absolute', position: { top: mobile ? '19%' : Math.round(86 * S) } }}>
+          <Label
+            value={isOpen
+              ? `Next shift in ${seconds}s`
+              : `Shift ends in ${formatTime(seconds)}`}
+            fontSize={Math.round(22 * S)}
+            color={COLOR_SUBTLE}
+          />
+        </UiEntity>
 
         {/* Camera controls — tap-to-step on purpose: each press swings the
             orbit 45° or steps the zoom, and the camera's own lerp glides it
@@ -1335,19 +1358,23 @@ const uiBody = () => {
         }}
         /* darkness drawn full-bleed in ui() — inner bg removed to avoid a double-dark seam at the inset edge */
       >
+        {/* Was titled "Spectating" — which promised a camera this screen does
+            not have (field report: "it says spectating but the player isn't
+            put into spectate mode"). This is the WAITING screen; the camera is
+            behind WATCH LIVE below. */}
         <UiEntity uiTransform={{ ...centeredRow, margin: { bottom: Math.round(16 * S) } }}>
-          <Label value="Spectating" fontSize={Math.round(56 * S)} color={WHITE} />
+          <Label value="Shift in progress" fontSize={Math.round(56 * S)} color={WHITE} />
         </UiEntity>
 
-        {/* Next-shift countdown. During the intermission secondsLeft counts down to
-            the next round, which is exactly the "next match countdown" the GDD asks
-            for; mid-round there is no meaningful number yet, so say so plainly
-            rather than showing a stale or misleading one. */}
+        {/* Next-shift countdown. During the intermission secondsLeft counts down
+            to the next round; mid-round it counts the CURRENT round out, which
+            is the same answer a waiting player needs — "how long until I can
+            actually play" (field report: the old text gave no number here). */}
         <UiEntity uiTransform={centeredRow}>
           <Label
             value={isOpen
               ? `Next shift starts in ${seconds}s`
-              : 'Next shift starts when this round ends'}
+              : `Next shift when this round ends — ${formatTime(seconds)} left`}
             fontSize={Math.round(30 * S)}
             color={WHITE}
           />
@@ -1385,20 +1412,23 @@ const uiBody = () => {
           />
         </UiEntity>
 
-        {/* Live camera on the crew — makes "watch until you're ready" literal:
-            the round plays out in front of the spectator instead of behind a
-            black scrim. Only offered while there is actually someone to watch. */}
-        {spectateTargetCount() > 0 ? (
-          <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(14 * S) } }}>
-            <GameButton
-              value="WATCH LIVE"
-              variant="secondary"
-              fontSize={Math.round(26 * S)}
-              uiTransform={{ width: Math.round(360 * S), height: Math.round(76 * S) }}
-              onMouseDown={() => enterSpectate()}
-            />
-          </UiEntity>
-        ) : null}
+        {/* Live camera on the crew — makes "watch until you're ready" literal.
+            ALWAYS offered (was gated on spectateTargetCount() > 0, which on
+            mobile flickered to zero whenever the remote cleaner's avatar
+            transform hadn't streamed — the button vanished for whole rounds).
+            An unwatchable instant now answers with a toast instead of a
+            missing button; the roster refreshes every half second. */}
+        <UiEntity uiTransform={{ ...centeredRow, margin: { top: Math.round(14 * S) } }}>
+          <GameButton
+            value="WATCH LIVE"
+            variant="secondary"
+            fontSize={Math.round(26 * S)}
+            uiTransform={{ width: Math.round(360 * S), height: Math.round(76 * S) }}
+            onMouseDown={() => {
+              if (!enterSpectate()) showNarrativeToast('No one to watch just yet — try again in a moment')
+            }}
+          />
+        </UiEntity>
 
         {/* Waiting is the natural moment to spend earnings, and gives the wait a
             purpose rather than leaving players staring at a scrim. */}
@@ -1406,7 +1436,7 @@ const uiBody = () => {
           <ShopButton S={S} />
         </UiEntity>
 
-        <CareerBar S={S} withMusicButton={mobile} />
+        <CareerBar S={S} withMusicButton={true} />
       </UiEntity>
     )
   }
@@ -1423,7 +1453,7 @@ const uiBody = () => {
            renders only during the intermission, and only once a payout has arrived. */}
       {/* Hidden while the side panel is open: the bar's top-right anchor sits in
           the panel's footprint, and the panel header already shows the wallet. */}
-      {!shopAsPanel && <CareerBar S={S} withShopButton={mobile && !isShopOpen()} withMusicButton={mobile} />}
+      {!shopAsPanel && <CareerBar S={S} withShopButton={mobile && !isShopOpen()} withMusicButton={true} />}
       {/* The whole intermission in one centred card — outcome art, grade, score,
           payout and countdown. Self-centring, so it can't overflow. */}
       {isOpen && <ShiftPayoutPanel S={S} imageSrc={topImageSrc} pct={pct} seconds={seconds} />}
@@ -1465,30 +1495,10 @@ const uiBody = () => {
           when there is nothing in hand to track (round start resets it anyway). */}
       {!isOpen && <CarryChip S={S} />}
 
-      {/* Music mute — radio + party + finale only; SFX stay (they're gameplay
-          feedback). DESKTOP ONLY here: top-left just inside the LIVE safe area
-          (explorer chrome + chat aware), not a guessed corner — the fixed
-          10,10 spot sat under the explorer's own top-left UI. On mobile the
-          top-left corner belongs to the explorer outright, so the button docks
-          under the career bar instead (CareerBar's withMusicButton — the same
-          validated real estate as the mobile UPGRADES dock). */}
-      {!mobile && (
-        <GameButton
-          value={isMusicMuted() ? 'MUSIC: OFF' : 'MUSIC: ON'}
-          variant="secondary"
-          fontSize={Math.round(13 * S)}
-          onMouseDown={() => toggleMusicMute()}
-          uiTransform={{
-            positionType: 'absolute',
-            position: {
-              top:  saPct(getSafeArea().top + 0.015),
-              left: saPct(getSafeArea().left + 0.012),
-            },
-            width:  Math.round(104 * S),
-            height: Math.round(30 * S),
-          }}
-        />
-      )}
+      {/* Music mute now lives in the CareerBar dock on BOTH platforms (KJ:
+          "on desktop let's put the mute button under the career ladder
+          section, top right") — one tidy audio corner instead of a stray
+          top-left button. See CareerBar's withMusicButton. */}
 
       {/* Shop access — available at ANY time, not just between shifts.
           Upgrades apply the moment they are bought, so buying Movement Speed or
@@ -1925,7 +1935,7 @@ const uiBody = () => {
       {/* ── PERFECT! flash — pops when a skill-check release lands in the green.
            Rendered outside the hold-bar block because the bar hides on release,
            exactly when this needs to be visible. */}
-      {perfectElapsed < PERFECT_FLASH_MS && (
+      {perfectElapsed < PERFECT_FLASH_MS && perfectFlashKind !== 'spree' && perfectFlashKind !== 'perfect' && (
         <UiEntity
           uiTransform={{
             positionType:   'absolute',
@@ -1942,6 +1952,78 @@ const uiBody = () => {
           />
         </UiEntity>
       )}
+
+      {/* ── Spree / PERFECT badge — restyled from bare colored strings (feedback:
+           "spree UI text is uglyyy", then "the Perfect xN text is ugly"). One
+           badge language for both: dark pill, quiet kicker line, big
+           drop-shadowed headline that keeps the pop-in scale and fades on the
+           shared flash alpha. The shadow is a second Label offset a few px
+           behind — UI Labels have no outline. MISSED and the grey ✕ cancels
+           stay plain small text: failure shouldn't get celebration chrome. */}
+      {perfectElapsed < PERFECT_FLASH_MS && (perfectFlashKind === 'spree' || perfectFlashKind === 'perfect') && (() => {
+        const isPerfect = perfectFlashKind === 'perfect'
+        const mult   = isPerfect ? 'PERFECT!' : `×${perfectFlashStreak}`
+        const kicker = isPerfect
+          ? (perfectFlashStreak > 1 ? `STREAK ×${perfectFlashStreak}` : 'NICE TIMING')
+          : (perfectFlashFrenzy ? 'FRENZY SPREE' : 'CLEANING SPREE')
+        const boxW   = Math.round(perfectFont * 0.7 * Math.max(2, mult.length))
+        const boxH   = Math.round(perfectFont * 1.12)
+        const accent = !isPerfect && perfectFlashFrenzy ? { r: 1, g: 0.45, b: 0.25 } : { r: 1, g: 0.82, b: 0.25 }
+        return (
+          <UiEntity
+            uiTransform={{
+              positionType:   'absolute',
+              position:       { top: HOLD_BAR_TOP - Math.round(96 * S), left: 0 },
+              width:          '100%',
+              flexDirection:  'row',
+              justifyContent: 'center',
+            }}
+          >
+            <UiEntity
+              uiTransform={{
+                flexDirection: 'column',
+                alignItems:    'center',
+                padding: {
+                  top: Math.round(8 * S), bottom: Math.round(10 * S),
+                  left: Math.round(22 * S), right: Math.round(22 * S),
+                },
+                borderRadius: Math.round(16 * S),
+              }}
+              uiBackground={{ color: { r: 0.05, g: 0.02, b: 0.1, a: 0.72 * perfectAlpha } }}
+            >
+              <Label
+                value={kicker}
+                fontSize={Math.round(15 * S)}
+                color={{ r: 1, g: 1, b: 1, a: 0.85 * perfectAlpha }}
+              />
+              <UiEntity uiTransform={{ width: boxW, height: boxH }}>
+                <Label
+                  value={mult}
+                  fontSize={perfectFont}
+                  textAlign="middle-center"
+                  color={{ r: 0, g: 0, b: 0, a: 0.8 * perfectAlpha }}
+                  uiTransform={{
+                    positionType: 'absolute',
+                    position: { top: Math.round(3 * S), left: Math.round(3 * S) },
+                    width: '100%', height: '100%',
+                  }}
+                />
+                <Label
+                  value={mult}
+                  fontSize={perfectFont}
+                  textAlign="middle-center"
+                  color={{ ...accent, a: perfectAlpha }}
+                  uiTransform={{
+                    positionType: 'absolute',
+                    position: { top: 0, left: 0 },
+                    width: '100%', height: '100%',
+                  }}
+                />
+              </UiEntity>
+            </UiEntity>
+          </UiEntity>
+        )
+      })()}
 
       {/* ── Deposit flash — names the stream, so the sort is reinforced. ─────── */}
       {depElapsed < PERFECT_FLASH_MS && (

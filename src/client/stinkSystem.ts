@@ -11,6 +11,7 @@ import {
   engine, Entity, Transform,
   ParticleSystem,
 } from '@dcl/sdk/ecs'
+import { isMobile } from '@dcl/sdk/platform'
 import { Color4, Vector3 } from '@dcl/sdk/math'
 import { onLocalEnterScene } from './localPlayer'
 import { CLUTTER_DEFS } from '../shared/config'
@@ -28,8 +29,18 @@ import { PSB_ALPHA, PS_PLAYING, PS_STOPPED } from './particleEnums'
 // which is why paparazzi-night spawns had no stink (playtest, mobile). At round
 // start more than 100 items can be dirty at once; the tail goes stinkless
 // briefly and picks up emitters as cleaning frees them.
-const MAX_STINK_EMITTERS = 100  // hard cap on emitter ENTITIES (recycled)
-const PARTICLES_PER_ITEM = 5   // maxParticles per emitter → ≤ 500 total
+// MOBILE gets MORE emitters with FEWER particles each (130×3=390 < 100×5=500):
+// paparazzi/cocktail rounds run ~90-110 concurrently-dirty items, so the flat
+// 100 cap left the tail visibly stinkless exactly on themed nights (field
+// report, mobile) — while the phone renderer is also the one that can least
+// afford the particle total. Read live, not at init: isMobile() resolves
+// asynchronously and emitters are created lazily on demand, long after.
+const MAX_STINK_EMITTERS        = 100  // hard cap on emitter ENTITIES (recycled)
+const MAX_STINK_EMITTERS_MOBILE = 130
+const PARTICLES_PER_ITEM        = 5    // maxParticles per emitter
+const PARTICLES_PER_ITEM_MOBILE = 3
+const maxEmitters      = (): number => (isMobile() ? MAX_STINK_EMITTERS_MOBILE : MAX_STINK_EMITTERS)
+const particlesPerItem = (): number => (isMobile() ? PARTICLES_PER_ITEM_MOBILE : PARTICLES_PER_ITEM)
 const STINK_Y_OFFSET     = 0.6 // metres above the item's Transform position
 
 // ── Internal maps ─────────────────────────────────────────────────────────────
@@ -49,7 +60,7 @@ function createEmitter(pos: { x: number; y: number; z: number }): Entity {
 
     // Emission
     rate:         2,
-    maxParticles: PARTICLES_PER_ITEM,
+    maxParticles: particlesPerItem(),
 
     // Lifetime — single number (seconds), NOT a FloatRange
     lifetime: 2.5,
@@ -162,10 +173,10 @@ export function initStinkSystem() {
       if (tf) tf.position = Vector3.create(pos.x, pos.y + STINK_Y_OFFSET, pos.z)
       return recycled
     }
-    if (created >= MAX_STINK_EMITTERS) {
+    if (created >= maxEmitters()) {
       if (!starvedLogged) {
         starvedLogged = true
-        console.log(`[STINK] pool cap ${MAX_STINK_EMITTERS} hit — tail items go stinkless until cleans free emitters`)
+        console.log(`[STINK] pool cap ${maxEmitters()} hit — tail items go stinkless until cleans free emitters`)
       }
       return null
     }
@@ -209,7 +220,7 @@ export function initStinkSystem() {
     // Assignment sweep — cheap (≤ ~130 set entries, most already assigned).
     for (const itemId of needStink) {
       if (emitterFor.has(itemId)) continue
-      if (freeEmitters.length === 0 && created >= MAX_STINK_EMITTERS) break
+      if (freeEmitters.length === 0 && created >= maxEmitters()) break
       let pos = itemPosFor.get(itemId)
       if (!pos) {
         // Dynamic item: position lives on its sync entity. The scale gate

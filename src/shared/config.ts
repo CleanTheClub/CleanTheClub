@@ -1,6 +1,21 @@
 // Set to true for fast timers during local testing
 export const DEBUG = false
 
+// ── Persistence policy ────────────────────────────────────────────────────────
+// Career/leaderboard documents may ONLY live in the external store (jsonbin).
+// INCIDENT 2026-08-17: a publish came up without the jsonbin EnvVars, the
+// persistence layer silently fell back to DCL Storage's per-deploy bucket, and
+// every player saw a fresh empty career, empty leaderboard, empty wall — while
+// new progress diverged into a bucket no later deploy can read. The wipe
+// guards protect a BACKEND from empty overwrites; they cannot protect against
+// quietly SWITCHING backends. With this true, missing credentials REFUSE to
+// load: play continues on in-memory records, saves stay blocked, and every
+// career bar shows a "progress not saving" warning until the EnvVars are
+// restored and the world republished. Loud and recoverable beats silent and
+// diverged. (Local preview has no EnvVars: with DEBUG=false careers simply
+// don't persist between local server restarts — also the safe default.)
+export const REQUIRE_EXTERNAL_STORE = !DEBUG
+
 // V2: every round runs the SAME duration (per the GDD — the old shrinking table
 // 3:00→1:00 was a V1 finale-pressure mechanic that no longer fits the endless
 // loop). Difficulty comes from respawn scaling, not a shrinking clock. Single

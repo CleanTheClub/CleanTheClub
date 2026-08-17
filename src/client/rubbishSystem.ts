@@ -108,7 +108,17 @@ function setVisible(itemId: string, visible: boolean) {
   // whole duration. visible:false skips it in the renderer while the entity
   // stays in the engine, so waking it costs no reload (the documented way to
   // hide scene content). Scale is still zeroed so the pickup shrink reads.
-  VisibilityComponent.createOrReplace(rec.containerEntity, { visible })
+  //
+  // VISIBLE = component DELETED, never {visible:true}: on mobile a visibility
+  // write that lands while a GLB is (re)streaming — the watchdog force-reloads
+  // failed items — can miss the meshes that arrive after it, leaving the model
+  // hidden with a "true" on record ("seems like a visibility toggle"). An
+  // absent component is the renderer default and has nothing to mis-apply.
+  if (visible) {
+    if (VisibilityComponent.getOrNull(rec.containerEntity)) VisibilityComponent.deleteFrom(rec.containerEntity)
+  } else {
+    VisibilityComponent.createOrReplace(rec.containerEntity, { visible: false })
+  }
   const tf = Transform.getMutable(rec.containerEntity)
   if (visible) {
     // Restore only from a banked scale — the server never writes these

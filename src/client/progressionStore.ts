@@ -63,6 +63,9 @@ export type CareerState = {
   flexGear?:  string
   /** Live achievement progress, server-computed. */
   achievements?: AchievementState[]
+  /** True while the server's career document failed to load (mis-deployed
+   *  EnvVars / store outage) — progress is session-only and NOT being saved. */
+  storageDegraded?: boolean
 }
 
 const EMPTY: CareerState = {

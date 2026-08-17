@@ -18,7 +18,7 @@ import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
 import { DUMPSTER_PREFIX, BIN_CAPACITY, BIN_STINK_FRACTION, themeModelSrc, MODEL_SIZE_M, ITEM_MINI_TARGET_M } from '../shared/config'
 import { carryGearModel, GEAR_DEFAULT } from '../shared/progression'
 import { requestSetup } from './spawnDirector'
-import { pointerMaxDist, gameState } from './phaseGate'
+import { pointerMaxDist, gameState, onPhaseChange } from './phaseGate'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty, upgradeLevel, getFlexGear } from './progressionStore'
@@ -389,16 +389,23 @@ export function setCarryHoldTest(name: string | null): void {
 // 100%, cleanRejected, phase change, scene re-entry — restores the gear
 // without needing its own call. The setter diffs, so per-frame calls are free.
 let mopStowed = false
+// Hands-empty hiding — the rig is HIDDEN, never torn down mid-session (see
+// refreshCarriedBag): removeEntityWithChildren racing a still-streaming GLB
+// left an orphaned render prop on mobile ("the bin stays in my hand after
+// returning it"). A 0.001-scale anchor can't orphan anything, and the next
+// pickup re-shows an already-loaded model instantly.
+let rigEmptyHidden = false
 export function setCarryStowedForMop(on: boolean): void {
   if (mopStowed === on) return
   mopStowed = on
-  applyMopStow()
+  applyRigVisibility()
 }
-function applyMopStow(): void {
+function applyRigVisibility(): void {
   if (!carryAnchor) return
   const tf = Transform.getMutableOrNull(carryAnchor)
   if (!tf) return
-  tf.scale = mopStowed ? { x: 0.001, y: 0.001, z: 0.001 } : { x: 1, y: 1, z: 1 }
+  const hidden = mopStowed || rigEmptyHidden
+  tf.scale = hidden ? { x: 0.001, y: 0.001, z: 0.001 } : { x: 1, y: 1, z: 1 }
 }
 
 function refreshCarriedBag(): void {
@@ -408,19 +415,26 @@ function refreshCarriedBag(): void {
   // box at max size, a bag riding it, permanent stink. Reads physically.
   const haulDisplay = hauling !== ''
   // Upper-body carry pose tracks whether the hands are full.
-  setCarryPose(holdTest || haulDisplay || total > 0)
-  if (!holdTest && !haulDisplay && total <= 0) {
-    if (carryAnchor) {
-      engine.removeEntityWithChildren(carryAnchor)
-      carryAnchor = null
-      carryRig = null
-      bagEntity = null
+  const show = holdTest || haulDisplay || total > 0
+  setCarryPose(show)
+  if (!show) {
+    // HIDE the rig rather than destroying it (see rigEmptyHidden above). The
+    // stink emitter is still removed for real — a scaled-down emitter can keep
+    // simulating particles — and the mini slots are emptied so last haul's
+    // decorations can't flash up on the next pickup.
+    rigEmptyHidden = true
+    applyRigVisibility()
+    if (fullStinkEntity) {
+      engine.removeEntity(fullStinkEntity)
       fullStinkEntity = null
-      slotEntities.length = 0
+    }
+    for (const s of slotEntities) {
+      if (s && GltfContainer.getOrNull(s)) GltfContainer.deleteFrom(s)
     }
     carriedModels.length = 0
     return
   }
+  rigEmptyHidden = false
 
   // Server count is authoritative — drop oldest decorations past it.
   // (Not while hauling: carried is 0 then, and the bag mini is forced below.)
@@ -573,9 +587,9 @@ function refreshCarriedBag(): void {
   }
 
   // A refresh can REBUILD the anchor (fresh Transform, scale 1) while a mop
-  // hold is mid-flight — e.g. a carriedUpdate landing during the hold — so the
-  // stow is re-applied after every rebuild, not only from the setter.
-  applyMopStow()
+  // hold is mid-flight — e.g. a carriedUpdate landing during the hold — so
+  // visibility is re-applied after every refresh, not only from the setters.
+  applyRigVisibility()
 }
 
 function currentRigRotation(): Quaternion {
@@ -695,12 +709,32 @@ export function requestPortableEmpty(): void {
 type RemoteCarry = { anchor: Entity; bag: Entity; lastSrc: string }
 const remoteCarries = new Map<string, RemoteCarry>()
 
-// address → station bin name that player is currently hauling ('' = none).
-// Station-bin visibility is CLIENT-owned: the server's old Transform write on
-// the bin entity never replicated (composite entities aren't synced), so the
-// hauled bin used to stay visibly at its station for everyone. Each client now
-// hides/restores bins from its own haul state + these broadcast remote hauls.
-const remoteHauls = new Map<string, string>()
+// address → station bin name that player is currently hauling ('' = none),
+// with the time we HEARD it. Station-bin visibility is CLIENT-owned: the
+// server's old Transform write on the bin entity never replicated (composite
+// entities aren't synced), so the hauled bin used to stay visibly at its
+// station for everyone. Each client hides/restores bins from its own haul
+// state + these broadcast remote hauls.
+//
+// TTL: a mobile app suspend DROPS broadcasts (no replay) — a client that
+// missed the haul-cleared carryPublic stranded that station's bin invisible
+// for the session ("there was a missing general waste bin on mobile"). No
+// real haul takes 2 minutes, so a stale entry self-heals; a genuinely long
+// haul re-hides on the hauler's next broadcast (every deposit/state change).
+const REMOTE_HAUL_TTL_MS = 120_000
+const remoteHauls = new Map<string, { binName: string; ms: number }>()
+
+// ── Return-leg optimism + ack watchdog ────────────────────────────────────────
+// The return click clears the hands LOCALLY and immediately (field ask: "I'd
+// much rather the bin go straight back to its place when I return it") — and
+// because mobile demonstrably loses single messages, the send is verified: if
+// no server confirmation (a carriedUpdate with the haul cleared) arrives
+// within the window, returnBin is re-sent, twice at most. A duplicate arriving
+// after acceptance is refused server-side and answered with a resync — free.
+const RETURN_ACK_MS      = 2_500
+const RETURN_MAX_RETRIES = 2
+let pendingReturnMs = 0
+let returnRetries   = 0
 let ownAddress = ''
 
 function removeRemoteCarry(address: string): void {
@@ -769,7 +803,7 @@ export function initCarrySystem(): void {
     // Desktop resolves this fast; mobile is where it bites.
     if (ownAddress === '' || addr === ownAddress) return
     const mid = data.haulStage === 'out' || data.haulStage === 'back'
-    remoteHauls.set(addr, mid ? (data.haulBinName ?? '') : '')
+    remoteHauls.set(addr, { binName: mid ? (data.haulBinName ?? '') : '', ms: Date.now() })
     updateRemoteCarry(addr, data.total, data.capacity, data.hauling, data.haulStage, data.gear ?? '')
   })
 
@@ -789,6 +823,25 @@ export function initCarrySystem(): void {
       if (!present.has(addr)) removeRemoteCarry(addr)
     }
   })
+  // Round start = empty hands BY RULE. The server clears carried + haul state
+  // at every round start and broadcasts it — but a mobile client that misses
+  // that one message (round transitions are prime app-suspend territory) kept
+  // a phantom bin in hand into the new round (field report: hauled to the
+  // dumpster, didn't return it in time, round reset, bin still in hand).
+  // Mirror the rule locally at the phase flip; the server's carriedUpdate
+  // re-confirms the same values moments later, so a race is harmless.
+  onPhaseChange((phase) => {
+    if (phase !== 'playing' || !known) return
+    if (carriedGeneral === 0 && carriedRecycle === 0 && hauling === '') return
+    console.log('[CARRY] round start — clearing hands locally (server confirms)')
+    carriedGeneral = 0
+    carriedRecycle = 0
+    hauling        = ''
+    haulStage      = ''
+    haulBinName    = ''
+    refreshMarkers()
+  })
+
   room.onMessage('carriedUpdate', (data) => {
     carriedGeneral = data.carriedGeneral
     carriedRecycle = data.carriedRecycle
@@ -801,6 +854,8 @@ export function initCarrySystem(): void {
     if (prevStage !== haulStage) {
       console.log(`[HAUL] server says stage '${prevStage || 'none'}' -> '${haulStage || 'none'}' (bin='${haulBinName || '-'}', carried=${data.carriedGeneral + data.carriedRecycle})`)
     }
+    // Server confirmed the haul is over (or corrected us) — stop the watchdog.
+    if (hauling === '') { pendingReturnMs = 0 }
     known          = true
     refreshMarkers()
   })
@@ -993,10 +1048,32 @@ export function initCarrySystem(): void {
     if (markerAcc < 0.5) return
     markerAcc = 0
 
+    // ── Return-leg ack watchdog (see pendingReturnMs) ──────────────────────
+    if (pendingReturnMs > 0 && Date.now() - pendingReturnMs > RETURN_ACK_MS) {
+      if (returnRetries >= RETURN_MAX_RETRIES) {
+        console.log('[HAUL] returnBin never confirmed after retries — server resync will correct')
+        pendingReturnMs = 0
+      } else {
+        returnRetries++
+        pendingReturnMs = Date.now()
+        console.log(`[HAUL] returnBin unconfirmed — resend ${returnRetries}/${RETURN_MAX_RETRIES}`)
+        room.send('returnBin', { dummy: true })
+      }
+    }
+
     // ── Station-bin visibility (own haul + broadcast remote hauls) ─────────
+    // Stale remote-haul entries expire first (see REMOTE_HAUL_TTL_MS) — a
+    // missed clearing broadcast must not hide a station's bin forever.
+    const nowMs = Date.now()
+    for (const [addr, h] of [...remoteHauls]) {
+      if (h.binName !== '' && nowMs - h.ms > REMOTE_HAUL_TTL_MS) {
+        console.log(`[CARRY] remote haul by ${addr.slice(0, 8)}… expired — restoring '${h.binName}'`)
+        remoteHauls.delete(addr)
+      }
+    }
     const hauledNow = new Set<string>()
     if (haulStage !== '' && haulBinName !== '') hauledNow.add(haulBinName)
-    for (const [, binName] of remoteHauls) if (binName !== '') hauledNow.add(binName)
+    for (const [, h] of remoteHauls) if (h.binName !== '') hauledNow.add(h.binName)
     for (const b of binVisuals) {
       const shouldHide = hauledNow.has(b.name)
       if (shouldHide === hiddenBins.has(b.name)) continue
@@ -1046,6 +1123,15 @@ export function initCarrySystem(): void {
             console.log(`[HAUL] -> returnBin for '${haulBinName}'`)
             playDepositSound()
             room.send('returnBin', { dummy: true })
+            // Optimistic completion — bin home, hands free, pose released NOW.
+            // The server's carriedUpdate confirms (or corrects) moments later,
+            // and the ack watchdog re-sends if nothing comes back.
+            pendingReturnMs = Date.now()
+            returnRetries   = 0
+            hauling     = ''
+            haulStage   = ''
+            haulBinName = ''
+            refreshMarkers()
           },
         )
         returnMarker = makeMarker(p, 'PUT THE BIN\nBACK HERE', Color4.create(0.4, 0.95, 0.5, 1))

@@ -27,11 +27,28 @@ export const Messages = {
    * then every ~5s as the presence heartbeat the server counts players by.
    */
   ping:             Schemas.Map({ dummy: Schemas.Boolean }),
+  /**
+   * DESKTOP-only deliberate-exit announcement (walked out / teleported away) —
+   * the server ejects the sender from the round immediately, no reconnect
+   * grace. Mobile never sends this: its suspends must keep riding the presence
+   * timeout + grace. Best-effort — a torn-down runtime that fails to send just
+   * falls back to the timeout.
+   */
+  leavingScene:     Schemas.Map({ dummy: Schemas.Boolean }),
   /** Equip ('Disco_Ball' …) or clear ('') a flex carry container. The server
    *  re-checks the achievement, so an unearned equip is refused. */
   equipGear:        Schemas.Map({ gear: Schemas.String }),
   /** Request to buy the next level of an upgrade. Server validates and pays. */
   buyUpgrade:       Schemas.Map({ upgradeId: Schemas.String }),
+  /**
+   * Client-reported UNLOADABLE item: its GLB never reached FINISHED despite
+   * the watchdog's forced reloads, so this client sees stink + a tap target
+   * with no mesh. The server clears the item from the round — no pay, no
+   * stats — rather than leaving mess nobody can see ("why don't we just
+   * remove unloaded items from rounds?"). Rate-limited and capped per client
+   * per round server-side, so a crafted client can't farm round completion.
+   */
+  ghostItem:        Schemas.Map({ itemId: Schemas.String }),
   /**
    * CLUB OWNER privilege — pick the NEXT round's theme ('' = classic). Server
    * validates rank (top of the ladder), phase (intermission only) and that no

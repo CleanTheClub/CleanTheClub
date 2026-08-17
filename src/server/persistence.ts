@@ -22,6 +22,7 @@
 //   otherwise                              → DCL Storage (fine on LAND)
 
 import { Storage, EnvVar } from '@dcl/sdk/server'
+import { REQUIRE_EXTERNAL_STORE } from '../shared/config'
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
@@ -37,6 +38,10 @@ export type DocStatus = {
   /** 'pending' until the first backend resolution. */
   backend: 'jsonbin' | 'storage' | 'pending'
   loadConfirmed: boolean
+  /** True once the load has DEFINITIVELY failed (retry window exhausted, or
+   *  external store required but unconfigured) — drives the player-facing
+   *  "progress not saving" warning, distinct from a load still in flight. */
+  loadFailed?: boolean
   /** null until a save has been attempted. */
   lastSaveOk: boolean | null
   lastSaveMs: number
@@ -55,6 +60,16 @@ export type PersistedDoc<T> = {
   save(value: T): Promise<boolean>
   /** Live health snapshot — surfaced in-world so failures can't stay silent. */
   status(): DocStatus
+  /**
+   * Registers a callback for a load that succeeds AFTER the initial retry
+   * window gave up (background recovery — fired at most once, with the stored
+   * value). Incident 2026-08-17: a ~15s-per-attempt jsonbin outage exhausted
+   * the 30s window and condemned the whole server session to empty careers,
+   * even though connectivity returned minutes later. The background loop keeps
+   * trying forever; when it lands, the caller merges and pushes the restored
+   * state to everyone connected.
+   */
+  onLateLoad(cb: (value: T | null) => void): void
 }
 
 /**
@@ -71,6 +86,7 @@ export function createPersistedDoc<T>(
 ): PersistedDoc<T> {
   let loadPromise: Promise<T | null> | null = null
   let loadConfirmed = false
+  let loadFailed = false
   let lastSaveOk: boolean | null = null
   let lastSaveMs = 0
 
@@ -79,14 +95,21 @@ export function createPersistedDoc<T>(
   let binCfgLoaded = false
   async function getBinCfg(): Promise<{ id: string; key: string } | null> {
     if (binCfgLoaded) return binCfg
-    binCfgLoaded = true
     try {
       const id  = await EnvVar.get(`${envPrefix}_BIN_ID`)
       const bk  = await EnvVar.get(`${envPrefix}_BIN_KEY`)
       binCfg = id && bk ? { id, key: bk } : null
+      // Cache ONLY a clean answer. A clean-but-empty read ("no vars set") is a
+      // definitive configuration fact; an ERROR is a transient EnvVar-service
+      // blip — and caching that null used to lock the ENTIRE server session
+      // into the DCL Storage fallback off one bad read at boot, exactly when
+      // the platform is coldest. Plausible root cause of the 2026-08-17 wipe
+      // scare. Left uncached, the load retry loop re-asks every attempt.
+      binCfgLoaded = true
     } catch (e) {
-      console.log(`[STORE:${key}] EnvVar read failed — using DCL Storage:`, e)
+      console.log(`[STORE:${key}] EnvVar read ERROR (transient? will retry):`, e)
       binCfg = null
+      return null
     }
     console.log(binCfg
       ? `[STORE:${key}] persistence: external store (jsonbin)`
@@ -99,6 +122,15 @@ export function createPersistedDoc<T>(
   // document must come back as a real value, not null.
   async function read(): Promise<T | null> {
     const cfg = await getBinCfg()
+    // INCIDENT GUARD (2026-08-17): with credentials missing this used to fall
+    // back to DCL Storage — whose per-deploy bucket reads empty after every
+    // republish — so a publish without EnvVars looked like a full career wipe
+    // and quietly diverged new progress into an unreachable bucket. Refusing
+    // outright keeps saves blocked (loadConfirmed never sets) and the failure
+    // visible until the credentials are restored. See REQUIRE_EXTERNAL_STORE.
+    if (!cfg && REQUIRE_EXTERNAL_STORE) {
+      throw new Error(`external store REQUIRED but ${envPrefix}_BIN_* EnvVars are missing — refusing DCL Storage fallback`)
+    }
     if (cfg) {
       const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}/latest`, {
         headers: { 'X-Master-Key': cfg.key },
@@ -112,19 +144,31 @@ export function createPersistedDoc<T>(
     return raw ? (JSON.parse(raw) as T) : null
   }
 
+  // The FIRST write of each server session is VERSIONED: jsonbin keeps the
+  // previous document as a recoverable version, so every deploy leaves one
+  // point-in-time snapshot behind ("data must always be saved and not
+  // overwritten" — incident 2026-08-17). Subsequent writes overwrite in place
+  // as before, so versions accumulate per deploy, not per shift.
+  let versionedThisSession = false
+
   async function write(value: T): Promise<void> {
     const cfg = await getBinCfg()
     if (cfg) {
+      const versionThis = !versionedThisSession
       const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}`, {
         method: 'PUT',
         headers: {
           'X-Master-Key':     cfg.key,
           'Content-Type':     'application/json',
-          'X-Bin-Versioning': 'false',   // overwrite in place, don't pile up versions
+          'X-Bin-Versioning': versionThis ? 'true' : 'false',
         },
         body: JSON.stringify(value),
       })
       if (!res.ok) throw new Error(`jsonbin write ${res.status}`)
+      if (versionThis) {
+        versionedThisSession = true
+        console.log(`[STORE:${key}] first save this session — previous document kept as a jsonbin version (recovery point)`)
+      }
       return
     }
     // Storage.set resolves FALSE on failure (rate cap, size) rather than
@@ -149,10 +193,41 @@ export function createPersistedDoc<T>(
         console.log(`[STORE:${key}] load attempt ${attempt} failed:`, e)
         // Give up → loadConfirmed stays false → saves stay blocked, so a transient
         // outage can never cause us to overwrite good data with a fresh empty doc.
-        if (Date.now() >= deadline) throw e
+        // Give up on the FOREGROUND load only: the background loop below keeps
+        // trying for the session's whole life, so a passing outage heals.
+        if (Date.now() >= deadline) {
+          loadFailed = true
+          startBackgroundRetry()
+          throw e
+        }
       }
       await sleep(READ_RETRY_MS)
     }
+  }
+
+  // ── Background recovery (see onLateLoad) ────────────────────────────────────
+  let lateLoadCb: ((value: T | null) => void) | null = null
+  let bgRetryStarted = false
+  const BG_RETRY_MS = 60_000
+  function startBackgroundRetry(): void {
+    if (bgRetryStarted) return
+    bgRetryStarted = true
+    const loop = async () => {
+      while (true) {
+        await sleep(BG_RETRY_MS)
+        try {
+          const value = await read()
+          loadConfirmed = true
+          loadFailed = false
+          console.log(`[STORE:${key}] LATE load succeeded — store back online, restoring stored data`)
+          lateLoadCb?.(value)
+          return
+        } catch (e) {
+          console.log(`[STORE:${key}] background retry failed (trying again in ${BG_RETRY_MS / 1000}s):`, e)
+        }
+      }
+    }
+    loop()
   }
 
   async function doSave(value: T): Promise<boolean> {
@@ -205,10 +280,15 @@ export function createPersistedDoc<T>(
       return saveChain
     },
 
+    onLateLoad(cb: (value: T | null) => void): void {
+      lateLoadCb = cb
+    },
+
     status(): DocStatus {
       return {
         backend: !binCfgLoaded ? 'pending' : binCfg ? 'jsonbin' : 'storage',
         loadConfirmed,
+        loadFailed,
         lastSaveOk,
         lastSaveMs,
       }

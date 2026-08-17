@@ -229,6 +229,18 @@ export function CareerBar({ S, withShopButton = false, withMusicButton = false }
           uiTransform={{ margin: { top: Math.round(3 * Z) } }}
         />
       )}
+      {/* Storage failure is EVERYONE's business, not just the admin panel's —
+          a mis-deployed world (missing store EnvVars) announces itself on
+          every career bar instead of silently playing unsaved (incident
+          2026-08-17: a publish without credentials read as a full wipe). */}
+      {c.storageDegraded && (
+        <Label
+          value="⚠ Progress NOT saving — storage issue"
+          fontSize={Math.round(13 * Z)}
+          color={{ r: 1, g: 0.3, b: 0.25, a: 0.8 + 0.2 * Math.sin(pulseNow() / 250) }}
+          uiTransform={{ margin: { top: Math.round(3 * Z) } }}
+        />
+      )}
       {/* UPGRADES docked under the bar on the mobile in-shift HUD. The floating
           bottom-right button sat on the explorer's jump cluster there — screen
           corners belong to the explorer on mobile (same lesson as the shop's

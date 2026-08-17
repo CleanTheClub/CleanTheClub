@@ -8,7 +8,7 @@ import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_CAPACITY, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
-import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setNextThemeOverride, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler } from './RoundManager'
+import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setNextThemeOverride, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler, abandonRound } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
 import { shiftRewards, titleProgress, titleForXp, rankForXp, upgradeValue, carryGearModel, achievementStates, UpgradeId, TITLE_XP, JOB_TITLES } from '../shared/progression'
 import {
@@ -38,26 +38,35 @@ const leaderboardDoc = createPersistedDoc<LbRecord[]>(
 
 let lbLoadStarted = false
 let lbMergeDone = false
+// Shared by the foreground load and the background LATE load (store outage
+// recovery) — additive over session entries either way.
+function applyStoredLeaderboard(stored: LbRecord[] | null): void {
+  if (lbMergeDone) return
+  lbMergeDone = true
+  if (!stored) return
+  for (const r of stored) {
+    if (!r || typeof r.address !== 'string' || typeof r.total !== 'number') continue
+    // Additive over any pre-load session entry (same boot race as careers):
+    // cleans that landed before the read settled stack on the stored total
+    // instead of being overwritten by it.
+    const existing = leaderboard.get(r.address)
+    leaderboard.set(r.address, {
+      displayName: existing?.displayName || r.displayName || '',
+      total: (existing?.total ?? 0) + Math.max(0, Math.floor(r.total)),
+    })
+  }
+  console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
+}
 function ensureLeaderboardLoaded(): Promise<void> {
   lbLoadStarted = true
-  return leaderboardDoc.ensureLoaded().then((stored) => {
-    if (lbMergeDone) return
-    lbMergeDone = true
-    if (!stored) return
-    for (const r of stored) {
-      if (!r || typeof r.address !== 'string' || typeof r.total !== 'number') continue
-      // Additive over any pre-load session entry (same boot race as careers):
-      // cleans that landed before the read settled stack on the stored total
-      // instead of being overwritten by it.
-      const existing = leaderboard.get(r.address)
-      leaderboard.set(r.address, {
-        displayName: existing?.displayName || r.displayName || '',
-        total: (existing?.total ?? 0) + Math.max(0, Math.floor(r.total)),
-      })
-    }
-    console.log(`[SERVER] Loaded leaderboard: ${leaderboard.size} players`)
-  })
+  return leaderboardDoc.ensureLoaded().then(applyStoredLeaderboard)
 }
+// Background recovery: the boards repopulate for everyone connected the moment
+// the store answers again (broadcastLeaderboard is hoisted; this fires late).
+leaderboardDoc.onLateLoad((stored) => {
+  applyStoredLeaderboard(stored)
+  broadcastLeaderboard()
+})
 
 async function saveLeaderboard(): Promise<void> {
   // Drop scoreless rows — registerPlayer creates an entry with total 0 for
@@ -258,6 +267,11 @@ function progressPayload(
     // exactly what the server would accept.
     flexGear:     rec.flexGear ?? '',
     achievements: achievementStates(rec.kindCounts),
+    // True when the career document DEFINITIVELY failed to load (missing
+    // EnvVars, exhausted retries) — every career bar shows a "progress not
+    // saving" warning, so a mis-deployed world announces itself to the whole
+    // room instead of only the admin panel (incident 2026-08-17).
+    storageDegraded: progressStorageStatus().loadFailed === true,
     lastShift: lastShift ?? null,
     promotedTo: promotedTo ?? null,
   })
@@ -861,10 +875,46 @@ export function initServer() {
   // rolls' timers could interleave on the same slot ids.
   let slotModelTimer: ReturnType<typeof setTimeout> | null = null
 
+  // ── Sunk-anchor detection (lazy, computed once) ────────────────────────────
+  // An authored item whose origin sits >15cm below the median of its
+  // neighbours (same floor, within 5m) is under its local surface — the
+  // offline composite audit found six such placements (phone sunk 0.87m,
+  // polaroidA 0.51m, four bags ~0.2m). The items render sunk regardless (a
+  // Creator Hub fix), but as SPAWN ANCHORS they also bury whatever the themed
+  // roller places there — the "keys invisible but stink visible / still
+  // collectable" reports. Excluded from the pool and named in the log, so the
+  // list of CH placements still needing a nudge is always one boot log away.
+  let _sunkAnchors: Set<string> | null = null
+  function sunkAnchorSet(): Set<string> {
+    if (_sunkAnchors) return _sunkAnchors
+    const list = [...sceneItemPositions.entries()]
+    const out = new Set<string>()
+    for (const [id, p] of list) {
+      const near: number[] = []
+      for (const [id2, q] of list) {
+        if (id2 === id) continue
+        if (Math.abs(q.y - p.y) > 3.5) continue   // other storey — not a neighbour
+        const dx = q.x - p.x, dz = q.z - p.z
+        if (dx * dx + dz * dz <= 25) near.push(q.y)
+      }
+      if (near.length < 2) continue
+      near.sort((a, b) => a - b)
+      const median = near[Math.floor(near.length / 2)]
+      if (p.y < median - 0.15) out.add(id)
+    }
+    if (out.size > 0) {
+      console.log(`[THEME] ${out.size} sunk anchors excluded from spawns (fix these in Creator Hub): ${[...out].map((id) => itemNames.get(id) ?? id).join(', ')}`)
+    }
+    _sunkAnchors = out
+    return out
+  }
+
   setThemeSpawnRoller((themeId) => {
     // New round rolling = the previous intermission is over — re-arm the
-    // owner theme pick (see the ownerPickTheme handler below; same scope).
+    // owner theme pick and the per-round ghost-report budgets (handlers below;
+    // same function scope).
     ownerPickUsed = false
+    ghostReports.clear()
     if (slotModelTimer) { clearTimeout(slotModelTimer); slotModelTimer = null }
     // Park everything and DELETE the GltfContainer — the explorer does not
     // reliably reload a GltfContainer whose src merely swaps in place (the bin
@@ -918,7 +968,13 @@ export function initServer() {
     type Anchor = { x: number; y: number; z: number; tight: boolean; freed: boolean }
     const freed:    Anchor[] = []
     const occupied: Anchor[] = []
+    const sunk = sunkAnchorSet()
     for (const [itemId, pos] of sceneItemPositions) {
+      // Sunk anchor (authored origin below its local floor) — a theme model
+      // spawned there is buried: invisible mesh, stink + tap proxy poking
+      // through (the "keys invisible but collectable" reports). Excluded until
+      // the CH placement is fixed; the boot log names the offenders.
+      if (sunk.has(itemId)) continue
       const name  = itemNames.get(itemId) ?? ''
       const tight = TIGHT_ANCHOR_PARTS.some((p) => name.includes(p))
       const e = itemEntities.get(itemId)
@@ -1306,6 +1362,9 @@ export function initServer() {
     }
     // Forget the last-broadcast carry key so a rejoin always re-announces.
     lastCarryPublicKey.delete(sessionId)
+    // Last cleaner gone mid-round → wind the round down instead of running an
+    // empty club for the full clock while spectators wait, locked out.
+    if (wasActive && activePlayers.size === 0 && getPhase() === 'playing') abandonRound()
     onPlayerLeave()
 
     // Last player out → checkpoint. The runtime shuts the server down ~2min
@@ -1585,6 +1644,39 @@ export function initServer() {
     heartbeat(context.from)
   })
 
+  // Desktop deliberate exit — eject NOW, and cancel the reconnect grace: the
+  // grace exists for silent drops (mobile suspends, crashes), not for a player
+  // who visibly chose to walk out. A desktop scene heartbeats from background
+  // tabs, so without this announcement a desktop leaver stayed "in the round"
+  // for the 60s presence timeout ("player can leave and still be counted").
+  room.onMessage('leavingScene', (_data, context) => {
+    if (!context) return
+    console.log(`[SERVER] ${context.from.slice(0, 8)}… announced leaving — immediate ejection`)
+    playerLeft(context.from)
+    recentlyActive.delete(context.from)   // AFTER playerLeft, which re-sets it
+  })
+
+  // ── Ghost items ─────────────────────────────────────────────────────────────
+  // A client whose GLB never loaded reports the item; it is cleared WITHOUT
+  // credit (no carry, no contract, no stats — a crafted client gains nothing
+  // but a slightly shorter round, and the cap bounds even that). Cleared for
+  // everyone: the item is real on other clients, but mess that one player
+  // can see and another physically cannot is unfair to clear by hand anyway.
+  const ghostReports = new Map<string, number>()   // address → reports this round
+  const GHOST_REPORTS_MAX = 5
+  room.onMessage('ghostItem', (data, context) => {
+    if (!context) return
+    if (!paced(context.from, 'ghost', 1_000)) return
+    if (getPhase() !== 'playing') return
+    const n = ghostReports.get(context.from) ?? 0
+    if (n >= GHOST_REPORTS_MAX) return
+    const entity = itemEntities.get(data.itemId)
+    if (!entity || ClutterSync.getOrNull(entity)?.isCleaned !== false) return
+    ghostReports.set(context.from, n + 1)
+    console.log(`[GHOST] ${context.from.slice(0, 8)}… reports '${data.itemId}' unloadable — cleared without credit (${n + 1}/${GHOST_REPORTS_MAX})`)
+    ClutterSync.getMutable(entity).isCleaned = true
+  })
+
   room.onMessage('signUpNext', (_data, context) => {
     if (!context) return
     const address = context.from
@@ -1769,6 +1861,16 @@ export function initServer() {
     // and skip the parcel-boundary crossing that fires onEnterSceneObservable.
     heartbeat(address)   // covers reconnect-grace re-enrollment (see playerEntered)
 
+    // Resync THIS fresh client runtime regardless of presence state. A quick
+    // hop to Genesis and back beats the 60s presence timeout, so playerEntered
+    // no-ops ("already counted") and its participation resync never fires —
+    // the server still had the player enrolled while their brand-new client's
+    // mirror said spectator (field report: "returned a few seconds later …
+    // unable to play until the round ended"). registerPlayer is the one
+    // message every fresh runtime sends exactly once: resync both mirrors here.
+    sendParticipation(address)
+    sendCarried(address)
+
     // Storage health for this joiner's admin panel (waits a beat so the load
     // has usually resolved a backend by the time it reports).
     executeTask(async () => {
@@ -1832,7 +1934,7 @@ export function initServer() {
     if (!context) return
     const address = context.from
     executeTask(async () => {
-      await ensureProgressLoaded()
+      await ensureProgressLoaded().catch(() => {})   // degraded mode still plays; saves stay blocked
       const result = purchaseUpgrade(address, data.upgradeId as UpgradeId)
       if (!result.ok) {
         console.log(`[PROGRESS] buyUpgrade refused (${result.reason}) for ${address}: ${data.upgradeId}`)
@@ -1907,7 +2009,7 @@ export function initServer() {
     const stage = data.stage as AchievementStage
     if (!['zero', 'half', 'almost', 'full'].includes(stage)) return
     executeTask(async () => {
-      await ensureProgressLoaded()
+      await ensureProgressLoaded().catch(() => {})   // degraded mode still plays; saves stay blocked
       const r = adminSetAchievement(address, data.gear, stage)
       if (!r.ok) {
         console.log(`[SERVER] adminAchievement: unknown gear '${data.gear}' — ignored`)
@@ -1928,7 +2030,7 @@ export function initServer() {
     }
     const address = context.from
     executeTask(async () => {
-      await ensureProgressLoaded()
+      await ensureProgressLoaded().catch(() => {})   // degraded mode still plays; saves stay blocked
       const { record, promotedTo } = adminAdjust(address, data.money, data.xp)
       console.log(`[SERVER] adminGrant: +$${data.money} +${data.xp}xp → ${address}${promotedTo ? ` (${promotedTo})` : ''}`)
       sendProgress(address, undefined, promotedTo)
