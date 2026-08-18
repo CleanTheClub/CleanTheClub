@@ -179,4 +179,31 @@ export const Messages = {
   }),
 }
 
-export const room = registerMessages(Messages)
+const rawRoom = registerMessages(Messages)
+
+// SAFETY NET on every send. A send() on a degraded/dying transport can return
+// a REJECTED promise, and an unhandled rejection kills the whole scene (the
+// same class as the emote-GLB crash — "scene error, reload prompt") — landing
+// on exactly the player who is actively clicking, e.g. rapid mop taps as their
+// mobile connection degrades. Every send in this codebase is fire-and-forget
+// by design (the server replies via its own messages), so log-and-swallow is
+// the correct semantics, applied once here instead of at ~40 call sites.
+// Protects the server runtime's broadcasts identically.
+const originalSend = rawRoom.send.bind(rawRoom) as typeof rawRoom.send
+
+function safeSend(...args: Parameters<typeof rawRoom.send>): void {
+  try {
+    const r = originalSend(...args) as unknown
+    if (r && typeof (r as Promise<unknown>).catch === 'function') {
+      ;(r as Promise<unknown>).catch((e) => console.log('[MSG] send failed (dropped):', e))
+    }
+  } catch (e) {
+    console.log('[MSG] send threw (dropped):', e)
+  }
+}
+
+// Patched IN PLACE (not `{ ...rawRoom, send }`): a spread narrows the exported
+// type to just the overridden member, which broke every onMessage call site.
+;(rawRoom as { send: unknown }).send = safeSend
+
+export const room = rawRoom

@@ -11,6 +11,7 @@ import { showCleanedToast, showNarrativeToast, setHoldBarZone, flashPerfect, fla
 import { promotionBurst } from './confettiSystem'
 import { playHoverSound, playStickySound, stopStickySound, playCleanSound, playPerfectSound, playMissSound, playVacuumSound, playPopcornSound } from './soundManager'
 import { usingVacuum, setCarryStowedForMop } from './carrySystem'
+import { attachMobileTapBox } from './sceneItemHelpers'
 import { playPickupEmote, playMoppingEmote, cancelEmote } from './emoteManager'
 import { playSparkle } from './sparkleSystem'
 import { clicksAllowed, onPhaseChange, withinReach, pointerMaxDist, currentPhase } from './phaseGate'
@@ -319,9 +320,26 @@ export function updateSceneHoldGltf(itemId: string, gltfEntity: Entity) {
  * enable these. While a stage is LOCKED the server keeps it at scale ~0.001 —
  * no surface to hover — and rejects crafted cleans, so no extra gating needed.
  */
+const dynamicHoldProxies = new Map<string, Entity>()   // itemId → mobile tap box, reused across rounds
+
 export function registerDisasterHold(itemId: string, entity: Entity) {
   if (itemRefs.has(itemId)) return
-  itemRefs.set(itemId, { entity, type: 'hold', posEntity: entity })
+  // MOBILE: bind the hold to an enlarged primitive tap box, not the GLB mesh.
+  // This path used to bind the mesh directly — and the mobile client's pointer
+  // raycast against GLB mesh colliders is unreliable (A/B-verified), which
+  // made SPRING CLEANING's slot-spawned patches near-untappable on phones
+  // ("sticky patches on mobile on second round not working": milestone rounds
+  // are always spring cleaning, and its patches take THIS path while regular
+  // scene patches get the proxy treatment in cleaningSystem). The box is a
+  // CHILD of the slot, so the server parking the slot at ~0.001 scale shrinks
+  // the tap target away with it.
+  let clickEnt = entity
+  if (isMobile()) {
+    const existing = dynamicHoldProxies.get(itemId)
+    clickEnt = existing ?? attachMobileTapBox(entity)
+    dynamicHoldProxies.set(itemId, clickEnt)
+  }
+  itemRefs.set(itemId, { entity: clickEnt, type: 'hold', posEntity: entity })
   if (!pendingCleans.has(itemId)) enableClick(itemId)
 }
 

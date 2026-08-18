@@ -155,17 +155,29 @@ export function createPersistedDoc<T>(
     const cfg = await getBinCfg()
     if (cfg) {
       const versionThis = !versionedThisSession
-      const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}`, {
+      const put = (versioned: boolean) => fetch(`https://api.jsonbin.io/v3/b/${cfg.id}`, {
         method: 'PUT',
         headers: {
           'X-Master-Key':     cfg.key,
           'Content-Type':     'application/json',
-          'X-Bin-Versioning': versionThis ? 'true' : 'false',
+          'X-Bin-Versioning': versioned ? 'true' : 'false',
         },
         body: JSON.stringify(value),
       })
+      let res = await put(versionThis)
+      // The versioned snapshot write is BEST-EFFORT: a plan/bin that refuses
+      // versioning (403) must not poison every later save — before this
+      // fallback, the failed first write left versionedThisSession false, so
+      // EVERY save retried versioned and 403'd forever (field logs 2026-08-18:
+      // "jsonbin write 403" on each checkpoint). One refusal disables the
+      // snapshot for the session and the save goes through plain.
+      if (!res.ok && versionThis && res.status === 403) {
+        console.log(`[STORE:${key}] versioned write 403 — plan/bin refuses versioning; retrying unversioned (no recovery snapshot this session)`)
+        versionedThisSession = true
+        res = await put(false)
+      }
       if (!res.ok) throw new Error(`jsonbin write ${res.status}`)
-      if (versionThis) {
+      if (versionThis && !versionedThisSession) {
         versionedThisSession = true
         console.log(`[STORE:${key}] first save this session — previous document kept as a jsonbin version (recovery point)`)
       }

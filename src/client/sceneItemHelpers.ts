@@ -281,6 +281,18 @@ export function sweepSceneryPointerColliders(): void {
 // 2026-08-07): it existed to make items findable in mobile's darker render, a
 // job the player point light now does — and each disc cost a plane + PBR
 // material + per-hover material writes on the platform least able to afford it.
+/**
+ * Enlarged primitive tap box for MOBILE pointer events on entities where the
+ * full setupClickProxy is unsafe — dynamic theme/disaster slots are SERVER-
+ * owned synced entities, and applyPointerMask's GltfContainer writes on those
+ * would fight the server's per-round createOrReplace. This creates ONLY the
+ * child box (no parent writes): the A/B showed box volumes respond on mobile
+ * even with the mesh collider still pointer-active alongside.
+ */
+export function attachMobileTapBox(gltfEnt: Entity): Entity {
+  return createMobileTapTarget(gltfEnt)
+}
+
 function createMobileTapTarget(gltfEnt: Entity): Entity {
   // Sized from the measured model table and lifted half a height, so the box
   // WRAPS the mesh (origin-at-base convention) instead of straddling the
