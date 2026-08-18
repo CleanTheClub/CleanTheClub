@@ -201,15 +201,29 @@ export function playPartyEmote() {
 // targetPos is kept for the callers' sake (positions still gate reach + FX).
 // Like the pickup emote it also auto-cancels the moment the player moves
 // (handled by the shared emoteWatchSystem).
+// Pending auto-stop for the CURRENT one-shot. Every call used to schedule
+// another timer and none were ever cancelled, so a burst of mop attempts left a
+// pile of stale timers, each firing a stop against whatever emote was playing by
+// then — and each an UNGUARDED deferred callback, exactly the kind of throw our
+// pointer guards cannot catch.
+let emoteStopTimer: number | undefined
+
 function playStepEmote(
   _targetPos: { x: number; y: number; z: number },
   src:       string,
   durationMs: number,
 ) {
   if (emoteActive) stopPickupEmote()
+  if (emoteStopTimer !== undefined) {
+    timers.clearTimeout(emoteStopTimer)
+    emoteStopTimer = undefined
+  }
   emoteActive = true
   fireEmote({ src, loop: false })
-  timers.setTimeout(() => stopPickupEmote(), durationMs)
+  emoteStopTimer = timers.setTimeout(() => {
+    emoteStopTimer = undefined
+    try { stopPickupEmote() } catch (e) { console.log('[EMOTE] auto-stop threw (swallowed):', e) }
+  }, durationMs)
 }
 
 // Fires the pickup emote — quick-clean items (rubbish, bottles, glasses, clutter).
@@ -217,8 +231,27 @@ export function playPickupEmote(targetPos: { x: number; y: number; z: number }) 
   playStepEmote(targetPos, PICKUP_EMOTE_SRC, PICKUP_EMOTE_MS)
 }
 
+/**
+ * BISECT SWITCH for the unexplained mobile scene death during repeated mopping
+ * (field reports 2026-08-17/18: "scene error + reload prompt after a bunch of
+ * sticky patches"). Guards now wrap every sticky pointer callback and none has
+ * ever logged a hit, so the kill is NOT a synchronous throw in our handlers —
+ * which leaves a deferred throw or the explorer terminating the scene itself
+ * (KJ's client runs with the `alfa-use-scene-memory-limit` flag enabled). The
+ * mop emote is the only per-attempt cost on that path that reaches outside our
+ * own pooled resources: a GLB-backed RPC fired on every hold start and stopped
+ * on every resolve, dozens of times per round.
+ *
+ * Set false and republish to run the experiment: if the crash disappears with
+ * mobile mopping silent-but-functional, the emote path is the culprit; if it
+ * still crashes, the emote is exonerated and the hunt moves elsewhere. Desktop
+ * is unaffected either way.
+ */
+const MOP_EMOTE_ON_MOBILE = true
+
 // Fires the mopping emote — hold-to-clean sticky patches. The player is already on
 // the patch, so it fires immediately (triggerDelayMs = 0) for an instant response.
 export function playMoppingEmote(targetPos: { x: number; y: number; z: number }, durationMs = MOPPING_EMOTE_MS) {
+  if (isMobile() && !MOP_EMOTE_ON_MOBILE) return
   playStepEmote(targetPos, MOPPING_EMOTE_SRC, durationMs)
 }

@@ -1985,7 +1985,11 @@ const uiBody = () => {
         const kicker = isPerfect
           ? (perfectFlashStreak > 1 ? `STREAK ×${perfectFlashStreak}` : 'NICE TIMING')
           : (perfectFlashFrenzy ? 'FRENZY SPREE' : 'CLEANING SPREE')
-        const boxW   = Math.round(perfectFont * 0.7 * Math.max(2, mult.length))
+        // 0.7 em/char was too tight for the short "×3" case — the label wrapped
+        // mid-token and rendered as "×" over "3" on desktop (field report
+        // 2026-08-18). Wider per-char budget AND textWrap="nowrap" below, so a
+        // mis-measure can never split the headline again.
+        const boxW   = Math.round(perfectFont * 0.95 * Math.max(3, mult.length))
         const boxH   = Math.round(perfectFont * 1.12)
         const accent = !isPerfect && perfectFlashFrenzy ? { r: 1, g: 0.45, b: 0.25 } : { r: 1, g: 0.82, b: 0.25 }
         return (
@@ -2020,6 +2024,7 @@ const uiBody = () => {
                   value={mult}
                   fontSize={perfectFont}
                   textAlign="middle-center"
+                  textWrap="nowrap"
                   color={{ r: 0, g: 0, b: 0, a: 0.8 * perfectAlpha }}
                   uiTransform={{
                     positionType: 'absolute',
@@ -2031,6 +2036,7 @@ const uiBody = () => {
                   value={mult}
                   fontSize={perfectFont}
                   textAlign="middle-center"
+                  textWrap="nowrap"
                   color={{ ...accent, a: perfectAlpha }}
                   uiTransform={{
                     positionType: 'absolute',

@@ -42,6 +42,32 @@ function itemPos(id: string) {
 type ActiveHold = { id: string; startMs: number; zoneStart: number; zoneEnd: number }
 let activeHold: ActiveHold | null = null
 
+// When a skill check last RESOLVED. One physical tap on mobile is delivered
+// through BOTH input paths (the pill's UI handler and the world pointer-down —
+// the same double-delivery the popcorn judge dedupes). Path A resolves the
+// check and clears activeHold; path B then lands on a patch with no active
+// hold and STARTS A FRESH ONE on the very same tap. That is the "sticky
+// patches won't clean the skilled way" report: the bar reappears, the patch
+// survives, and holding to 100% works fine because a completion has no
+// resolving tap to double-deliver. Taps are never this close together in real
+// play, so a short deaf window costs nothing.
+const HOLD_RESTART_BLOCK_MS = 400
+let lastResolveMs = 0
+
+/**
+ * Pointer / UI callback guard. A throw inside one of these takes the WHOLE
+ * scene down (reload prompt) — the emote manager documents the same rule for
+ * its RPCs, and the deposit handlers are wrapped for the same reason. Repeated
+ * failing mop attempts crashed mobile (field report 2026-08-18: "crash after
+ * trying a bunch of sticky patches that don't want to clean"), so every entry
+ * point on this path is now non-fatal: one logged line, one missed click.
+ */
+function safeCb(label: string, fn: () => void): () => void {
+  return () => {
+    try { fn() } catch (e) { console.log(`[STICKY] '${label}' callback threw (swallowed):`, e) }
+  }
+}
+
 // Random per hold so the timing can't be muscle-memorised, and never earlier than
 // 35% so the mop emote gets a beat to read before the window opens.
 // Both the width AND the position roll per hold: narrow zones are riskier, early
@@ -181,9 +207,12 @@ function tryClean(
   id: string,
   applyCleanState: (id: string, isCleaned: boolean) => void,
 ) {
-  if (pendingCleans.has(id)) return
+  // These two used to return SILENTLY, which read in-game as "the bar vanished
+  // and the patch is still there" with no hit, miss or reason on screen — the
+  // most confusing failure this mechanic had. Now they say so.
+  if (pendingCleans.has(id)) { flashHoldCancel('already cleaning…'); return }
   const syncEnt = findClutterEntity(id)
-  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
+  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) { flashHoldCancel('someone else got it!'); return }
   pendingCleans.add(id)
   registerSpreeHit()
   disableClick(id)            // remove prompt immediately while pending
@@ -211,8 +240,10 @@ function enableClick(id: string) {
   if (type === 'hold') {
     pointerEventsSystem.onPointerDown(
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: pointerMaxDist() } },
-      () => {
+      safeCb('holdStart', () => {
         if (pendingCleans.has(id) || activeHold || activeRhythm) return
+        // Same tap that just resolved a check — see HOLD_RESTART_BLOCK_MS.
+        if (Date.now() - lastResolveMs < HOLD_RESTART_BLOCK_MS) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
@@ -235,7 +266,7 @@ function enableClick(id: string) {
         // Emote runs for exactly the (possibly upgraded) hold duration so it stops
         // as the bar completes rather than looping past it.
         if (pos) playMoppingEmote(pos, holdDurationMs())
-      }
+      })
     )
     // NOTE: no onPointerUp here on purpose. It gave the patch an extra pointer-event
     // entry that the quick items (bottles/rubbish) don't have, diverging the setup
@@ -245,7 +276,7 @@ function enableClick(id: string) {
   } else {
     pointerEventsSystem.onPointerDown(
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Clean', maxDistance: pointerMaxDist() } },
-      () => {
+      safeCb('quickClean', () => {
         if (pendingCleans.has(id)) return
         const syncEnt = findClutterEntity(id)
         if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
@@ -281,7 +312,7 @@ function enableClick(id: string) {
           applyCleanStateRef(id, true)
           if (pos) playSparkle(pos)
         }, PICKUP_TOUCH_MS)
-      }
+      })
     )
   }
 }
@@ -432,6 +463,7 @@ export function initInteractionManager(
     const hit = at >= zoneStart && at <= zoneEnd + graceFrac
     console.log(`[STICKY] skill check ${id}: at=${Math.round(at * 100)}% zone=${Math.round(zoneStart * 100)}–${Math.round(zoneEnd * 100)}%${graceFrac > 0 ? `+${Math.round(graceFrac * 100)}` : ''} → ${hit ? 'HIT' : 'MISS'}`)
     activeHold = null
+    lastResolveMs = Date.now()
     cancelEmote()
     stopStickySound()
     showHoldBar(false)
@@ -468,12 +500,17 @@ export function initInteractionManager(
   // still-unresolved "hit the green, no result" reports survived the grace
   // window alone). A short history of drawn positions lets the judge rewind to
   // where the bar was when the finger actually committed.
-  // TUNED DOWN 200 → 100 (field report 2026-08-18: "to win I must aim at the
-  // END of the green zone"). Aiming late is the signature of OVER-compensation:
-  // rewinding further than the real latency judges the tap before where the
-  // player aimed, so they compensate by tapping later. If hits still need a
-  // late aim, lower this; if they start needing an EARLY aim, raise it.
-  const MOBILE_TOUCH_COMP_MS = 100
+  // NOW ZERO — the compensation is retired, not merely tuned. 200ms made hits
+  // need a late aim; 100ms still did. That monotonic relationship is the proof:
+  // every millisecond of rewind judges the tap EARLIER than the player aimed,
+  // so they must delay to compensate. The mobile misses this was built to fix
+  // turned out to be the double-delivery re-hold bug (HOLD_RESTART_BLOCK_MS),
+  // and with that fixed there is no latency left to correct — judging exactly
+  // what was last DRAWN is already the "what you see is what's judged" rule
+  // desktop has always used. The history buffer stays: it costs nothing and
+  // makes reintroducing a small correction a one-constant change if a slower
+  // phone ever needs it.
+  const MOBILE_TOUCH_COMP_MS = 0
   const drawnHistory: Array<{ ms: number; p: number }> = []
   function drawnProgressAgo(agoMs: number): number {
     const target = Date.now() - agoMs
@@ -496,12 +533,12 @@ export function initInteractionManager(
   // The pills therefore call in here for on-pill taps. Both paths are
   // judge-once safe: rhythm's `tapped` flag and resolveSkillCheck's
   // activeHold-null both make a second call in the same instant a no-op.
-  setSkillTapHandler(() => {
+  setSkillTapHandler(safeCb('skillTap', () => {
     if (activeRhythm) { judgeRhythmTap(); return }
     if (!activeHold) return
     if (Date.now() - activeHold.startMs <= 250) return
     resolveSkillCheck(judgedProgress())
-  })
+  }))
 
   // ── Rhythm Pop frame system — beat progression, taps, finish ─────────────────
   engine.addSystem(() => {
