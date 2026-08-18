@@ -468,7 +468,12 @@ export function initInteractionManager(
   // still-unresolved "hit the green, no result" reports survived the grace
   // window alone). A short history of drawn positions lets the judge rewind to
   // where the bar was when the finger actually committed.
-  const MOBILE_TOUCH_COMP_MS = 200
+  // TUNED DOWN 200 → 100 (field report 2026-08-18: "to win I must aim at the
+  // END of the green zone"). Aiming late is the signature of OVER-compensation:
+  // rewinding further than the real latency judges the tap before where the
+  // player aimed, so they compensate by tapping later. If hits still need a
+  // late aim, lower this; if they start needing an EARLY aim, raise it.
+  const MOBILE_TOUCH_COMP_MS = 100
   const drawnHistory: Array<{ ms: number; p: number }> = []
   function drawnProgressAgo(agoMs: number): number {
     const target = Date.now() - agoMs

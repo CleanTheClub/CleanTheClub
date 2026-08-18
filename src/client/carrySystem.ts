@@ -44,6 +44,23 @@ const BIN_HOVER: Record<RubbishType, string> = {
   recycle: 'Empty recycling',
 }
 
+/**
+ * Pointer-callback guard. A throw inside a pointer callback takes the WHOLE
+ * scene down ("scene error" + reload prompt) — the same rule the emote manager
+ * documents for its RPCs. The bin/dumpster/return handlers are the densest
+ * cluster of engine writes on any click path (sounds, sparkles, station stink
+ * threshold crossings, bin fill maps, carry-rig refreshes), they fire fastest
+ * when a player alternates general/recycling deposits rapidly, and that is
+ * exactly when the scene died on mobile (field report 2026-08-18: crashed twice
+ * while depositing quickly). One bad frame now costs a logged line and a missed
+ * click instead of the session.
+ */
+function safeClick(label: string, fn: () => void): () => void {
+  return () => {
+    try { fn() } catch (e) { console.log(`[CARRY] '${label}' click handler threw (swallowed):`, e) }
+  }
+}
+
 // ── Bin locations ─────────────────────────────────────────────────────────────
 // Recorded at discovery so the first-pickup nudge can point at the nearest one.
 const binPositions: Array<{ x: number; y: number; z: number }> = []
@@ -892,7 +909,7 @@ export function initCarrySystem(): void {
           // Slightly longer reach than items — bins are destinations you walk
           // at, and cutting the prompt at 4m felt unresponsive on approach.
           { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: pointerMaxDist() } },
-          () => {
+          safeClick('bin', () => {
             if (!known) return
             // Overflowed stream: the bin dispenses its FULL BAG instead of
             // taking deposits — empty hands shoulder it (the persistent FULL
@@ -920,7 +937,7 @@ export function initCarrySystem(): void {
             if (p) playSparkle({ x: p.x, y: p.y + 1.2, z: p.z })
             recordDeposit(inStream, type)
             room.send('depositRubbish', { binType: type, binName: n })
-          },
+          }),
         )
       },
     })
@@ -942,7 +959,7 @@ export function initCarrySystem(): void {
         pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
         pointerEventsSystem.onPointerDown(
           { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: pointerMaxDist() } },
-          () => {
+          safeClick('dumpster', () => {
             // Only a FULL bin dumps here; the return leg belongs at the station.
             if (hauling === '' || haulStage !== 'out') { playMissSound(); return }
             playDepositSound(hauling)
@@ -950,7 +967,7 @@ export function initCarrySystem(): void {
             if (p2) playSparkle({ x: p2.x, y: p2.y + 1.5, z: p2.z })
             recordDeposit(1, hauling)
             room.send('dumpsterEmpty', { dummy: true })
-          },
+          }),
         )
       },
     })
@@ -1115,7 +1132,7 @@ export function initCarrySystem(): void {
         Transform.getMutable(returnTarget).scale = { x: 1.4, y: 1.4, z: 1.4 }
         pointerEventsSystem.onPointerDown(
           { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: pointerMaxDist() } },
-          () => {
+          safeClick('returnBin', () => {
             if (haulStage !== 'back') {
               console.log(`[HAUL] return click IGNORED — haulStage='${haulStage}' (expected 'back')`)
               return
@@ -1132,7 +1149,7 @@ export function initCarrySystem(): void {
             haulStage   = ''
             haulBinName = ''
             refreshMarkers()
-          },
+          }),
         )
         returnMarker = makeMarker(p, 'PUT THE BIN\nBACK HERE', Color4.create(0.4, 0.95, 0.5, 1))
         Transform.getMutable(returnMarker).scale = { x: 1, y: 1, z: 1 }

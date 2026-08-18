@@ -293,6 +293,27 @@ function armOffset(len: number): Vector3 {
   return Vector3.scale(armDir(), len)
 }
 
+// ── Stray-camera watchdog ─────────────────────────────────────────────────────
+// The scene ships a leftover template smart item — a "Fixed View Camera" plus a
+// CameraFocus script on the Video Screen with maxDistance 150 — that swaps the
+// player into a FIXED VirtualCamera on click. From 150m away, on mobile, a
+// stray tap traps the player in a camera they cannot rotate, and escaping means
+// hitting the same small target again (field report 2026-08-18: "camera got
+// stuck, couldn't rotate, fixed itself after running outside and toggling
+// first/third person").
+//
+// Spectate is the ONLY legitimate owner of MainCamera in this scene, so any
+// MainCamera we did not set is a trap: clear it. Checked on the same cheap
+// cadence as the roster rescan. The real fix is deleting that script in Creator
+// Hub — this is the belt-and-braces so a player can never be stuck again.
+function clearStrayCamera(): void {
+  if (spectating) return
+  const mc = MainCamera.getOrNull(engine.CameraEntity)
+  if (!mc?.virtualCameraEntity) return
+  console.log('[SPECTATE] stray VirtualCamera detected while not spectating — releasing the camera')
+  MainCamera.createOrReplace(engine.CameraEntity, { virtualCameraEntity: undefined })
+}
+
 function spectateSystem(dt: number): void {
   // Candidate roster refresh runs whether or not the camera is live — the
   // waiting overlay's WATCH button reads the cached count.
@@ -300,6 +321,7 @@ function spectateSystem(dt: number): void {
   if (rescanAcc >= RESCAN_S) {
     rescanAcc = 0
     refreshCandidates()
+    clearStrayCamera()
   }
 
   if (!spectating || !camEntity || !focusEntity) return

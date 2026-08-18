@@ -865,8 +865,27 @@ const scrimActive = (): boolean => {
 // cursor", playtest). Insetting both horizontal sides by max(left, right)
 // keeps edge anchors notch-safe while making container-centre == physical
 // centre, where the crosshair is. Same data source as the SDK component.
+// How much of the DEVICE screen inset this scene applies itself.
+//
+// 1 = we inset the whole reported margin (the original behaviour, from when the
+// explorer applied none of it to scene UI). 0 = trust the explorer entirely.
+//
+// TUNE HERE if the HUD sits wrong after an explorer update. DCL shipped a UI
+// change on 2026-08-18 and the HUD immediately read as "everything slightly
+// closer to the centre" — the signature of the inset being applied TWICE, ours
+// on top of theirs. Dropped to 0 on that reading. If a notched phone now shows
+// HUD edges under the notch, the explorer is NOT insetting after all: put this
+// back to 1. (Anything between is a legitimate middle ground.)
+const SCREEN_INSET_SCALE = 0
+
 const ui = () => {
-  const inset = getScreenInsets()
+  const raw = getScreenInsets()
+  const inset = {
+    top:    raw.top    * SCREEN_INSET_SCALE,
+    bottom: raw.bottom * SCREEN_INSET_SCALE,
+    left:   raw.left   * SCREEN_INSET_SCALE,
+    right:  raw.right  * SCREEN_INSET_SCALE,
+  }
   const h = Math.max(inset.left, inset.right)
   return (
     <UiEntity uiTransform={{ width: '100%', height: '100%' }}>
