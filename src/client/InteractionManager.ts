@@ -51,7 +51,23 @@ let activeHold: ActiveHold | null = null
 // survives, and holding to 100% works fine because a completion has no
 // resolving tap to double-deliver. Taps are never this close together in real
 // play, so a short deaf window costs nothing.
-const HOLD_RESTART_BLOCK_MS = 400
+// Scoped to the SAME PATCH, and short. This exists only to swallow one physical
+// tap arriving twice (the two delivery paths land ~a frame apart, on the patch
+// the player just resolved). A blanket time window was the wrong shape: a fast
+// player resolves one patch and taps the NEXT one well inside 250ms, and that
+// start was being eaten in silence — "mobile is worse than before", with the
+// telemetry showing holds simply never starting. Different patch: always allowed.
+const HOLD_RESTART_BLOCK_MS = 150
+let lastResolvedId = ''
+
+// Rolling frame time, sampled by the hold system. Included in the telemetry so
+// the next report shows whether the phone is actually degrading by the 20th mop
+// (the suspected cause of vanishing taps) instead of us inferring it.
+let frameMsAvg = 16
+// Sequence number per hold, so the log shows plainly whether a hold that
+// STARTED ever produced a resolve — the question the last round of telemetry
+// could not answer, because a tap that never lands sends nothing at all.
+let holdSeq = 0
 let lastResolveMs = 0
 
 /**
@@ -210,9 +226,16 @@ function tryClean(
   // These two used to return SILENTLY, which read in-game as "the bar vanished
   // and the patch is still there" with no hit, miss or reason on screen — the
   // most confusing failure this mechanic had. Now they say so.
-  if (pendingCleans.has(id)) { flashHoldCancel('already cleaning…'); return }
+  if (pendingCleans.has(id)) {
+    if (isMobile()) room.send('skillDebug', { info: `TRYCLEAN ${id} BLOCKED pending` })
+    flashHoldCancel('already cleaning…'); return
+  }
   const syncEnt = findClutterEntity(id)
-  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) { flashHoldCancel('someone else got it!'); return }
+  if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) {
+    if (isMobile()) room.send('skillDebug', { info: `TRYCLEAN ${id} BLOCKED already-clean` })
+    flashHoldCancel('someone else got it!'); return
+  }
+  if (isMobile()) room.send('skillDebug', { info: `TRYCLEAN ${id} SENT` })
   pendingCleans.add(id)
   registerSpreeHit()
   disableClick(id)            // remove prompt immediately while pending
@@ -242,19 +265,30 @@ function enableClick(id: string) {
       { entity, opts: { button: InputAction.IA_POINTER, hoverText: 'Hold to Clean', maxDistance: pointerMaxDist() } },
       safeCb('holdStart', () => {
         if (pendingCleans.has(id) || activeHold || activeRhythm) return
-        // Same tap that just resolved a check — see HOLD_RESTART_BLOCK_MS.
-        if (Date.now() - lastResolveMs < HOLD_RESTART_BLOCK_MS) return
+        // Same tap, same patch, same instant — see HOLD_RESTART_BLOCK_MS.
+        if (id === lastResolvedId && Date.now() - lastResolveMs < HOLD_RESTART_BLOCK_MS) {
+          if (isMobile()) room.send('skillDebug', { info: `BLOCKED restart on ${id}` })
+          return
+        }
         const syncEnt = findClutterEntity(id)
-        if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) return
+        if (syncEnt && ClutterSync.getOrNull(syncEnt)?.isCleaned) {
+          if (isMobile()) room.send('skillDebug', { info: `REJECT ${id} already-cleaned` })
+          return
+        }
         if (currentPhase() === 'open') { maybeShowOpenPhaseToast(); return }
         // Reach gate — pointer rays pass through pointer-layer-free walls/floors,
         // so a patch upstairs was moppable from below. Real distance check instead.
         if (!withinReach(itemPos(id))) {
+          if (isMobile()) room.send('skillDebug', { info: `REJECT ${id} out-of-reach` })
           maybeShowTooFarToast()
           return
         }
         playStickySound()
         const { zoneStart, zoneEnd } = rollSkillZone()
+        holdSeq++
+        if (isMobile()) {
+          room.send('skillDebug', { info: `START #${holdSeq} fps=${Math.round(1000 / Math.max(1, frameMsAvg))}` })
+        }
         activeHold = { id, startMs: Date.now(), zoneStart, zoneEnd }
         showHoldBarRef(true)
         updateHoldBarRef(0)
@@ -461,28 +495,70 @@ export function initInteractionManager(
     // popcorn late-tap grace: judge what the player SAW when they committed.
     const graceFrac = isMobile() ? MOBILE_SKILL_GRACE_MS / holdDurationMs() : 0
     const hit = at >= zoneStart && at <= zoneEnd + graceFrac
+    // TEMPORARY telemetry (mobile only) — the ONLY way to see real device
+    // timing, since client logs never reach the server log stream. Reports
+    // where the tap was judged vs the zone it had to land in.
+    if (isMobile()) {
+      room.send('skillDebug', {
+        info: `RESOLVE #${holdSeq} at=${at.toFixed(3)} zone=${zoneStart.toFixed(3)}-${zoneEnd.toFixed(3)} grace=${graceFrac.toFixed(3)} fps=${Math.round(1000 / Math.max(1, frameMsAvg))} → ${hit ? 'HIT' : 'MISS'}`,
+      })
+    }
     console.log(`[STICKY] skill check ${id}: at=${Math.round(at * 100)}% zone=${Math.round(zoneStart * 100)}–${Math.round(zoneEnd * 100)}%${graceFrac > 0 ? `+${Math.round(graceFrac * 100)}` : ''} → ${hit ? 'HIT' : 'MISS'}`)
     activeHold = null
-    lastResolveMs = Date.now()
-    cancelEmote()
-    stopStickySound()
-    showHoldBar(false)
-    updateHoldBar(0)
+    lastResolveMs  = Date.now()
+    lastResolvedId = id
 
+    // GAMEPLAY BEFORE TEARDOWN. cancelEmote/stopStickySound/showHoldBar are all
+    // presentation, and any one of them throwing used to abort the resolve
+    // before the clean was ever sent — the "HIT but the patch survives" bug.
+    // The clean is decided and dispatched first; the bar is hidden by the frame
+    // system's no-activeHold invariant regardless of what happens below.
     if (hit) {
       perfectStreak++
-      flashPerfect(perfectStreak)
-      playPerfectSound(perfectStreak)   // chime rises with the streak
-      playCleanSound()
-      const holdPos = itemPos(id)
-      if (holdPos) playSparkle(holdPos)
-      // Streak milestones get a confetti pop — the club celebrates with you.
-      if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
       tryClean(id, applyCleanState)
     } else {
       perfectStreak = 0   // attempted the timing and missed — streak broken
-      flashMiss()
-      playMissSound()
+    }
+
+    try {
+      cancelEmote()
+      stopStickySound()
+      showHoldBar(false)
+      updateHoldBar(0)
+    } catch (e) {
+      console.log('[STICKY] hold teardown threw (harmless, clean already sent):', e)
+    }
+
+    if (hit) {
+      // Celebrations only — the clean itself already went out above.
+      //
+      // Field logs 2026-08-18 showed 14 of 16 mobile taps judged HIT while the
+      // round still ended at 0% cleaned: the judgement was right and the patch
+      // never cleaned. The cause is the old ordering — flash, chime, clean
+      // sound, sparkle and confetti ALL ran before tryClean, so a throw in any
+      // one of them meant the clean was never sent. Before the callback guards
+      // existed that throw took the whole scene down ("scene error + reload
+      // prompt after a bunch of sticky patches"); the guard turned the crash
+      // into a silent no-clean, which is why the two symptoms traded places.
+      // Gameplay must never depend on cosmetics succeeding.
+      try {
+        flashPerfect(perfectStreak)
+        playPerfectSound(perfectStreak)   // chime rises with the streak
+        playCleanSound()
+        const holdPos = itemPos(id)
+        if (holdPos) playSparkle(holdPos)
+        // Streak milestones get a confetti pop — the club celebrates with you.
+        if (perfectStreak % STREAK_CONFETTI_EVERY === 0) promotionBurst()
+      } catch (e) {
+        console.log('[STICKY] celebration threw AFTER the clean was sent (harmless):', e)
+      }
+    } else {
+      try {
+        flashMiss()
+        playMissSound()
+      } catch (e) {
+        console.log('[STICKY] miss feedback threw (harmless):', e)
+      }
     }
   }
 
@@ -582,7 +658,7 @@ export function initInteractionManager(
 
   // Frame system: drives hold progress + fires on completion
   let barIsShown = false
-  engine.addSystem(() => {
+  engine.addSystem((dt: number) => {
     if (!activeHold) {
       // INVARIANT: no hold in progress means no bar. Several paths clear
       // activeHold (server clean, phase change, scene re-entry) and any that
@@ -596,6 +672,7 @@ export function initInteractionManager(
       return
     }
     barIsShown = true
+    frameMsAvg = frameMsAvg * 0.9 + (dt * 1000) * 0.1
     // Vacuum stow — the mop emote is two-handed, and mopping with the vacuum
     // still welded to the left hand read as a glitch. Vacuum ONLY (usingVacuum
     // is false for box/crate/caddy tiers, showpieces and a hauled bin): hiding
@@ -613,7 +690,16 @@ export function initInteractionManager(
     // starting tap itself from resolving the check. Letting the bar run to 100%
     // stays the no-skill fallback on both platforms.
     if (isMobile()) {
-      if (heldMs > 250 && inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)) {
+      // BOTH edges count as the tap. isTriggered only reports events processed
+      // in the CURRENT frame, so as the phone slows a quick tap can deliver its
+      // down and up inside one long frame and the down edge gets coalesced away
+      // — the tap silently vanishes. That is frame-rate dependent, which is
+      // exactly the reported shape: "the first 10-15 mops were great, by the
+      // 20th it was buggy". Watching the up edge as well means the tap has to
+      // lose BOTH events to disappear.
+      const tapped = inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_DOWN)
+        || inputSystem.isTriggered(InputAction.IA_POINTER, PointerEventType.PET_UP)
+      if (heldMs > 250 && tapped) {
         resolveSkillCheck(judgedProgress())
         return
       }
@@ -632,6 +718,11 @@ export function initInteractionManager(
 
     if (progress >= 1) {
       const { id } = activeHold
+      // A completion means the bar ran the whole way with no tap ever landing —
+      // pair it with the START line of the same # to see a lost tap in the log.
+      if (isMobile()) {
+        room.send('skillDebug', { info: `COMPLETE #${holdSeq} (no tap landed) fps=${Math.round(1000 / Math.max(1, frameMsAvg))}` })
+      }
       activeHold = null
       showHoldBar(false)
       playCleanSound()

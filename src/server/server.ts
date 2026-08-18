@@ -1637,6 +1637,12 @@ export function initServer() {
     }
   })
 
+  // TEMPORARY: mobile skill-check telemetry → server log (see messages.ts).
+  room.onMessage('skillDebug', (data, context) => {
+    if (!context) return
+    console.log(`[SKILLDBG] ${context.from.slice(0, 8)}… ${data.info}`)
+  })
+
   // Sent immediately on join (before getUserData) to wake a cold server, then
   // every ~5s as the presence heartbeat that keeps the sender counted in-scene.
   room.onMessage('ping', (_data, context) => {

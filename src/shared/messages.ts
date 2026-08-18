@@ -38,6 +38,14 @@ export const Messages = {
   /** Equip ('Disco_Ball' …) or clear ('') a flex carry container. The server
    *  re-checks the achievement, so an unearned equip is refused. */
   equipGear:        Schemas.Map({ gear: Schemas.String }),
+  /**
+   * TEMPORARY mobile skill-check telemetry. Client console.logs never reach
+   * `npm run server-logs` (that stream is the SERVER runtime only), so the mop
+   * timing on a real phone has been invisible — every fix so far was inferred
+   * from prose reports. This ships one line per mobile resolve to the server,
+   * which logs it. REMOVE once the timing is dialled in.
+   */
+  skillDebug:       Schemas.Map({ info: Schemas.String }),
   /** Request to buy the next level of an upgrade. Server validates and pays. */
   buyUpgrade:       Schemas.Map({ upgradeId: Schemas.String }),
   /**

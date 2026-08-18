@@ -855,6 +855,11 @@ const scrimActive = (): boolean => {
   const phase   = getGameState()?.phase ?? 'lobby'
   const waiting = isWaitingForMatch()
   const isLobby = phase === 'lobby'
+  // Never dim a LIVE camera. Spectating counts as `waiting`, so the waiting
+  // scrim was being painted straight over the club the spectator came to
+  // watch. The career intro keeps its own opaque backdrop, so it still reads
+  // correctly if it lands during a spectate session.
+  if (isSpectating()) return false
   return isLobby || waiting || shouldShowCareerIntro(isLobby || waiting)
 }
 
@@ -1731,6 +1736,31 @@ const uiBody = () => {
         </UiEntity>
       )}
 
+
+      {/* ── Mobile skill-tap catcher — THE WHOLE SCREEN ──────────────────────
+           Delivery, not timing, is what keeps failing: the telemetry shows
+           every tap that reaches the judge is a HIT (12/13, then 3/3), while
+           the taps that "do nothing" never arrive at all. Both previous paths
+           are fragile — the world-input poll depends on catching an edge in
+           the current frame (coalesced away when the phone slows), and the
+           SCRUB pill is a 300×100 target you have to hit while watching a bar.
+           A UI element is the one delivery path this explorer is reliable
+           about, so during a hold the ENTIRE screen becomes that element. The
+           near-zero alpha keeps it hit-testable while invisible; the pill still
+           renders on top as the affordance. It exists only while a zone is
+           live (≤2.5s), so it cannot swallow anything else meaningful. */}
+      {mobile && holdBarVisible && holdZoneStart !== null && (
+        <UiEntity
+          uiTransform={{
+            positionType: 'absolute',
+            position: { top: 0, left: 0 },
+            width: '100%',
+            height: '100%',
+          }}
+          uiBackground={{ color: { r: 0, g: 0, b: 0, a: 0.01 } }}
+          onMouseDown={() => skillTapHandler?.()}
+        />
+      )}
 
       {/* ── Hold-to-clean bar — screen-space, shown only while holding a patch ───
            Width '100%' rather than VIRT_W: percentage width is the only sizing that

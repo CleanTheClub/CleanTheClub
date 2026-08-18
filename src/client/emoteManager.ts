@@ -10,11 +10,26 @@ import { repreload } from './preload'
 // (see the rewarm notes below) — so a retried mop after a resume was a crash.
 // All call sites go through these caught wrappers.
 type EmoteOpts = Parameters<typeof triggerSceneEmote>[0]
+// try/catch AND .catch: the RPC can fail either way. `.catch` alone only covers
+// a rejected promise — if triggerSceneEmote throws SYNCHRONOUSLY (mobile, with
+// the emote system in a bad state) the catch is never attached and the throw
+// escapes into whatever called us. That is how a mop resolve was being aborted
+// before it could clean: resolveSkillCheck → cancelEmote → stopPickupEmote →
+// reassertCarryPose → fireEmote → throw, swallowed by the outer callback guard,
+// clean never sent (field logs 2026-08-18: HIT with no TRYCLEAN line).
 function fireEmote(opts: EmoteOpts): void {
-  triggerSceneEmote(opts).catch((e) => console.log('[EMOTE] trigger failed:', e))
+  try {
+    triggerSceneEmote(opts).catch((e) => console.log('[EMOTE] trigger failed:', e))
+  } catch (e) {
+    console.log('[EMOTE] trigger threw synchronously:', e)
+  }
 }
 function fireStopEmote(): void {
-  stopEmote({}).catch((e) => console.log('[EMOTE] stop failed:', e))
+  try {
+    stopEmote({}).catch((e) => console.log('[EMOTE] stop failed:', e))
+  } catch (e) {
+    console.log('[EMOTE] stop threw synchronously:', e)
+  }
 }
 
 const PICKUP_EMOTE_SRC  = 'assets/scene/Emotes/PickUp_Anim_emote.glb'
