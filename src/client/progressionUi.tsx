@@ -54,14 +54,13 @@ const money = (n: number): string => `$${n.toLocaleString('en-US')}`
 // ── Shop zoom ─────────────────────────────────────────────────────────────────
 // Extra scale applied to EVERYTHING inside the shop (fonts, icons, rows, buttons)
 // on top of the caller's platform scale S. The shop is a focused full-attention
-// surface, so it reads best noticeably larger than the ambient HUD — and on
-// high-DPI desktops the virtual-px mapping renders smaller than designed (see the
-// UI_ZOOM note in ui.tsx), which left the shop hard to read.
+// surface, so it reads best noticeably larger than the ambient HUD (the ambient
+// scale is the virtual canvas in ui.tsx — see the global HUD scale note there).
 //
 // TUNE HERE: raise toward 2.5 if the shop still reads small; lower toward 1.5 if
 // it crowds the screen (check mobile before going higher).
-// The shop must fit FIVE upgrade rows inside the 720-tall virtual canvas with no
-// scrolling. It was tuned when only two upgrades were implemented; all five ship
+// The shop must fit FIVE upgrade rows on screen with no scrolling.
+// It was tuned when only two upgrades were implemented; all five ship
 // now, so the zoom is capped and the row chrome (below) is compact. Mobile gets
 // slightly less again — it multiplies MOBILE_SCALE on top of this.
 const SHOP_ZOOM_DESKTOP = 1.6

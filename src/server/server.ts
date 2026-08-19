@@ -1331,6 +1331,15 @@ export function initServer() {
     // Always resync participation on entry — a suspended client's mirror is
     // stale in exactly the cases where it matters most.
     sendParticipation(sessionId)
+    // Carry/haul resync too: a suspend long enough to trip the presence timeout
+    // had the server release the haul (playerLeft) while the client slept — on
+    // resume the client still rendered a bin in hand and a return leg the server
+    // no longer knew about ("couldn't put the bin back"). registerPlayer only
+    // covers fresh loads; this path is the app-switch resume.
+    sendCarried(sessionId)
+    for (const other of activeSessions) {
+      if (other !== sessionId) sendCarryPublicTo(other, sessionId)
+    }
 
     onPlayerEnter()
   }
@@ -1418,6 +1427,15 @@ export function initServer() {
     playerEntered(address)   // no-op when already counted
   }
 
+  // Active hauls get their carry state re-broadcast on a heartbeat. Clients hide
+  // a hauled station bin from a carryPublic with a 120s TTL, and the return leg
+  // produces NO state changes — so on a long haul the TTL expired and the bin
+  // popped back at its station for everyone else while still in the hauler's
+  // hands (the enabler of the double-claim playtest bug). A 30s refresh keeps
+  // the TTL fed, and doubles as a free client resync for the hauler.
+  const HAUL_REFRESH_MS = 30_000
+  let lastHaulRefresh = 0
+
   setInterval(() => {
     const now = Date.now()
     for (const addr of [...activeSessions]) {
@@ -1426,6 +1444,13 @@ export function initServer() {
       lastSeen.delete(addr)
       console.log(`[SERVER] presence: no heartbeat from ${addr} — counting out`)
       playerLeft(addr)
+    }
+    if (haulingBy.size > 0 && now - lastHaulRefresh >= HAUL_REFRESH_MS) {
+      lastHaulRefresh = now
+      for (const addr of [...haulingBy.keys()]) {
+        lastCarryPublicKey.delete(addr)   // force the on-change broadcast through
+        sendCarried(addr)
+      }
     }
   }, PRESENCE_POLL_MS)
 
@@ -1727,6 +1752,10 @@ export function initServer() {
     // THIS bin is full: the player takes its bag instead (takeFullBag). Other
     // bins of the same stream still accept, so nobody is ever stuck.
     if (binIsFull(data.binName)) { sendCarried(context.from); return }
+    // Bin is physically in a hauler's hands (out OR back leg) — it isn't at its
+    // station to receive anything. Without this, deposits landed in the carried
+    // bin during the return leg and could refill it to "full" mid-haul.
+    if (binHauler.has(data.binName)) { sendCarried(context.from); return }
     const load = getLoad(context.from)
     // A real (non-empty) deposit advances the deposits contract.
     if (load[stream] > 0) {
@@ -1789,7 +1818,12 @@ export function initServer() {
       sendCarried(address); return
     }
     haul.stage = 'back'
-    binHauler.delete(haul.binName)
+    // The claim is NOT released here — the bin is still in this player's hands
+    // for the whole return leg. Releasing at the dumpster made the server treat
+    // the bin as home-and-available mid-haul: others could refill it and even
+    // be granted a second takeFullBag on the same bin (playtest: "two players
+    // carrying the same bin"), which orphaned the first hauler's return.
+    // binHauler is cleared on returnBin, playerLeft, or round start.
     binFill.set(haul.binName, 0)
     syncBinFull()
     bumpContract(address, ['deposits'])   // a dumpster run is the deposit of deposits
@@ -1801,13 +1835,17 @@ export function initServer() {
   room.onMessage('returnBin', (_data, context) => {
     if (!context) return
     const address = context.from
-    if (!paced(address, 'haul', 500)) return
+    // Own pacing key: sharing 'haul' with dumpsterEmpty meant a return sent
+    // within 500ms of emptying was dropped SILENTLY (no resync), leaving the
+    // player waiting on the watchdog. The handler's own guards are enough.
+    if (!paced(address, 'haulReturn', 500)) return
     const haul = haulingBy.get(address)
     if (!haul || haul.stage !== 'back') {
       console.log(`[CARRY] returnBin REFUSED for ${address.slice(0, 8)} — ${!haul ? 'no haul in progress' : `stage is '${haul.stage}', expected 'back'`}`)
       sendCarried(address); return
     }
     haulingBy.delete(address)
+    binHauler.delete(haul.binName)   // round trip complete — bin claimable again
     haulBonuses.set(address, (haulBonuses.get(address) ?? 0) + HAUL_BONUS)
     bumpKindCount(address, 'haulcompleted')
     sendCarried(address)

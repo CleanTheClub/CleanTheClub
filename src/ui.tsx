@@ -20,48 +20,55 @@ import { tierColorForRank } from './client/rankBadgeSystem'
 import { CareerBar, ShiftPayoutPanel, PromotionBanner, PROMO_BANNER_MS, UpgradeShopOverlay, UpgradeShopPanel, ShopButton, isShopOpen, setShopOpen, affordableUpgradeCount, shopPanelWidth, isPayoutCardShowing, countdownColor, CareerIntroOverlay, shouldShowCareerIntro, replayCareerIntro } from './client/progressionUi'
 import { getCarriedGeneral, getCarriedRecycle, getCarryCapacity, getPortableLeft, isCarryKnown, isCarryFull, requestPortableEmpty, getLastDeposit, getHauling, getHaulStage, setCarryHoldTest } from './client/carrySystem'
 import { readCanvasInfo, getSafeArea, getScreenInsets, pct as saPct } from './client/safeArea'
+import { platformKnown } from './client/platformWait'
 import { getCareerOrEmpty, getContract, getLastPayoutMs, getLastPromotion, upgradeLevel } from './client/progressionStore'
 import { TITLE_XP, rankForXp, upgradeValue } from './shared/progression'
 
 // ── UI layout constants — tweak these to adjust sizing and positioning ─────────
 
-// ── Global HUD zoom ────────────────────────────────────────────────────────────
+// ── Global HUD scale — virtual canvas ─────────────────────────────────────────
 // The whole HUD is laid out in a virtual canvas; the renderer scales that canvas
-// to fit the screen. Shrinking the virtual canvas zooms every element — sizes,
-// positions and gaps — up together, so nothing overlaps.
+// to fit the screen (uiScaleFactor = min(screenW/virtualW, screenH/virtualH)).
 //
-// This is the desktop scale fix. SDK 7.24.3 added a device-pixel-ratio divide to
-// the UI scale (the change that fixed mobile), which made virtual px map to
-// LOGICAL px. On the high-DPI display this HUD was originally tuned against that
-// halved the on-screen size, leaving the desktop HUD tiny and crammed at the top.
-// A smaller virtual canvas restores it, on every display density at once (the dpr
-// divide already removed the per-display variation, so a single constant is right
-// for all desktops).
+// CALIBRATED AGAINST SDK 7.26.1 (auth-server build). 7.26 removed the
+// device-pixel-ratio term from the scale formula — apparent HUD size no longer
+// varies with display density AT ALL, which is what fixed "UI overlaps on the
+// 4K/dpr-1 screen but looks fine on the MacBook" (final playtest). Under the
+// OLD formula every machine rendered its own size (screenH/(720·dpr)), so
+// there is no single "old look" to restore — a reference had to be picked.
+// It is KJ's retina Macs (dpr 2, effective screenH/1440): px values map to
+// screenH/1440 everywhere now. 1080 was tried first (the dpr-1.5 rendering
+// from the final-playtest screenshots) and read ~33% too big on the retina
+// machines the HUD is actually developed on. Downstream px constants keep
+// their tuned values — do NOT rescale them; move only this canvas.
 //
-// CALIBRATED AGAINST SDK 7.25.1 (auth-server build). If a future SDK changes UI
-// scaling again, RE-CHECK this constant before tuning anything downstream of it —
-// the whole HUD size derives from it.
+// Mobile targets the platform's own 720-tall default (7.26 ships 1600×720
+// there): needs a REAL-PHONE check, see UPGRADE-SDK.md. Resolved LIVE in
+// uiStateSystem, not here — isMobile() is false until the platform round-trip
+// lands (see platformWait).
 //
-// TUNE HERE: raise UI_ZOOM toward 2.0 if the HUD still reads too small on your
-// monitor; lower it toward 1.2 if it's now too big.
-const UI_ZOOM             = 1.5
-const VIRTUAL_W           = Math.round(1920 / UI_ZOOM)   // virtual canvas width  (1280 @ 1.5) — default/fallback
-const VIRTUAL_H           = Math.round(1080 / UI_ZOOM)   // virtual canvas height ( 720 @ 1.5)
+// TUNE HERE: lower DESKTOP_VIRTUAL_H toward 1200 if the HUD reads too small;
+// raise toward 1800 if it crowds the screen. Everything scales together —
+// the one-time '[UI] canvas' log below prints the numbers to calibrate with.
+// (1440 = the old retina-Mac rendering; KJ wanted it a notch smaller still.)
+const DESKTOP_VIRTUAL_H   = 1800
+const MOBILE_VIRTUAL_H    = 720
+let currentVirtualH       = DESKTOP_VIRTUAL_H
 
 // Live virtual-canvas width. The renderer fits a FIXED-aspect virtual canvas
 // inside the screen; on any aspect wider than the canvas it fits to height and
 // LEFT-anchors, so '100%' and centred content skew left — reported as "UI skewed
-// left, not centred" on ultrawide mobile. We flex virtualWidth each frame to match
-// the real screen aspect (virtualHeight stays VIRTUAL_H, so uiScaleFactor =
-// canvasH/VIRTUAL_H/dpr and the UI_ZOOM vertical scale are unchanged). Matching the
-// aspect removes the letterbox: the canvas fills the screen and centring is true on
-// every device. Updated via setUiRenderer, which only reassigns the virtual size —
-// no re-mount. Starts at the 16:9 default until the real canvas size is known.
-let currentVirtualW = VIRTUAL_W
+// left, not centred" on ultrawide mobile. We flex virtualWidth to match the real
+// screen aspect (virtualHeight stays fixed per platform, so the vertical scale
+// is stable). Matching the aspect removes the letterbox: the canvas fills the
+// screen and centring is true on every device. Updated via setUiRenderer, which
+// only reassigns the virtual size — no re-mount. Starts at the 16:9 default
+// until the real canvas size is known.
+let currentVirtualW = Math.round(DESKTOP_VIRTUAL_H * (16 / 9))
 
 // Platform
-// Extra bump for mobile ON TOP of the global zoom above (touch targets + smaller
-// screens want larger chrome). Net mobile scale = MOBILE_SCALE × UI_ZOOM.
+// Extra bump for mobile ON TOP of the (720-tall-canvas) mobile scale above —
+// touch targets + smaller screens want larger chrome.
 const MOBILE_SCALE        = 1.1     // multiplier applied to text / chrome on mobile
 
 // Instructions image (top-centre; also acts as title card)
@@ -108,9 +115,11 @@ const HOLD_BAR_W_DESKTOP  = 720
 const HOLD_BAR_W_MOBILE   = 520
 const HOLD_BAR_HEIGHT     = 36
 const HOLD_BAR_FONT       = 26    // "Release in the green!" prompt
-// Pinned to a fraction of the canvas height so it stays in the lower third at any
-// UI_ZOOM (a raw virtual-px value would drift to the very bottom as the canvas shrinks).
-const HOLD_BAR_TOP        = Math.round(VIRTUAL_H * 0.61)  // lower third, below the centre reticle
+// Tuned absolute value from the 720-tall-canvas era (0.61 × 720). Kept as the
+// same virtual-px number through the 7.26 migration so the on-screen position
+// is unchanged: ~61% down on mobile (720 canvas), ~41% down on desktop (1080
+// canvas) — exactly where it rendered before, on both.
+const HOLD_BAR_TOP        = 439  // below the centre reticle
 const HOLD_BAR_BG_COLOR   = theme.holdBar.bg
 const HOLD_BAR_FILL_COLOR = theme.holdBar.fill
 
@@ -565,6 +574,7 @@ let storageStatus: { backend: string; loadConfirmed: boolean; lastSaveOk: boolea
 // re-configure from within the render callback (a re-entrancy hazard). This
 // system owns all of it now; uiBody just renders what it left behind.
 let letterboxAcc = 0
+let loggedCanvasCalib = false
 function uiStateSystem(dt: number): void {
   // Keep the virtual canvas matched to the real screen aspect so there's no
   // letterbox to skew centred content (see currentVirtualW above). Clamped so a
@@ -576,10 +586,24 @@ function uiStateSystem(dt: number): void {
     letterboxAcc = 0
     const canvasInfo = readCanvasInfo()
     if (canvasInfo) {
-      const desired = Math.max(720, Math.min(2400, Math.round(VIRTUAL_H * (canvasInfo.width / canvasInfo.height))))
-      if (Math.abs(desired - currentVirtualW) >= 8) {
+      // Platform height resolves late (isMobile is false until getPlatform
+      // answers) — desktop until then, corrected by this same re-call.
+      const vh = platformKnown() && isMobile() ? MOBILE_VIRTUAL_H : DESKTOP_VIRTUAL_H
+      let desired = Math.max(vh, Math.min(Math.round(vh * (10 / 3)), Math.round(vh * (canvasInfo.width / canvasInfo.height))))
+      // 7.26 overrides any EXACT 16:9 virtual size to 1600×720 on mobile ("you
+      // didn't think about phones") — which would fight this aspect-match and
+      // reintroduce the letterbox on 16:9 phones. Nudge off the exact ratio.
+      if (Math.abs(desired / vh - 16 / 9) < 0.002) desired += 4
+      // One-time calibration line: THE numbers to quote when a machine's HUD
+      // reads too big/small (dpr is diagnostic only — 7.26 ignores it).
+      if (!loggedCanvasCalib) {
+        loggedCanvasCalib = true
+        console.log(`[UI] canvas ${canvasInfo.width}x${canvasInfo.height} dpr=${canvasInfo.devicePixelRatio ?? '?'} → virtual ${desired}x${vh} (px scale ${(canvasInfo.height / vh).toFixed(3)})`)
+      }
+      if (vh !== currentVirtualH || Math.abs(desired - currentVirtualW) >= 8) {
+        currentVirtualH = vh
         currentVirtualW = desired
-        ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: VIRTUAL_H })
+        ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: currentVirtualH, screenInset: 'none' })
       }
     }
   }
@@ -696,7 +720,10 @@ export function setupUi() {
   })
 
   engine.addSystem(uiStateSystem)
-  ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: VIRTUAL_W, virtualHeight: VIRTUAL_H })
+  // screenInset 'none': safe-area handling stays OURS (safeArea.ts reads the
+  // live interactableArea, including chat open/close) — 7.26's automatic inset
+  // would double-apply on top of it. See UPGRADE-SDK.md.
+  ReactEcsRenderer.setUiRenderer(ui, { virtualWidth: currentVirtualW, virtualHeight: currentVirtualH, screenInset: 'none' })
 }
 
 const WHITE = theme.colors.white

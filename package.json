@@ -13,8 +13,8 @@
   },
   "devDependencies": {
     "@dcl/asset-packs": "2.17.0",
-    "@dcl/js-runtime": "7.25.1-30310486734.commit-5ffe873",
-    "@dcl/sdk": "7.25.1-30310486734.commit-5ffe873"
+    "@dcl/js-runtime": "7.26.1-32160793830.commit-0b97733",
+    "@dcl/sdk": "7.26.1-32160793830.commit-0b97733"
   },
   "engines": {
     "node": ">=22.0.0",

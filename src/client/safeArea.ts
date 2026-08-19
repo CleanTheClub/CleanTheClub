@@ -23,7 +23,10 @@ import { engine, UiCanvasInformation } from '@dcl/sdk/ecs'
 // scan for the component on ANY entity before giving up, and log which path
 // worked once so field reports carry their own diagnosis.
 type Insets = { top: number; left: number; right: number; bottom: number }
-type CanvasInfo = { width: number; height: number; interactableArea?: Insets; screenInsetArea?: Insets }
+// devicePixelRatio no longer affects UI layout (SDK 7.26 removed it from the
+// scale formula) — surfaced here purely as a diagnostic, so scale reports from
+// different machines carry the one value that used to make them differ.
+type CanvasInfo = { width: number; height: number; devicePixelRatio?: number; interactableArea?: Insets; screenInsetArea?: Insets }
 
 const NO_INSETS: Insets = { top: 0, left: 0, right: 0, bottom: 0 }
 

@@ -1,8 +1,19 @@
 # Upgrading the SDK — read before running any install
 
+> **STATUS 2026-08-19: MIGRATION DONE.** The auth-server tag rebased onto
+> 7.26.x, so the gate below cleared and the scene now pins
+> `7.26.1-32160793830.commit-0b97733`. What was done, per the plan below:
+> UI_ZOOM deleted (desktop virtual canvas is 1080-tall, mobile 720-tall,
+> resolved live in uiStateSystem — px constants deliberately UNCHANGED, the
+> new mapping is numerically identical to the old tuned look on dpr-1.5
+> desktops and fixes dpr-1 displays); the aspect-flex kept (with a nudge off
+> exact 16:9 to dodge 7.26's mobile 1600×720 override); `screenInset: 'none'`
+> passed so safeArea.ts stays the one inset authority. Desktop verified;
+> item 3's REAL-PHONE CHECK IS STILL OWED before the next deploy.
+
 The scene is pinned to the **auth-server** dist-tag:
 
-    "@dcl/sdk": "7.25.1-30310486734.commit-5ffe873"
+    "@dcl/sdk": "7.26.1-32160793830.commit-0b97733"
 
 That pin is not cosmetic — it is the build that ships the multiplayer server
 runtime this game depends on. `npm run upgrade-sdk` used to re-resolve the

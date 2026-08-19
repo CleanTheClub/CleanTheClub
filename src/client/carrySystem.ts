@@ -68,6 +68,17 @@ const binPositions: Array<{ x: number; y: number; z: number }> = []
 // the haul return spot (found by Name).
 const binVisuals: Array<{ name: string; entity: Entity; type: RubbishType; base: { x: number; y: number; z: number } }> = []
 
+// Paired bins share a station origin (see the station de-dup below) — same
+// rounded x:z means same station.
+function stationKeyOf(binName: string): string {
+  const b = binVisuals.find((v) => v.name === binName)
+  const p = b && Transform.getOrNull(b.entity)?.position
+  return p ? `${Math.round(p.x)}:${Math.round(p.z)}` : binName
+}
+function sameStation(a: string, b: string): boolean {
+  return stationKeyOf(a) === stationKeyOf(b)
+}
+
 // ── First-pickup nudge ────────────────────────────────────────────────────────
 // The permanent "EMPTY BINS" text over every station is gone: it was scaffolding
 // from when bins were placeholder cubes, and floating text over real, labelled,
@@ -735,9 +746,11 @@ const remoteCarries = new Map<string, RemoteCarry>()
 //
 // TTL: a mobile app suspend DROPS broadcasts (no replay) — a client that
 // missed the haul-cleared carryPublic stranded that station's bin invisible
-// for the session ("there was a missing general waste bin on mobile"). No
-// real haul takes 2 minutes, so a stale entry self-heals; a genuinely long
-// haul re-hides on the hauler's next broadcast (every deposit/state change).
+// for the session ("there was a missing general waste bin on mobile"). A stale
+// entry self-heals; a genuinely long live haul stays hidden because the server
+// re-broadcasts every active haul's carryPublic on a 30s heartbeat (the return
+// leg produces no state changes of its own, which once let this TTL expire
+// mid-haul and pop the bin back at its station for everyone else).
 const REMOTE_HAUL_TTL_MS = 120_000
 const remoteHauls = new Map<string, { binName: string; ms: number }>()
 
@@ -753,6 +766,25 @@ const RETURN_MAX_RETRIES = 2
 let pendingReturnMs = 0
 let returnRetries   = 0
 let ownAddress = ''
+
+// Fire the return: optimistic local completion + verified send. Shared by the
+// station return-box click AND the sibling-bin fallback (the paired bin shares
+// the station origin and can win the pointer ray over the return box — that
+// click used to die in the deposit handler as a silent no-op).
+function sendReturnBin(): void {
+  console.log(`[HAUL] -> returnBin for '${haulBinName}'`)
+  playDepositSound()
+  room.send('returnBin', { dummy: true })
+  // Optimistic completion — bin home, hands free, pose released NOW.
+  // The server's carriedUpdate confirms (or corrects) moments later,
+  // and the ack watchdog re-sends if nothing comes back.
+  pendingReturnMs = Date.now()
+  returnRetries   = 0
+  hauling     = ''
+  haulStage   = ''
+  haulBinName = ''
+  refreshMarkers()
+}
 
 function removeRemoteCarry(address: string): void {
   remoteHauls.delete(address)
@@ -911,6 +943,13 @@ export function initCarrySystem(): void {
           { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: pointerMaxDist() } },
           safeClick('bin', () => {
             if (!known) return
+            // Return-leg fallback: the paired bin shares the station origin and
+            // sits inside the return box, so it can win the pointer ray over the
+            // box. Treat a click on ANY bin at the home station as the return.
+            if (haulStage === 'back' && haulBinName !== '' && sameStation(n, haulBinName)) {
+              sendReturnBin()
+              return
+            }
             // Overflowed stream: the bin dispenses its FULL BAG instead of
             // taking deposits — empty hands shoulder it (the persistent FULL
             // marker above the station carries the instruction).
@@ -1128,7 +1167,10 @@ export function initCarrySystem(): void {
       if (p && returnTarget === null) {
         returnTarget = engine.addEntity()
         Transform.create(returnTarget, { position: { x: p.x, y: p.y + 0.7, z: p.z } })
-        MeshCollider.setBox(returnTarget)
+        // POINTER ONLY. The bare setBox default is Physics|Pointer — which made
+        // this invisible 1.4m cube a solid wall at the station the moment the
+        // bin was emptied (playtest: "got stuck where there's no collider").
+        MeshCollider.setBox(returnTarget, ColliderLayer.CL_POINTER)
         Transform.getMutable(returnTarget).scale = { x: 1.4, y: 1.4, z: 1.4 }
         pointerEventsSystem.onPointerDown(
           { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: pointerMaxDist() } },
@@ -1137,18 +1179,7 @@ export function initCarrySystem(): void {
               console.log(`[HAUL] return click IGNORED — haulStage='${haulStage}' (expected 'back')`)
               return
             }
-            console.log(`[HAUL] -> returnBin for '${haulBinName}'`)
-            playDepositSound()
-            room.send('returnBin', { dummy: true })
-            // Optimistic completion — bin home, hands free, pose released NOW.
-            // The server's carriedUpdate confirms (or corrects) moments later,
-            // and the ack watchdog re-sends if nothing comes back.
-            pendingReturnMs = Date.now()
-            returnRetries   = 0
-            hauling     = ''
-            haulStage   = ''
-            haulBinName = ''
-            refreshMarkers()
+            sendReturnBin()
           }),
         )
         returnMarker = makeMarker(p, 'PUT THE BIN\nBACK HERE', Color4.create(0.4, 0.95, 0.5, 1))
