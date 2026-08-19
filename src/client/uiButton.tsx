@@ -63,16 +63,20 @@ export function GameButton(props: {
   const innerSize = isPressed ? '92%' : '100%'
   // No shake mid-press — the press shrink is its own feedback.
   const shakeX = props.wiggle && !isPressed ? wiggleOffsetX() : 0
-  // Wiggle also paints the button RED (feedback: the shake alone wasn't
-  // drawing the eye to "worth clicking right now") — motion plus colour, one
-  // signal. CONDITIONAL SPREAD, not always-present props: an explicit
-  // `color={undefined}` still overrides the variant's text colour in the
-  // react-ecs prop merge — which made every non-wiggling primary button render
-  // white-on-white, i.e. textless (field report, one deploy of pain).
+  // Wiggle also paints the button AMBER-ORANGE (feedback: the shake alone
+  // wasn't drawing the eye to "worth clicking right now") — motion plus colour,
+  // one signal. Orange, not red: red read as danger (playtest feedback), and
+  // not purple: it would sink into the club's own palette. Amber rhymes with
+  // the gold money text — "spendable", which is what this state means. Dark
+  // text for contrast on the warm fill. CONDITIONAL SPREAD, not always-present
+  // props: an explicit `color={undefined}` still overrides the variant's text
+  // colour in the react-ecs prop merge — which made every non-wiggling primary
+  // button render white-on-white, i.e. textless (field report, one deploy of
+  // pain).
   const alertProps = props.wiggle
     ? {
-        uiBackground: { color: { r: 0.85, g: 0.16, b: 0.18, a: 1 } },
-        color: { r: 1, g: 1, b: 1, a: 1 },
+        uiBackground: { color: { r: 0.98, g: 0.62, b: 0.09, a: 1 } },
+        color: { r: 0.12, g: 0.06, b: 0.01, a: 1 },
       }
     : {}
 

@@ -42,17 +42,22 @@ import { TITLE_XP, rankForXp, upgradeValue } from './shared/progression'
 // machines the HUD is actually developed on. Downstream px constants keep
 // their tuned values — do NOT rescale them; move only this canvas.
 //
-// Mobile targets the platform's own 720-tall default (7.26 ships 1600×720
-// there): needs a REAL-PHONE check, see UPGRADE-SDK.md. Resolved LIVE in
-// uiStateSystem, not here — isMobile() is false until the platform round-trip
-// lands (see platformWait).
+// Mobile: the platform's 720-tall default proved 2-3x TOO BIG on real phones —
+// the old (pre-7.26) mobile rendering divided by the phone's dpr (~2-3), so
+// the tuned mobile look is effectively a 1440-2160-tall canvas. Same rule as
+// desktop: tune THIS canvas, never MOBILE_SCALE (that's an intra-HUD ratio —
+// shrinking it leaves panel art and position offsets huge while the text
+// shrinks inside them). To calibrate exactly: read the phone's one-time
+// '[UI] canvas WxH dpr=…' console line and set MOBILE_VIRTUAL_H = 720 × dpr.
+// Resolved LIVE in uiStateSystem, not here — isMobile() is false until the
+// platform round-trip lands (see platformWait).
 //
 // TUNE HERE: lower DESKTOP_VIRTUAL_H toward 1200 if the HUD reads too small;
 // raise toward 1800 if it crowds the screen. Everything scales together —
 // the one-time '[UI] canvas' log below prints the numbers to calibrate with.
 // (1440 = the old retina-Mac rendering; KJ wanted it a notch smaller still.)
 const DESKTOP_VIRTUAL_H   = 1800
-const MOBILE_VIRTUAL_H    = 720
+const MOBILE_VIRTUAL_H    = 1440
 let currentVirtualH       = DESKTOP_VIRTUAL_H
 
 // Live virtual-canvas width. The renderer fits a FIXED-aspect virtual canvas
@@ -67,8 +72,12 @@ let currentVirtualH       = DESKTOP_VIRTUAL_H
 let currentVirtualW = Math.round(DESKTOP_VIRTUAL_H * (16 / 9))
 
 // Platform
-// Extra bump for mobile ON TOP of the (720-tall-canvas) mobile scale above —
-// touch targets + smaller screens want larger chrome.
+// Extra bump for mobile ON TOP of the mobile virtual canvas above — touch
+// targets + smaller screens want larger chrome. This is a RATIO between text/
+// chrome and the fixed-art elements around them, NOT a global size knob: it
+// was dropped to 0.65 to fight the oversized 720 mobile canvas, which shrank
+// labels inside their (unscaled) bubbles and panels. Global mobile size lives
+// in MOBILE_VIRTUAL_H — keep this at its tuned 1.1.
 const MOBILE_SCALE        = 1.1     // multiplier applied to text / chrome on mobile
 
 // Instructions image (top-centre; also acts as title card)

@@ -10,7 +10,7 @@ import { initCollectibleGroup } from './collectibleSystem'
 import { discoverBottles, BOTTLE_ID_PREFIX } from '../shared/glassDiscovery'
 import { initRubbishSystem } from './rubbishSystem'
 import { initThemeSpawnSystem } from './themeSpawnSystem'
-import { sweepSceneryPointerColliders } from './sceneItemHelpers'
+import { sweepSceneryPointerColliders, addCameraGroundStop } from './sceneItemHelpers'
 
 // ── Mobile player light: REMOVED (2026-08-16) ─────────────────────────────────
 // The full story, for whoever considers re-adding one: mobile renders the club
@@ -143,6 +143,7 @@ export function initClient() {
   // LAST: every interactive system above has registered its pointer entities,
   // so anything left holding CL_POINTER is scenery shadowing item taps.
   sweepSceneryPointerColliders()
+  addCameraGroundStop()
 
   // (The three-bag mobile tap experiment that used to run here is retired —
   // it proved the mobile client can't reliably raycast GLB mesh colliders,

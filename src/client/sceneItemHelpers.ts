@@ -252,9 +252,47 @@ function applyPointerMask(gltfEnt: Entity, clear: boolean): boolean {
 //    validateBeforeChange guard.
 const pointerInteractive = new Set<Entity>()
 
+// Camera-solid scenery. The desktop explorer's third-person camera only stops
+// at surfaces carrying CL_PHYSICS AND CL_POINTER (docs: "Cameras and
+// colliders") — and the club shell was AUTHORED physics-only, so the camera
+// has always been able to scroll straight through the walls (final playtest).
+// These GLBs get CL_POINTER ADDED to their invisible collider mask here
+// instead of stripped. The tap-shadowing bug this sweep exists for doesn't
+// apply to them: wall hulls stand beside items, not under them the way the
+// floor hulls do. If the camera still pierces some other piece of shell,
+// add its Name here.
+const CAMERA_SOLID_NAMES = new Set(['MainStructure'])
+
+// Camera ground-stop. The floor hulls stay pointer-stripped (making them
+// camera-solid would resurrect the tap-shadowing bug this sweep fixes), so on
+// their own the floors can't stop the desktop camera — it could be scrolled
+// UNDER the world. This slab is the compromise: a 64×64m invisible box whose
+// TOP sits 2cm below the walkable surface, carrying PHYSICS|POINTER (the pair
+// the desktop camera collides with). Every clickable item sits above it, so
+// nearest-hit pointer priority is untouched — it only exists to catch the
+// camera (and, with PHYSICS, anything that would fall through the world).
+export function addCameraGroundStop(): void {
+  const slab = engine.addEntity()
+  Transform.create(slab, {
+    position: { x: 32, y: -0.52, z: 32 },
+    scale:    { x: 64, y: 1, z: 64 },
+  })
+  MeshCollider.setBox(slab, ColliderLayer.CL_PHYSICS | ColliderLayer.CL_POINTER)
+}
+
 export function sweepSceneryPointerColliders(): void {
   let swept = 0
   for (const [entity, g] of engine.getEntitiesWith(GltfContainer)) {
+    const entName = Name.getOrNull(entity)?.value ?? ''
+    if (CAMERA_SOLID_NAMES.has(entName)) {
+      const inv = g.invisibleMeshesCollisionMask ?? (ColliderLayer.CL_PHYSICS | ColliderLayer.CL_POINTER)
+      const solid = inv | ColliderLayer.CL_POINTER
+      if (solid !== g.invisibleMeshesCollisionMask) {
+        GltfContainer.getMutable(entity).invisibleMeshesCollisionMask = solid
+        console.log(`[POINTER] '${entName}' marked camera-solid (invisible mask ${inv} -> ${solid})`)
+      }
+      continue
+    }
     if (pointerInteractive.has(entity)) continue
     if (PointerEvents.getOrNull(entity)) continue
     if (ClutterSync.getOrNull(entity)) continue
