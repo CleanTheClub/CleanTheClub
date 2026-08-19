@@ -9,19 +9,21 @@
 // chip, and a toast import back the other way would create a cycle. Deposit
 // feedback is the sparkle + sound + the chip zeroing itself.
 
-import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, PlayerIdentityData, ColliderLayer } from '@dcl/sdk/ecs'
+import { engine, Entity, Name, Transform, pointerEventsSystem, InputAction, TextShape, Billboard, GltfContainer, AvatarAttach, AvatarAnchorPointType, ParticleSystem, MeshCollider, MeshRenderer, Material, MaterialTransparencyMode, PlayerIdentityData, ColliderLayer } from '@dcl/sdk/ecs'
 import { onOwnAddress } from './localPlayer'
 import { Color4, Quaternion } from '@dcl/sdk/math'
 import { room } from '../shared/messages'
 import { RubbishType } from '../shared/glassDiscovery'
 import { findGltfEntity, setupClickProxy } from './sceneItemHelpers'
-import { DUMPSTER_PREFIX, BIN_CAPACITY, BIN_STINK_FRACTION, themeModelSrc, MODEL_SIZE_M, ITEM_MINI_TARGET_M } from '../shared/config'
+import { DUMPSTER_PREFIX, binCapacityFor, BIN_STINK_FRACTION, themeModelSrc, MODEL_SIZE_M, ITEM_MINI_TARGET_M } from '../shared/config'
 import { carryGearModel, GEAR_DEFAULT } from '../shared/progression'
 import { requestSetup } from './spawnDirector'
-import { pointerMaxDist, gameState, onPhaseChange } from './phaseGate'
+import { pointerMaxDist, gameState, onPhaseChange, withinReach } from './phaseGate'
+import { isMobile } from '@dcl/sdk/platform'
 import { playHoverSound, playDepositSound, playMissSound } from './soundManager'
 import { playSparkle } from './sparkleSystem'
 import { getCareerOrEmpty, upgradeLevel, getFlexGear } from './progressionStore'
+import { isActive } from './participation'
 import { setCarryPose } from './emoteManager'
 import { PSB_ALPHA } from './particleEnums'
 
@@ -70,6 +72,17 @@ const binVisuals: Array<{ name: string; entity: Entity; type: RubbishType; base:
 
 // Paired bins share a station origin (see the station de-dup below) — same
 // rounded x:z means same station.
+// Prompt range for bins / dumpsters / the return target. Desktop tightens to
+// 6m (camera boom ~2.2m + the 3.5m reach gate ≈ 5.7): the red outline used to
+// appear at the generic 7m — before the player could meaningfully interact —
+// which read as imprecise (final playtest). Mobile keeps the 14m ray budget:
+// it renders no hover outline, and the open-area camera boom genuinely needs
+// the length (the outdoor-bags lesson in phaseGate). Clicks are additionally
+// reach-gated player-side either way.
+function stationPointerDist(): number {
+  return isMobile() ? pointerMaxDist() : 6
+}
+
 function stationKeyOf(binName: string): string {
   const b = binVisuals.find((v) => v.name === binName)
   const p = b && Transform.getOrNull(b.entity)?.position
@@ -714,12 +727,15 @@ function binFillMap(): Map<string, number> {
   return fills
 }
 const binFillClient = (name: string): number  => binFillMap().get(name) ?? 0
-const binFullClient = (name: string): boolean => binFillClient(name) >= BIN_CAPACITY
+// Crew-scaled capacity, from the same synced headcount the server scales by —
+// big crews overflow bins sooner so more players get a haul turn (see config).
+const binCapClient  = (): number => binCapacityFor(Math.max(1, gameState()?.playersIn ?? 1))
+const binFullClient = (name: string): boolean => binFillClient(name) >= binCapClient()
 /** Fullest single bin, 0..1 — drives the station piles and stink. */
 function binMaxFillFrac(): number {
   let max = 0
   for (const [, n] of binFillMap()) if (n > max) max = n
-  return Math.min(1, max / BIN_CAPACITY)
+  return Math.min(1, max / binCapClient())
 }
 
 /** Portable Bin: empty on the spot (both streams). Server re-validates. */
@@ -938,11 +954,13 @@ export function initCarrySystem(): void {
         const clickEnt = setupClickProxy(gltfEnt, false)
         pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
         pointerEventsSystem.onPointerDown(
-          // Slightly longer reach than items — bins are destinations you walk
-          // at, and cutting the prompt at 4m felt unresponsive on approach.
-          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: pointerMaxDist() } },
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: BIN_HOVER[type], maxDistance: stationPointerDist() } },
           safeClick('bin', () => {
             if (!known) return
+            // Same player-based accept gate items use — the prompt range is
+            // camera-based and looser, so without this a click landed from
+            // well outside arm's reach ("interaction feels imprecise").
+            if (!withinReach(Transform.getOrNull(entity)?.position)) { playMissSound(); return }
             // Return-leg fallback: the paired bin shares the station origin and
             // sits inside the return box, so it can win the pointer ray over the
             // box. Treat a click on ANY bin at the home station as the return.
@@ -997,10 +1015,19 @@ export function initCarrySystem(): void {
         const clickEnt = setupClickProxy(gltfEnt, false)
         pointerEventsSystem.onPointerHoverEnter({ entity: clickEnt }, () => playHoverSound())
         pointerEventsSystem.onPointerDown(
-          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: pointerMaxDist() } },
+          { entity: clickEnt, opts: { button: InputAction.IA_POINTER, hoverText: 'Dumpster', maxDistance: stationPointerDist() } },
           safeClick('dumpster', () => {
             // Only a FULL bin dumps here; the return leg belongs at the station.
             if (hauling === '' || haulStage !== 'out') { playMissSound(); return }
+            // Reach gate with a wider allowance than items: the dumpster is a
+            // long hull and the check measures to its ORIGIN — 3.5m would
+            // reject a player standing at its far end.
+            const dp = Transform.getOrNull(entity)?.position
+            const me = Transform.getOrNull(engine.PlayerEntity)?.position
+            if (dp && me) {
+              const dx = me.x - dp.x, dz = me.z - dp.z
+              if (dx * dx + dz * dz > 4.5 * 4.5) { playMissSound(); return }
+            }
             playDepositSound(hauling)
             const p2 = Transform.getOrNull(entity)?.position
             if (p2) playSparkle({ x: p2.x, y: p2.y + 1.5, z: p2.z })
@@ -1098,6 +1125,73 @@ export function initCarrySystem(): void {
   const lastStationFull: boolean[] = []
   let lastShowDump = false
 
+  // ── Next-action beacon — Roblox-onboarding-style guide beam ────────────────
+  // Playtest: the collect → fill bin → haul → return loop "requires explanation
+  // during play". The station markers are TEXT — this is the wordless cue: one
+  // amber pillar of light with a bobbing arrow, always standing at the player's
+  // next destination:
+  //   hands full            → nearest bin taking the dominant carried stream
+  //   hauling out           → nearest dumpster
+  //   hauling back          → the bin's home station
+  //   idle hands + full bin → nearest overflowing bin (the haul invitation)
+  // ONE beacon, deliberately: a single "go HERE" reads as an instruction; one
+  // per station would read as decoration. Client-side only — every player sees
+  // their own next step. Matches the amber "worth clicking" button state.
+  const BEACON_COLOR = Color4.create(1, 0.72, 0.15, 1)
+  const beaconRoot = engine.addEntity()
+  Transform.create(beaconRoot, { position: { x: 0, y: 0, z: 0 }, scale: { x: 0.001, y: 0.001, z: 0.001 } })
+  const beaconPillar = engine.addEntity()
+  Transform.create(beaconPillar, { parent: beaconRoot, position: { x: 0, y: 4.5, z: 0 }, scale: { x: 0.5, y: 9, z: 0.5 } })
+  MeshRenderer.setCylinder(beaconPillar)
+  Material.setPbrMaterial(beaconPillar, {
+    albedoColor: Color4.create(1, 0.72, 0.15, 0.2),
+    emissiveColor: BEACON_COLOR,
+    emissiveIntensity: 1.2,
+    transparencyMode: MaterialTransparencyMode.MTM_ALPHA_BLEND,
+    castShadows: false,
+  })
+  const beaconArrow = engine.addEntity()
+  // Cone with the apex DOWN — "right here". Bobs in its own tiny system below.
+  Transform.create(beaconArrow, { parent: beaconRoot, position: { x: 0, y: 3.6, z: 0 }, scale: { x: 0.9, y: 0.7, z: 0.9 } })
+  MeshRenderer.setCylinder(beaconArrow, 0, 0.5)
+  Material.setPbrMaterial(beaconArrow, {
+    albedoColor: BEACON_COLOR,
+    emissiveColor: BEACON_COLOR,
+    emissiveIntensity: 2,
+    castShadows: false,
+  })
+  let beaconShown = false
+  let beaconKey = ''   // change-guard: reposition only when the target moves
+  const setBeacon = (p: { x: number; y: number; z: number } | null | undefined): void => {
+    if (!p) {
+      if (beaconShown) { beaconShown = false; Transform.getMutable(beaconRoot).scale = { x: 0.001, y: 0.001, z: 0.001 }; beaconKey = '' }
+      return
+    }
+    const key = `${Math.round(p.x)}:${Math.round(p.z)}`
+    if (beaconShown && key === beaconKey) return
+    beaconShown = true
+    beaconKey   = key
+    const tf = Transform.getMutable(beaconRoot)
+    tf.position = { x: p.x, y: p.y, z: p.z }
+    tf.scale    = { x: 1, y: 1, z: 1 }
+  }
+  const nearestOf = (pts: Array<{ x: number; y: number; z: number }>, me: { x: number; z: number }) => {
+    let best: { x: number; y: number; z: number } | undefined
+    let bestD = Infinity
+    for (const p of pts) {
+      const d = (p.x - me.x) * (p.x - me.x) + (p.z - me.z) * (p.z - me.z)
+      if (d < bestD) { bestD = d; best = p }
+    }
+    return best
+  }
+  const binPos = (b: { entity: Entity }) => Transform.getOrNull(b.entity)?.position
+  let bobT = 0
+  engine.addSystem((dt: number) => {
+    if (!beaconShown) return
+    bobT += dt
+    Transform.getMutable(beaconArrow).position.y = 3.6 + 0.3 * Math.sin(bobT * 3)
+  })
+
   let markerAcc = 0
   engine.addSystem((dt: number) => {
     markerAcc += dt
@@ -1160,6 +1254,34 @@ export function initCarrySystem(): void {
         Transform.getMutable(m).scale = showDump ? { x: 1, y: 1, z: 1 } : { x: 0.001, y: 0.001, z: 0.001 }
       }
     }
+    // ── Next-action beacon targeting (see setup above) ─────────────────────
+    {
+      const me = Transform.getOrNull(engine.PlayerEntity)?.position
+      let target: { x: number; y: number; z: number } | null | undefined = null
+      if (me && known && isActive() && gameState()?.phase === 'playing') {
+        if (haulStage === 'out') {
+          target = nearestOf(dumpsterPositions, me)
+        } else if (haulStage === 'back' && haulBinName !== '') {
+          const home = binVisuals.find((b) => b.name === haulBinName)
+          target = home && binPos(home)
+        } else if (hauling === '' && capacity > 0 && getCarried() >= capacity) {
+          // Hands full — the dominant stream picks the bin (a full bin still
+          // progresses: clicking it starts the haul and tips the load in).
+          const stream: RubbishType = carriedGeneral >= carriedRecycle ? 'general' : 'recycle'
+          target = nearestOf(
+            binVisuals.filter((b) => b.type === stream && !hiddenBins.has(b.name))
+              .map(binPos).filter((p): p is { x: number; y: number; z: number } => !!p),
+            me)
+        } else if (hauling === '' && getCarried() === 0) {
+          // Idle hands + an overflowing bin somewhere = the haul invitation.
+          target = nearestOf(
+            binVisuals.filter((b) => binFullClient(b.name) && !hiddenBins.has(b.name))
+              .map(binPos).filter((p): p is { x: number; y: number; z: number } => !!p),
+            me)
+        }
+      }
+      setBeacon(target)
+    }
     // Return leg: a marker + click target appear at the hauled bin's empty spot.
     if (haulStage === 'back' && haulBinName !== '') {
       const home = binVisuals.find((b) => b.name === haulBinName)
@@ -1173,12 +1295,13 @@ export function initCarrySystem(): void {
         MeshCollider.setBox(returnTarget, ColliderLayer.CL_POINTER)
         Transform.getMutable(returnTarget).scale = { x: 1.4, y: 1.4, z: 1.4 }
         pointerEventsSystem.onPointerDown(
-          { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: pointerMaxDist() } },
+          { entity: returnTarget, opts: { button: InputAction.IA_POINTER, hoverText: 'Put the bin back', maxDistance: stationPointerDist() } },
           safeClick('returnBin', () => {
             if (haulStage !== 'back') {
               console.log(`[HAUL] return click IGNORED — haulStage='${haulStage}' (expected 'back')`)
               return
             }
+            if (!withinReach(p)) { playMissSound(); return }
             sendReturnBin()
           }),
         )
@@ -1198,7 +1321,7 @@ export function initCarrySystem(): void {
       // Each station reeks according to ITS OWN fullest bin.
       let frac = 0
       for (const n of stationBinNames[i]) {
-        frac = Math.max(frac, Math.min(1, binFillClient(n) / BIN_CAPACITY))
+        frac = Math.max(frac, Math.min(1, binFillClient(n) / binCapClient()))
       }
       const stinky = frac >= BIN_STINK_FRACTION
       if (stinky && stationStinks[i] === null) {
@@ -1244,7 +1367,7 @@ export function initCarrySystem(): void {
     const now = Date.now()
     for (const b of binVisuals) {
       if (hiddenBins.has(b.name)) continue   // hauled bins stay hidden
-      const frac = Math.min(1, binFillClient(b.name) / BIN_CAPACITY)
+      const frac = Math.min(1, binFillClient(b.name) / binCapClient())
       const tf = Transform.getMutableOrNull(b.entity)
       if (!tf) continue
       if (frac <= 0) {

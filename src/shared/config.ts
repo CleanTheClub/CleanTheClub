@@ -47,12 +47,21 @@ export const FAST_RESPAWN_MS    = DEBUG ? 5_000  : 60_000   // fast respawn (was
 //
 // Second eased pass (mobile playtest: "too hard with 1 person") — solo and duo
 // now get substantially more breathing room; larger groups barely change.
+// Third pass (final playtest, 8-10 players): the clamp at 5 meant a 10-strong
+// crew played at 5-player supply — sparse respawns spread across double the
+// hands, everyone "just waiting for the timer to end". The curve now continues
+// at the same ~+0.25/player slope through 10, clamped beyond.
 //  1 player  → 0.50× (240 s / 120 s — solo breathing room)
 //  2 players → 0.95× (126 s /  63 s)
 //  3 players → 1.30× ( 92 s /  46 s)
 //  4 players → 1.60× ( 75 s /  38 s)
-//  5+ players → 1.80× ( 67 s /  33 s)
-export const RESPAWN_SCALE_FACTORS = [0.50, 0.95, 1.30, 1.60, 1.80]
+//  5 players → 1.80× ( 67 s /  33 s)
+//  6 players → 2.05× ( 59 s /  29 s)
+//  7 players → 2.30× ( 52 s /  26 s)
+//  8 players → 2.55× ( 47 s /  24 s)
+//  9 players → 2.80× ( 43 s /  21 s)
+// 10+ players → 3.05× ( 39 s /  20 s)
+export const RESPAWN_SCALE_FACTORS = [0.50, 0.95, 1.30, 1.60, 1.80, 2.05, 2.30, 2.55, 2.80, 3.05]
 
 // ── Demand scaling — the boss expects less of a skeleton crew ────────────────
 // Respawn scaling softens how fast mess FIGHTS BACK, but the pass bar was still
@@ -210,6 +219,18 @@ export const POP_FIRST_GRACE_MS = 150 // the click that STARTED the rhythm can't
 // ("next station") or an invitation to haul it — never a hard stop. TUNE HERE:
 // lower = more hauling and more walking between stations.
 export const BIN_CAPACITY = 12
+
+// Crew-scaled capacity: with a big crew, bins overflow more often, so the haul
+// — the marquee job everyone raced for in the 8-10 player playtest — comes up
+// for more people per round instead of being one lucky claim. Both sides
+// compute this from the same synced headcount (server: live count; client:
+// GameState.playersIn), so the "FULL" threshold agrees everywhere; a transient
+// sync lag at worst mislabels a bin for a beat and the server view wins.
+export function binCapacityFor(players: number): number {
+  if (players >= 8) return 8
+  if (players >= 6) return 10
+  return BIN_CAPACITY
+}
 export const HAUL_BONUS          = 15
 export const DUMPSTER_PREFIX     = 'Dumpster'
 // Bins start stinking at this fill fraction; the stink RATE then ramps with

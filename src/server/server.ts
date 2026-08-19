@@ -6,7 +6,7 @@ import { createPersistedDoc } from './persistence'
 import { OUTCOME_OPTIMAL } from '../shared/config'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
-import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, BIN_CAPACITY, HAUL_BONUS } from '../shared/config'
+import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, binCapacityFor, HAUL_BONUS } from '../shared/config'
 import { SCENE_ITEM_PREFIXES, RUBBISH_ID_PREFIX, GLASS_ID_PREFIX, BOTTLE_ID_PREFIX, STICKY_ID_PREFIX, RubbishType, classifyRubbish, discoverGlasses, discoverBottles, discoverRubbish, discoverStickyPatches } from '../shared/glassDiscovery'
 import { initRoundManager, onItemCleaned, onSceneItemCleaned, onPlayerEnter, onPlayerLeave, onAdminReset, onStartMatch, getPhase, getRoundNumber, getTheme, recordContribution, setShiftCompleteHandler, setRoundStartHandler, setStartHold, getThemeContractKinds, setForcedTheme, setNextThemeOverride, setThemeSpawnRoller, setCrewPowerProvider, setSpawnInHandler, abandonRound } from './RoundManager'
 import { OUTCOME_ADEQUATE } from '../shared/config'
@@ -336,7 +336,10 @@ const haulingBy    = new Map<string, Haul>()          // address → haul in pro
 const binHauler    = new Map<string, string>()        // bin name → who took it
 const haulBonuses  = new Map<string, number>()        // address → banked haul pay
 const binFillOf   = (name: string): number  => binFill.get(name) ?? 0
-const binIsFull   = (name: string): boolean => binFillOf(name) >= BIN_CAPACITY
+// Crew-scaled capacity (see binCapacityFor): a big crew overflows bins sooner,
+// so the haul comes up for more players per round. Scales by the CLEANING crew
+// (activePlayers), matching the deposit-generating population.
+const binIsFull   = (name: string): boolean => binFillOf(name) >= binCapacityFor(Math.max(1, activePlayers.size))
 // Scene bin models, discovered server-side so their Transforms can be hidden/
 // restored authoritatively (CRDT propagates the vanish to every client).
 const serverBins = new Map<string, { entity: Entity; type: RubbishType }>()
@@ -1086,13 +1089,18 @@ export function initServer() {
         const entity = itemEntities.get(id)
         const model  = themeSlotModels.get(id)
         if (!entity || !model) continue
-        GltfContainer.createOrReplace(entity, { src: themeModelSrc(model), visibleMeshesCollisionMask: ColliderLayer.CL_POINTER })
+        // invisible mask EXPLICITLY none: the renderer default is
+        // Physics|Pointer, so any authored _collider mesh in a prop GLB became
+        // an invisible wall for the round — a spawn slot near a doorway could
+        // block it ("couldn't re-enter through the back entrance"). Rubbish
+        // props must never be solid.
+        GltfContainer.createOrReplace(entity, { src: themeModelSrc(model), visibleMeshesCollisionMask: ColliderLayer.CL_POINTER, invisibleMeshesCollisionMask: ColliderLayer.CL_NONE })
       }
       if (disasterSpawned) {
         for (const stage of DISASTER_STAGES) {
           const entity = itemEntities.get(`${DISASTER_PREFIX}0_${stage}`)
           if (!entity) continue
-          GltfContainer.createOrReplace(entity, { src: DISASTER_STAGE_MODELS[stage], visibleMeshesCollisionMask: ColliderLayer.CL_POINTER })
+          GltfContainer.createOrReplace(entity, { src: DISASTER_STAGE_MODELS[stage], visibleMeshesCollisionMask: ColliderLayer.CL_POINTER, invisibleMeshesCollisionMask: ColliderLayer.CL_NONE })
         }
       }
     }, 150)

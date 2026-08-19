@@ -78,7 +78,7 @@
     "nearbyVoiceChat": "enabled"
   },
   "skyboxConfig": {
-    "fixedTime": 43200
+    "fixedTime": 82800
   },
   "source": {
     "origin": "creator-hub",
@@ -91,6 +91,9 @@
   "authoritativeMultiplayer": true,
   "creator": "0x8967AD851cCbD4C1a2D57A128D3C606fCAB29bad",
   "worldConfiguration": {
-    "name": "afkj.dcl.eth"
+    "name": "cleantheclub.dcl.eth",
+    "skyboxConfig": {
+      "fixedTime": 82800
+    }
   }
 }

@@ -707,7 +707,7 @@ const UPGRADE_ICONS: Record<string, string> = {
 const UPGRADE_DELTA: Record<UpgradeId, (cur: number, next: number) => string> = {
   movementSpeed: (c, n) => `speed +${Math.round((c - 1) * 100)}% → +${Math.round((n - 1) * 100)}%`,
   moppingSpeed:  (c, n) => `mop ${(HOLD_DURATION_MS * c / 1000).toFixed(1)}s → ${(HOLD_DURATION_MS * n / 1000).toFixed(1)}s`,
-  carryCapacity: (c, n) => `carry ${c} → ${n}`,
+  carryCapacity: (c, n) => `carry ${c} → ${n} items`,
   portableBin:   (c, n) => `${c} → ${n} per shift`,
   vacuum:        (c, n) => `sweeps up to ${c + 1} → ${n + 1} at once`,
 }

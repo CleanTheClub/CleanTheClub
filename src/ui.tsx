@@ -804,16 +804,44 @@ function CarryChip({ S }: { S: number }) {
   // Pulse the whole chip when full, so "go empty this" is impossible to miss.
   const pulse = full ? 0.75 + 0.25 * Math.sin(pulseNow() / 140) : 1
 
+  // Strength teaching, at the moment it matters. The chip's bar + bicep art
+  // read as a "strength progress bar" in the final playtest — players never
+  // connected the /15 ceiling to the Strength upgrade or knew what the next
+  // level buys. So exactly when the hands are FULL (the one moment capacity
+  // is felt), a gold line names the upgrade and the concrete number. Hidden
+  // again the instant they deposit; absent entirely once Strength is maxed.
+  const sLevel  = upgradeLevel('carryCapacity')
+  const capNext = upgradeValue('carryCapacity', sLevel + 1)
+  const showCapHint = full && capNext > cap
+
   return (
     <UiEntity
       uiTransform={{
         positionType: 'absolute',
         position: { bottom: saPct(sa.bottom + 0.02), left: 0 },
         width: '100%',
-        flexDirection: 'row',
-        justifyContent: 'center',
+        // Column, hint row FIRST: the container is bottom-anchored, so the
+        // chip (last child) keeps its exact spot and the hint pops in above it.
+        flexDirection: 'column',
+        alignItems: 'center',
       }}
     >
+      {showCapHint && (
+        <UiEntity
+          uiTransform={{
+            padding: { top: Math.round(4 * S), bottom: Math.round(4 * S), left: Math.round(12 * S), right: Math.round(12 * S) },
+            margin: { bottom: Math.round(6 * S) },
+            borderRadius: Math.round(10 * S),
+          }}
+          uiBackground={{ color: theme.hud.bg }}
+        >
+          <Label
+            value={`Strength ${sLevel + 1} carries ${capNext} — see UPGRADES`}
+            fontSize={Math.round(18 * S)}
+            color={{ r: 1, g: 0.82, b: 0.25, a: 1 }}
+          />
+        </UiEntity>
+      )}
       <UiEntity
         uiTransform={{
           flexDirection: 'row',
