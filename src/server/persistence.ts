@@ -29,6 +29,35 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const READ_RETRY_MS  = 4_000    // gap between read attempts
 const READ_WINDOW_MS = 30_000   // total time to keep trying before giving up
 
+// Per-ATTEMPT deadlines. Without these READ_WINDOW_MS is not a 30s window at
+// all: the deadline below is only checked BETWEEN attempts, so the real total is
+// the sum of however long each attempt took. Worse, the runtime's fetch has no
+// documented timeout, and a request that never settles is far worse than one
+// that fails — read() would never return, so the retry loop would never reach
+// its deadline, the background retry would never start, loadPromise would never
+// settle, and every caller awaiting a load (registerPlayer among them) would
+// hang for the server's whole life with loadFailed still false, i.e. no
+// "progress not saving" warning. Silent, which is the one thing this module is
+// built to avoid.
+const READ_TIMEOUT_MS  = 10_000   // a healthy read answers in well under a second
+const WRITE_TIMEOUT_MS = 15_000   // writes carry the whole document
+
+/**
+ * Rejects if `work` has not settled within `ms`.
+ *
+ * The losing request keeps running — there is no reliable cancellation in the
+ * scene runtime — so this trades a possibly-leaked socket for a caller that
+ * always gets an answer. That is the right way round: a leaked socket costs
+ * nothing here, a wedged load costs every save for the rest of the session.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
 // Log a warning once a stored document passes this size. Not a hard limit —
 // just an early signal that the playerbase has outgrown "one document holds
 // everyone", well before an external store starts rejecting the write.
@@ -225,13 +254,16 @@ export function createPersistedDoc<T>(
     if (!ok) throw new Error('Storage.set rejected the write')
   }
 
+  const readOnce  = () => withDeadline(read(), READ_TIMEOUT_MS, `[STORE:${key}] read`)
+  const writeOnce = (v: T) => withDeadline(write(v), WRITE_TIMEOUT_MS, `[STORE:${key}] write`)
+
   async function load(): Promise<T | null> {
     const deadline = Date.now() + READ_WINDOW_MS
     let attempt = 0
     while (true) {
       attempt++
       try {
-        const value = await read()
+        const value = await readOnce()
         // A settled read — including a confirmed-absent document — tells us what is
         // stored, which is all the save guard needs.
         console.log(`[STORE:${key}] loaded on attempt ${attempt}${value === null ? ' (empty)' : ''}`)
@@ -264,9 +296,15 @@ export function createPersistedDoc<T>(
       while (true) {
         await sleep(BG_RETRY_MS)
         try {
-          const value = await read()
+          const value = await readOnce()
           loadConfirmed = true
           loadFailed = false
+          // ensureLoaded memoises, rejections included, so without this every
+          // later caller keeps getting the old failure long after the store came
+          // back — logging "progression will not persist" and "joining without
+          // leaderboard" on every join for the rest of the session. Re-running
+          // the callers' .then(apply…) is harmless: those merges are latched.
+          loadPromise = Promise.resolve(value)
           console.log(`[STORE:${key}] LATE load succeeded — store back online, restoring stored data`)
           lateLoadCb?.(value)
           return
@@ -298,7 +336,7 @@ export function createPersistedDoc<T>(
         console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
           `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
       }
-      await write(value)
+      await writeOnce(value)
       lastSaveOk = true
       lastSaveMs = Date.now()
       console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)

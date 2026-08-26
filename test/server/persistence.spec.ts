@@ -49,10 +49,16 @@ const tick = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-// Mirrors persistence.ts: READ_RETRY_MS 4s, READ_WINDOW_MS 30s, BG_RETRY_MS 60s.
+// Mirrors persistence.ts: READ_RETRY_MS 4s, READ_WINDOW_MS 30s, BG_RETRY_MS 60s,
+// READ_TIMEOUT_MS 10s, WRITE_TIMEOUT_MS 15s.
 const PAST_ONE_RETRY = 4_000
 const PAST_THE_WINDOW = 35_000
 const PAST_ONE_BG_RETRY = 60_000
+// Three 10s attempts plus two 4s gaps overshoot the 30s window; 45s covers it.
+const PAST_THE_WINDOW_OF_HANGS = 45_000
+const PAST_ONE_WRITE_TIMEOUT = 16_000
+/** A request that accepts the connection and never answers. */
+const neverSettles = () => new Promise<any>(() => {})
 
 beforeEach(() => {
   resetFake()
@@ -410,6 +416,111 @@ describe('createPersistedDoc', () => {
       await Promise.all([doc.ensureLoaded(), doc.ensureLoaded(), doc.ensureLoaded()])
 
       expect(fetchCalls.filter((c) => c.url.endsWith('/latest'))).toHaveLength(1)
+    })
+  })
+
+  // A request that never settles is worse than one that fails: without a
+  // per-attempt deadline the retry loop never reaches its own deadline, so the
+  // load neither resolves nor rejects and loadFailed stays false — no warning,
+  // no background retry, and every awaiting caller hangs for the session.
+  describe('when a request hangs instead of failing', () => {
+    it('should still fail the load rather than hanging forever', async () => {
+      withCredentials()
+      fetchImpl = neverSettles
+
+      const doc = makeDoc<any>()
+      const loading = expectRejection(doc.ensureLoaded())
+      await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW_OF_HANGS)
+
+      await expect(loading).rejects.toThrow(/read timed out/)
+    })
+
+    it('should surface the failure so the in-world warning can appear', async () => {
+      withCredentials()
+      fetchImpl = neverSettles
+
+      const doc = makeDoc<any>()
+      const loading = expectRejection(doc.ensureLoaded())
+      await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW_OF_HANGS)
+      await loading.catch(() => {})
+
+      expect(doc.status().loadFailed).toBe(true)
+      expect(doc.status().loadConfirmed).toBe(false)
+    })
+
+    it('should keep retrying, so a hung store still heals', async () => {
+      withCredentials()
+      fetchImpl = neverSettles
+
+      const doc = makeDoc<any>()
+      const onLate = vi.fn()
+      doc.onLateLoad(onLate)
+      const loading = expectRejection(doc.ensureLoaded())
+      await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW_OF_HANGS)
+      await loading.catch(() => {})
+
+      fetchImpl = async () => jsonRes(200, { record: { recovered: true } })
+      await vi.advanceTimersByTimeAsync(PAST_ONE_BG_RETRY)
+
+      expect(onLate).toHaveBeenCalledWith({ recovered: true })
+    })
+
+    it('should fail a hung write rather than wedging the save chain', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: { a: 0 } }) : neverSettles()
+
+      const doc = makeDoc<any>()
+      await doc.ensureLoaded()
+
+      const saving = doc.save({ a: 1 })
+      await vi.advanceTimersByTimeAsync(PAST_ONE_WRITE_TIMEOUT)
+
+      await expect(saving).resolves.toBe(false)
+      expect(doc.status().lastSaveOk).toBe(false)
+    })
+
+    it('should let a later save through once the store answers again', async () => {
+      withCredentials()
+      let writeHangs = true
+      fetchImpl = async (url) => {
+        if (url.endsWith('/latest')) return jsonRes(200, { record: { a: 0 } })
+        return writeHangs ? neverSettles() : jsonRes(200, {})
+      }
+
+      const doc = makeDoc<any>()
+      await doc.ensureLoaded()
+
+      const first = doc.save({ a: 1 })
+      await vi.advanceTimersByTimeAsync(PAST_ONE_WRITE_TIMEOUT)
+      await expect(first).resolves.toBe(false)
+
+      // A wedged chain would leave this pending forever.
+      writeHangs = false
+      await expect(doc.save({ a: 2 })).resolves.toBe(true)
+    })
+  })
+
+  describe('after a late load has recovered the document', () => {
+    it('should stop handing later callers the old rejection', async () => {
+      withCredentials()
+      let failing = true
+      fetchImpl = async (url) => {
+        if (!url.endsWith('/latest')) return jsonRes(200, {})
+        return failing ? jsonRes(500, {}) : jsonRes(200, { record: { recovered: true } })
+      }
+
+      const doc = makeDoc<any>()
+      const loading = expectRejection(doc.ensureLoaded())
+      await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW)
+      await loading.catch(() => {})
+
+      failing = false
+      await vi.advanceTimersByTimeAsync(PAST_ONE_BG_RETRY)
+
+      // Without the reset this still rejects, and every caller keeps logging
+      // "load failed" for the rest of the session.
+      await expect(doc.ensureLoaded()).resolves.toEqual({ recovered: true })
     })
   })
 })
