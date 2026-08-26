@@ -25,29 +25,20 @@ export const DEBUG = false
 export const REQUIRE_EXTERNAL_STORE = !DEBUG
 
 // ── Career storage shape ──────────────────────────────────────────────────────
-// 'blob'  — one document holds every career. The original shape. Grows on two
-//           axes (players × the variety each player touches, via kindCounts),
-//           warns at 100KB, and rewrites every career on every save. Works on
-//           jsonbin, which is one document per bin and therefore cannot hold
-//           per-player keys at all.
-// 'keyed' — one DCL-storage key per wallet for the full record, plus a small
-//           cross-player index document for the boards. A save writes one
-//           player instead of everyone; the unbounded fields never touch the
-//           shared document. See src/server/careers/boardIndex.ts.
+// 'blob'  — one document holds every career. Grows on two axes (players × the
+//           variety each touches, via kindCounts) and rewrites everything on
+//           every save. The only shape jsonbin can hold: one document per bin.
+// 'keyed' — one DCL-storage key per wallet plus a small cross-player index for
+//           the boards. A save writes one player. See careers/boardIndex.ts.
 //
-// DEFAULT IS 'blob', ON PURPOSE. 'keyed' requires DCL Storage — the backend this
-// scene stopped trusting in June, when `Storage` behaved as if scoped per DEPLOY
-// rather than per location on a World (see the persistence.ts header). That
-// observation is still marked UNRESOLVED and has never been re-tested. Flipping
-// this to 'keyed' before running the deploy → write → redeploy → read check in
-// DEPLOY.md would bet every career on the bug being gone.
+// DEFAULT IS 'blob', ON PURPOSE. 'keyed' needs DCL Storage — the backend this
+// scene stopped trusting in June, when it behaved as if scoped per DEPLOY on a
+// World. Still marked UNRESOLVED and never re-tested, so flipping before the
+// deploy → write → redeploy → read check in DEPLOY.md would bet every career on
+// the bug being gone.
 //
-// Switching is non-destructive in one direction: the migration writes per-player
-// records and the index while LEAVING the legacy blob intact, so 'keyed' can be
-// reverted to 'blob' and the old document is still there. Progress earned while
-// in 'keyed' mode does NOT flow back into the blob, so a revert loses whatever
-// was earned after the cutover — treat the flip as a one-way door in practice
-// and verify first.
+// The migration leaves the legacy blob intact, so a revert to 'blob' still finds
+// it. But progress earned in 'keyed' does NOT flow back — verify first.
 export type CareerStorageMode = 'blob' | 'keyed'
 export const CAREER_STORAGE_MODE: CareerStorageMode = 'blob'
 

@@ -7,26 +7,18 @@
 //
 // STORAGE SHAPE: selected by CAREER_STORAGE_MODE (shared/config.ts).
 //
-//   'blob'  one document holds every player. The original shape — it matched the
-//           leaderboard's proven pattern and kept a save to a single request,
-//           which matters because writes belong at checkpoints, not per-frame.
-//           Its cost is growth on two axes: players, and the variety each player
-//           touches (kindCounts is sparse and unbounded), with every save
-//           rewriting every career ever earned.
+//   'blob'  one document holds every player — one request per save, but growth
+//           on two axes and every save rewriting every career.
+//   'keyed' one record per wallet plus a small board index; a save writes only
+//           the players who changed. Read careers/boardIndex.ts first — the
+//           index is the roster that tells a failed read from a new player, and
+//           per-player storage is unsafe without it.
 //
-//   'keyed' one address-keyed record per wallet for the full career, plus a small
-//           cross-player index for the boards. A save writes only the players who
-//           changed. Read src/server/careers/boardIndex.ts before touching this
-//           path — the index is not a cache, it is the roster that lets a failed
-//           read be told apart from a new player, and per-player storage is
-//           unsafe without it.
+// Either way writes happen at shift end, never per clean.
 //
-// Either way writes happen once per shift end, never per clean.
-//
-// The record shape and the pure logic over it (migration, the additive boot-race
-// merge, the keep/prune rule) live in ./careers/* so they can be unit-tested
-// without the SDK — see test/careers/. This module owns the in-memory state and
-// the orchestration, and nothing else should.
+// The record shape and the pure logic over it live in ./careers/* so they can be
+// unit-tested without the SDK. This module owns the in-memory state and the
+// orchestration, nothing else.
 //
 // GUESTS: Decentraland guest accounts get a throwaway address per session, so
 // persisting against it would silently lose everything on leave and pollute the
@@ -116,10 +108,8 @@ const guests  = new Set<string>()                   // addresses excluded from p
 const loadedFromStore = new Set<string>()
 
 // ── Dirty tracking ────────────────────────────────────────────────────────────
-// Per-address, not one global flag. 'blob' mode only needs "did anything change",
-// but 'keyed' mode has to know WHICH players to write — writing all of them would
-// throw away the entire point of the shape. One set serves both: blob reads its
-// size, keyed reads its members.
+// Per-address, not one global flag: 'keyed' has to know WHICH players to write.
+// One set serves both modes — blob reads its size, keyed reads its members.
 const dirtyAddresses = new Set<string>()
 const isDirty = (): boolean => dirtyAddresses.size > 0
 function markDirty(address: string): void {
@@ -129,29 +119,24 @@ function markDirty(address: string): void {
 const KEYED = CAREER_STORAGE_MODE === 'keyed'
 
 // ── Keyed-mode state ──────────────────────────────────────────────────────────
-// The board index, mirrored in memory. In keyed mode this is the ROSTER: an
-// address with a row provably has a stored career, which is the only way to tell
-// a failed per-player read from a genuinely new player. See careers/boardIndex.ts.
+// The board index mirrored in memory. This is the ROSTER: a row proves a stored
+// career exists, the only way to tell a failed read from a new player.
 const indexRows = new Map<string, BoardRow>()
-// Addresses whose in-memory record is the COMPLETE career, read from that
-// player's own key. Only these may be written back.
+// Records that are the COMPLETE career, read from the player's own key. Only
+// these may be written back.
 const hydrated = new Set<string>()
-// Addresses the index vouches for but whose record would not read. Their record
-// in memory is a board projection or a stub, so writing it would destroy the real
-// career — they stay unwritable until a retry succeeds.
+// The index vouches for these but their record wouldn't read, so what's in
+// memory is a projection or a stub. Unwritable until a retry succeeds.
 const blocked = new Set<string>()
 // Coalesces concurrent hydration of the same address.
 const hydrating = new Map<string, Promise<void>>()
 
 /**
- * The persisted document.
+ * blob: every career, keyed by address. keyed: the board index only.
  *
- * blob:  every career, keyed by address.
- * keyed: the board index only — full records live in per-player storage.
- *
- * Two DIFFERENT storage keys, deliberately. The migration writes the index
- * without touching the legacy blob, so a cutover is reversible and a mode flip
- * can never make one shape read the other's bytes.
+ * Two DIFFERENT storage keys, deliberately — the migration writes the index
+ * without touching the blob, so a cutover is reversible and a mode flip can
+ * never make one shape read the other's bytes.
  */
 type ProgressDoc = {
   v:       number
@@ -169,20 +154,18 @@ const blobDoc = KEYED ? null : createPersistedDoc<ProgressDoc>(
   { count: (d) => Object.keys(d?.players ?? {}).length },
 )
 
-// Keyed mode still needs to READ the legacy blob exactly once, to migrate off
-// it. Same key and same credentials as blob mode — it is the very same document.
+// Read once, to migrate off it. Same key and credentials as blob mode — the
+// very same document.
 const legacyBlobDoc = KEYED ? createPersistedDoc<ProgressDoc>(
   'playerProgress',
   'PROGRESS',
   (d) => !d || !d.players || Object.keys(d.players).length === 0,
 ) : null
 
-// ITS OWN EnvVar PREFIX, WHICH IS NOT COSMETIC. On the jsonbin path
-// createPersistedDoc picks the bin from the PREFIX alone — the storage key is
-// only consulted for DCL Storage. Reusing 'PROGRESS' here would have written the
-// index straight into the legacy blob's bin and overwritten every career in it,
-// destroying both the "migration never touches the blob" guarantee and the
-// rollback. The index needs its own bin: CAREER_INDEX_BIN_ID / _BIN_KEY.
+// ITS OWN PREFIX, NOT COSMETIC. On the jsonbin path createPersistedDoc picks the
+// bin from the PREFIX alone — the storage key is only used for DCL Storage. So
+// reusing 'PROGRESS' would write the index into the blob's bin and overwrite
+// every career in it, taking the rollback with it.
 const indexDoc = KEYED ? createPersistedDoc<CareerIndexDoc>(
   'careerIndex',
   'CAREER_INDEX',
@@ -236,16 +219,14 @@ export function ensureProgressLoaded(): Promise<unknown> {
 }
 
 /**
- * Merges one stored career over whatever this session already had for it.
- * Shared by both modes so the boot-race rules can never diverge between them.
- * Returns true when a pre-load session stub was folded in (i.e. the player needs
- * their corrected career pushed).
+ * Merges one stored career over whatever this session had. Shared by both modes
+ * so the boot-race rules can't diverge. True when a pre-load stub was folded in,
+ * i.e. the player needs their corrected career pushed.
  */
 function adoptStoredRecord(key: string, loaded: ProgressRecord): boolean {
   const existing = records.get(key)
-  // A board projection is NOT session progress — it is seven fields read from the
-  // index with everything else at defaults. Merging it would double-count money
-  // and XP, so it is replaced outright.
+  // A projection is NOT session progress — seven fields from the index with the
+  // rest at defaults. Merging would double-count money and XP, so replace it.
   const isProjection = KEYED && !hydrated.has(key) && indexRows.has(key) && existing !== undefined
   const restored = existing !== undefined && !isProjection
 
@@ -285,21 +266,19 @@ function applyStoredDoc(stored: ProgressDoc | null): void {
 
 // ── keyed mode ────────────────────────────────────────────────────────────────
 /**
- * Adopts the board index. This does NOT load careers — it loads the roster plus
- * the seven fields the boards read, so offline veterans keep appearing on TOP
- * EARNERS and the CLUB OWNERS wall without holding every career in RAM.
+ * Adopts the board index — the roster plus the seven fields the boards read, so
+ * offline veterans keep appearing on TOP EARNERS and the owners wall without
+ * holding every career in RAM. This does NOT load careers.
  *
- * Records created here are PROJECTIONS and are never written back (see
- * boardRowToRecord). A player's real career is fetched by hydrate() when they
- * join, which is also when they become writable.
+ * Records created here are PROJECTIONS and never written back. A real career
+ * arrives via hydrateCareer() on join, which is when the player becomes writable.
  */
 function applyStoredIndex(stored: CareerIndexDoc | null): void {
   if (mergeDone) return
   mergeDone = true
-  // Captured BEFORE projections are added: everyone already in `records` at this
-  // point got there from a live session (register or getProgress's create-on-read),
-  // so these are the players actually in the club — the ones who need a real
-  // career read. Everyone else only needs their board projection.
+  // Captured BEFORE projections are added: anything in `records` now got there
+  // from a live session, so these are the players actually in the club and the
+  // only ones needing a real career read.
   const present = [...records.keys()]
 
   const doc = migrateIndex(stored)
@@ -320,19 +299,17 @@ function applyStoredIndex(stored: CareerIndexDoc | null): void {
   // them folds this session's pre-load earnings onto their stored career.
   for (const key of present) if (!hydrated.has(key)) void hydrateCareer(key)
 
-  // A CONFIRMED-empty index on a world that has a legacy blob means this is the
-  // first keyed boot. (Confirmed matters: ensureLoaded rejects rather than
-  // resolving when the read fails, so an empty index here is a real fact, not an
-  // outage. Migrating on an outage would be catastrophic.)
+  // A CONFIRMED-empty index means this is the first keyed boot. Confirmed
+  // matters: ensureLoaded rejects rather than resolves on a failed read, so an
+  // empty index here is a fact, not an outage. Migrating on an outage would be
+  // catastrophic.
   if (indexRows.size === 0) void runMigration()
 }
 
 /**
  * One-time move of every career out of the legacy blob into per-player keys.
- *
- * Runs at most once per world: afterwards the index has rows, so the caller's
- * emptiness check never fires again. The legacy blob is left completely intact —
- * see careers/migration.ts for why that matters.
+ * Runs at most once per world — afterwards the index has rows. The blob is left
+ * intact; see careers/migration.ts for why.
  */
 async function runMigration(): Promise<void> {
   console.log('[PROGRESS] board index is empty — looking for a legacy blob to migrate')
@@ -353,9 +330,8 @@ async function runMigration(): Promise<void> {
   console.log(`[PROGRESS] MIGRATING ${plan.writes.length} career(s) to per-player storage` +
     `${plan.pruned ? ` (${plan.pruned} empty record(s) pruned)` : ''} — the legacy blob is left untouched`)
 
-  // Bounded concurrency. Sequential would take minutes on a large roster; all at
-  // once would hammer a service whose rate limits are undocumented (the repo's
-  // "~40 concurrent" figure is an empirical observation, not a contract).
+  // Bounded: sequential takes minutes on a large roster, all-at-once hammers a
+  // service whose rate limits are undocumented.
   const CONCURRENCY = 8
   const done: Array<{ address: string; record: ProgressRecord }> = []
   const failed: string[] = []
@@ -376,10 +352,9 @@ async function runMigration(): Promise<void> {
     return
   }
 
-  // Index only the careers that ACTUALLY landed. Listing a player whose record
-  // failed to write would make the roster vouch for a career that is not there,
-  // and every later read of it would be classified as a failure — blocking that
-  // player instead of letting the next attempt fix them.
+  // Only the careers that ACTUALLY landed. Listing a failed write would make the
+  // roster vouch for a career that isn't there, so every later read of it counts
+  // as a failure and blocks that player instead of retrying.
   const rows: Record<string, BoardRow> = {}
   for (const { address, record } of done) rows[address] = projectBoardRow(record)
   const indexOk = await indexDoc!.save({ v: INDEX_SCHEMA_VERSION, rows })
@@ -404,14 +379,13 @@ async function runMigration(): Promise<void> {
 }
 
 /**
- * Reads one player's full career from their own key and makes them writable.
- *
- * The three outcomes are the whole safety story — see careers/keyedStore.ts:
- *   found   adopt it (folding in any pre-load session earnings) and hydrate.
- *   absent  provably new: the session record IS the truth, so hydrate as-is.
- *   failed  the roster says a career exists but we could not read it. Do NOT
- *           hydrate — that leaves the player unwritable, so a save can never
- *           overwrite a real career with a projection or a stub.
+ * Reads one player's full career and makes them writable. The three outcomes are
+ * the safety story — see careers/keyedStore.ts:
+ *   found   adopt it (folding in pre-load session earnings) and hydrate.
+ *   absent  provably new — the session record IS the truth.
+ *   failed  the roster says a career exists but it wouldn't read. Do NOT
+ *           hydrate: that keeps the player unwritable, so no save can overwrite
+ *           a real career with a projection or a stub.
  */
 export async function hydrateCareer(address: string): Promise<void> {
   if (!KEYED) return
@@ -428,8 +402,8 @@ export async function hydrateCareer(address: string): Promise<void> {
       blocked.delete(key)
       if (restored) finishRestore([key])
     } else if (result.outcome === 'absent') {
-      // No stored career and the roster agrees. Whatever is in memory (a fresh
-      // record, or this session's earnings so far) is the truth from here.
+      // No stored career and the roster agrees, so whatever is in memory is the
+      // truth from here.
       if (!records.has(key)) records.set(key, emptyRecord())
       hydrated.add(key)
       blocked.delete(key)
@@ -499,14 +473,13 @@ export function registerProgressPlayer(address: string, displayName: string): Pr
     records.set(key, rec)
   }
   if (displayName) rec.displayName = displayName
-  // A rename is a real change that used to reach the store only if some other
-  // mutation happened to mark the document dirty before the next checkpoint.
+  // A rename used to reach the store only if some other mutation happened to
+  // mark the document dirty first.
   if (displayName) markDirty(key)
 
-  // Keyed mode: fetch this player's real career. Deliberately not awaited — the
-  // caller is synchronous and the additive merge is built for exactly this race,
-  // so a player who acts before their career lands keeps those earnings and gets
-  // the corrected total pushed by setCareersRestoredHandler.
+  // Not awaited: the caller is synchronous and the additive merge is built for
+  // this race, so acting before the career lands keeps those earnings and the
+  // corrected total is pushed by setCareersRestoredHandler.
   if (KEYED) void hydrateCareer(key)
 
   if (detectGuest(key)) {
@@ -750,20 +723,16 @@ async function saveBlob(): Promise<void> {
 /**
  * Writes only the players who changed, then refreshes the board index.
  *
- * ORDER MATTERS AND IS NOT A TRANSACTION. The SDK has no multi-key write, no
- * CAS and no rollback, so the record and the index cannot land atomically. The
- * record goes first on purpose:
- *   record ok, index fails  → the career is safe; the boards lag by one
- *                             checkpoint and self-heal at the next save.
- *   index ok, record fails  → the roster would vouch for a career that is not
- *                             there, and every later read of it would be
- *                             classified as a FAILURE, blocking that player
- *                             for the session. Strictly worse, hence the order.
+ * ORDER MATTERS AND IS NOT A TRANSACTION — no multi-key write, no CAS, no
+ * rollback. Record first, on purpose:
+ *   record ok, index fails  boards lag one checkpoint and self-heal.
+ *   index ok, record fails  the roster vouches for a career that isn't there, so
+ *                           every later read counts as a failure and blocks that
+ *                           player for the session. Strictly worse.
  */
 async function saveKeyed(): Promise<void> {
-  // Give blocked players another chance before deciding who to write — a player
-  // whose read recovers here gets their real career saved this checkpoint
-  // instead of waiting for the next one.
+  // Another chance before deciding who to write, so a recovered read is saved
+  // this checkpoint rather than the next.
   await retryBlockedHydrations()
 
   const inFlight = [...dirtyAddresses]
@@ -780,9 +749,8 @@ async function saveKeyed(): Promise<void> {
     if (!rec) continue
     if (!persistable(address, rec)) { if (!guests.has(address)) pruned++; continue }
     // THE GUARD THAT MAKES THIS SHAPE SAFE. An un-hydrated record is either a
-    // board projection (seven fields, everything else at defaults) or a stub
-    // for a player whose stored career would not read. Writing either one
-    // destroys a real career. Keep them dirty so a later checkpoint retries.
+    // projection or a stub for a player whose career wouldn't read — writing
+    // either destroys a real career. Stay dirty so a later checkpoint retries.
     if (!hydrated.has(address)) {
       skipped++
       dirtyAddresses.add(address)
@@ -807,8 +775,8 @@ async function saveKeyed(): Promise<void> {
 
   if (written === 0) return
 
-  // Refresh the roster + board projections. One document, written whole, but it
-  // carries seven scalars per player rather than every career in full.
+  // One document written whole, but seven scalars per player rather than every
+  // career in full.
   const rows: Record<string, BoardRow> = {}
   for (const [address, row] of indexRows) rows[address] = row
   const indexOk = await indexDoc!.save({ v: INDEX_SCHEMA_VERSION, rows })

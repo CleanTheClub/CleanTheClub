@@ -1,19 +1,14 @@
-// The career record shape, and the pure functions that create, validate and
-// judge one.
+// The career record shape and the pure functions over it.
 //
-// DELIBERATELY IMPORT-FREE except for the type-only `UpgradeId` (progression.ts
-// has no imports of its own). Nothing here touches the SDK, the engine, storage
-// or module-scope state, which is what makes it unit-testable — see
-// test/careers/record.spec.ts. Anything that does I/O belongs in a sibling
-// module, not here.
+// IMPORT-FREE except the type-only `UpgradeId` (progression.ts has no imports of
+// its own). Nothing here touches the SDK, the engine, storage or module state —
+// that is what makes it unit-testable. Anything doing I/O belongs elsewhere.
 
 import { UpgradeId } from '../../shared/progression'
 
-// SCHEMA_VERSION is bumped whenever the stored shape changes. Stored data outlives
-// any single deploy, so an old-format record can surface at ANY time — typically
-// from a returning player long after the migration was written. migrateRecord()
-// therefore stays permanently, and is written to cope with partial/unknown shapes
-// rather than assuming the previous version exactly.
+// Bumped whenever the stored shape changes. Stored data outlives any deploy, so
+// an old-format record can surface at ANY time — migrateRecord() therefore stays
+// permanently and copes with partial/unknown shapes.
 export const SCHEMA_VERSION = 1
 
 export type ProgressRecord = {
@@ -31,17 +26,13 @@ export type ProgressRecord = {
   dailyItems:   number   // items cleaned on dailyDay (drives the daily board)
   dailyDay:     string   // UTC day the dailyItems counter belongs to
   /**
-   * Lifetime per-kind tallies — the raw material for achievement gear ("clean
-   * 1000 pieces of pizza"). Keys are normalized letters-only kind names
-   * ('pizza', 'wineglass', 'deposit', 'shiftcocktailnight', …); achievements
-   * sum whatever keys they care about at read time. Counting ships AHEAD of
-   * the achievements because stats can't be backfilled. Sparse by nature —
-   * a player only holds keys for kinds they've actually touched.
+   * Lifetime per-kind tallies — raw material for achievement gear. Keys are
+   * normalized letters-only kind names ('pizza', 'wineglass', 'deposit', …);
+   * achievements sum whatever they care about at read time. Sparse: a player
+   * only holds keys for kinds they've touched.
    *
-   * This is also the field that made the single-document shape a problem: it
-   * grows per player with the VARIETY they touch, so the blob grew on two axes
-   * at once. In keyed mode it lives in the player's own record and never
-   * reaches the cross-player index.
+   * This is why the single document grew on two axes — it scales with the
+   * VARIETY a player touches. Keyed mode keeps it out of the shared index.
    */
   kindCounts:   Record<string, number>
   /** Equipped flex carrier ('' = none) — overrides the upgrade gear ladder.
@@ -108,14 +99,10 @@ export function migrateRecord(raw: any): ProgressRecord {
 /**
  * Whether a record is worth persisting.
  *
- * Deliberately conservative: a career is a player's investment, and there is no
- * undo for deleting one. So this only drops records that represent NO earned
- * progress at all — someone who arrived, got a row created by getProgress (which
- * creates on read), and never completed a shift or bought anything. Everyone who
- * has actually played is kept forever, however long ago.
- *
- * That keeps storage proportional to real players rather than to every address
- * that has ever loaded the scene.
+ * Deliberately conservative — a career is a player's investment and deleting one
+ * has no undo. Only drops records with NO earned progress at all: someone who
+ * arrived, got a row from getProgress's create-on-read, and never played. Keeps
+ * storage proportional to real players, not to every address that ever loaded.
  */
 export function isWorthKeeping(rec: ProgressRecord): boolean {
   return rec.shifts > 0 || rec.xp > 0 || rec.money > 0 || rec.lifetimeItems > 0

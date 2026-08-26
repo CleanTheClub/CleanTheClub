@@ -2,10 +2,9 @@ import { describe, it, expect } from 'vitest'
 import { mergeSessionIntoStored } from '../../src/server/careers/merge'
 import { emptyRecord, ProgressRecord } from '../../src/server/careers/record'
 
-// The boot-race merge decides what happens when a player's stored career lands
-// AFTER they have already started earning this session. Getting a rule wrong here
-// either double-counts money or silently drops a field, and both look like a
-// storage bug rather than a merge bug. Each rule gets its own case.
+// Decides what happens when a stored career lands AFTER the player started
+// earning. A wrong rule either double-counts money or silently drops a field,
+// and both look like a storage bug. One case per rule.
 
 const rec = (over: Partial<ProgressRecord> = {}): ProgressRecord => ({ ...emptyRecord(), ...over })
 
@@ -142,15 +141,13 @@ describe('mergeSessionIntoStored', () => {
 
   describe('when a field is owned by the store', () => {
     it('should not let a session stub overwrite flexGear', () => {
-      // A stub starts at '' and can only be set by setFlexGear, which checks the
-      // achievement against counts the stub does not have.
+      // A stub can only get this from setFlexGear, which checks counts it lacks.
       expect(mergeSessionIntoStored(rec({ flexGear: 'gold_dustpan' }), rec({ flexGear: '' })).flexGear)
         .toBe('gold_dustpan')
     })
 
     it('should not let a session stub overwrite ownerSinceMs', () => {
-      // The earliest coronation is in the store by definition — it orders the
-      // CLUB OWNERS wall.
+      // The earliest coronation is in the store by definition.
       expect(mergeSessionIntoStored(rec({ ownerSinceMs: 1_700_000_000_000 }), rec({ ownerSinceMs: 0 })).ownerSinceMs)
         .toBe(1_700_000_000_000)
     })

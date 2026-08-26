@@ -3,9 +3,9 @@ import {
   emptyRecord, migrateRecord, isWorthKeeping, SCHEMA_VERSION,
 } from '../../src/server/careers/record'
 
-// migrateRecord is the only thing standing between a corrupt stored entry and a
-// crashed session, and isWorthKeeping decides whether a career is kept forever or
-// dropped. Both are load-bearing on data nobody can regenerate.
+// migrateRecord stands between a corrupt entry and a crashed session;
+// isWorthKeeping decides whether a career is kept forever. Both act on data
+// nobody can regenerate.
 
 describe('migrateRecord', () => {
   describe('when the stored value is not a usable object', () => {
@@ -101,9 +101,8 @@ describe('isWorthKeeping', () => {
 
   describe('when the only content is a field the rule does not test', () => {
     it('should still drop it, which is the documented and accepted edge', () => {
-      // A player who cleaned during a round that never completed has kindCounts
-      // but no shifts/xp/money/lifetimeItems. Recorded here so the behaviour is a
-      // decision rather than a surprise.
+      // Cleaning during a round that never completed leaves kindCounts but no
+      // shifts/xp/money. Recorded so it's a decision, not a surprise.
       expect(isWorthKeeping({ ...emptyRecord(), kindCounts: { pizza: 12 } })).toBe(false)
       expect(isWorthKeeping({ ...emptyRecord(), bestItems: 30 })).toBe(false)
     })

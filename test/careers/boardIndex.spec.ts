@@ -5,10 +5,9 @@ import {
 } from '../../src/server/careers/boardIndex'
 import { emptyRecord, ProgressRecord } from '../../src/server/careers/record'
 
-// The index is the roster that lets a failed per-player read be told apart from a
-// new player. If it loses a row, that player reads as brand new and their career
-// gets overwritten — so completeness and defensive parsing matter more here than
-// anywhere else in the careers module.
+// The index is the roster that tells a failed read from a new player. Lose a row
+// and that player reads as brand new and gets overwritten — so completeness and
+// defensive parsing matter more here than anywhere else.
 
 const rec = (over: Partial<ProgressRecord> = {}): ProgressRecord => ({ ...emptyRecord(), ...over })
 

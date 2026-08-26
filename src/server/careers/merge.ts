@@ -1,39 +1,28 @@
 // The additive boot-race merge, as a pure function.
 //
-// Lifted verbatim out of playerProgress.applyStoredDoc so it can be unit-tested
-// (test/careers/merge.spec.ts) and so the keyed store can reuse the SAME rules
-// when it hydrates one player at a time. Two callers with two copies of a
-// 14-rule merge is how a career quietly loses a field.
-//
-// IMPORT-FREE apart from the type-only record module.
+// Lifted out of playerProgress.applyStoredDoc so it can be unit-tested and so
+// the keyed store reuses the SAME rules when hydrating one player. Two copies of
+// a 14-rule merge is how a career quietly loses a field.
 
 import { ProgressRecord } from './record'
 import { UpgradeId } from '../../shared/progression'
 
 /**
- * Folds a pre-load SESSION stub into the STORED career and returns the result.
+ * Folds a pre-load SESSION stub into the STORED career.
  *
  * BOOT RACE — the bug that erased the owner's career on every republish: a
- * player who joins before the read settles (after a republish, that is almost
- * always the OWNER testing) gets a fresh stub record; the old skip-if-present
- * merge then ignored their real career, and the next shift-end save wrote the
- * stub over it in the store. The stub only ever holds THIS session's pre-load
- * earnings (records are only created via emptyRecord), so the fix is to ADD
- * those few minutes on top of the restored career — nobody loses either side
- * of the race.
+ * player joining before the read settles (usually the owner, testing) gets a
+ * fresh stub, the old skip-if-present merge ignored their real career, and the
+ * next save wrote the stub over it. A stub only holds this session's pre-load
+ * earnings, so the fix is to ADD them on top. Same shape suits a LATE load:
+ * what was earned during an outage stacks onto the restored career.
  *
- * The same shape is right for a LATE load (the store recovering mid-session):
- * what was earned during the outage stacks on top of the restored career.
+ * MUTATES AND RETURNS `stored` (caller owns it, fresh from migrateRecord);
+ * `session` is never modified.
  *
- * MUTATES AND RETURNS `stored`. The caller owns `stored` (it comes fresh out of
- * migrateRecord), so mutating it in place avoids a second copy; `session` is
- * never modified.
- *
- * Two fields are deliberately NOT merged — the stored value wins outright:
- *   flexGear      a session stub starts at '' and can only have been set by
- *                 setFlexGear, which re-checks the achievement against counts
- *                 the stub does not have.
- *   ownerSinceMs  the earliest coronation is in the store by definition.
+ * Two fields deliberately NOT merged — the store wins: `flexGear`, because a
+ * stub can only have it set by setFlexGear against counts it doesn't have; and
+ * `ownerSinceMs`, because the earliest coronation is in the store by definition.
  */
 export function mergeSessionIntoStored(
   stored: ProgressRecord,

@@ -1,25 +1,15 @@
 // Planning the one-way trip from the single blob to per-player records.
 //
-// PURE — no I/O. Given the legacy document's `players` map it returns exactly what
-// should be written and what should be dropped, so the decision can be unit-tested
-// (test/careers/migration.spec.ts) separately from the writes that carry it out.
-// playerProgress owns the execution.
+// PURE — no I/O, so the decision is testable apart from the writes that carry it
+// out. playerProgress owns the execution.
 //
-// SAFETY PROPERTIES this shape buys:
-//
-//  * Non-destructive. Nothing here deletes or rewrites the legacy blob. After a
-//    migration the old document still holds every career exactly as it did, which
-//    is what makes CAREER_STORAGE_MODE reversible while you are still verifying.
-//
-//  * Idempotent. The caller only migrates when the index came back CONFIRMED
-//    empty. Once the index has rows, this never runs again — and re-running it
-//    would be harmless anyway, since it derives everything from the blob rather
-//    than accumulating.
-//
-//  * Resumable. Per-player writes are independent, so a partial migration is a
-//    valid state: the players who made it are keyed, the index lists exactly
-//    them, and the next attempt re-derives the whole plan from the blob. There
-//    is no half-written record to repair.
+// Safety properties this shape buys:
+//   non-destructive  nothing here deletes or rewrites the blob, which is what
+//                    keeps CAREER_STORAGE_MODE reversible while you verify.
+//   idempotent       the caller only migrates on a CONFIRMED-empty index, and
+//                    this derives from the blob rather than accumulating.
+//   resumable        per-player writes are independent, so a partial migration
+//                    is a valid state and the next attempt re-derives the plan.
 
 import { ProgressRecord, migrateRecord, isWorthKeeping } from './record'
 import {
@@ -36,12 +26,10 @@ export type MigrationPlan = {
 }
 
 /**
- * Builds the migration plan from a legacy blob's `players` map.
- *
- * Applies the SAME keep rule as a normal save (isWorthKeeping), so migrating
- * does not resurrect the empty rows a save would have pruned, and runs every
- * record through migrateRecord so a corrupt entry becomes a valid zeroed record
- * instead of throwing partway through and stranding the migration.
+ * Builds the plan from a legacy blob's `players` map. Applies the same keep rule
+ * as a normal save, so migrating doesn't resurrect rows a save would prune, and
+ * runs everything through migrateRecord so one corrupt entry can't strand the
+ * migration partway.
  */
 export function planMigration(players: unknown): MigrationPlan {
   const plan: MigrationPlan = {

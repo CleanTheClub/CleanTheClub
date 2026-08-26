@@ -3,9 +3,9 @@ import { planMigration } from '../../src/server/careers/migration'
 import { SCHEMA_VERSION } from '../../src/server/careers/record'
 import { INDEX_SCHEMA_VERSION } from '../../src/server/careers/boardIndex'
 
-// The migration runs once per world against data nobody can regenerate. Its plan
-// has to be complete (every keepable career written), consistent (the index lists
-// exactly what was written) and defensive (one corrupt row cannot abort the rest).
+// Runs once per world against data nobody can regenerate, so the plan has to be
+// complete, consistent (index lists exactly what was written) and defensive (one
+// corrupt row can't abort the rest).
 
 const career = (over: Record<string, unknown> = {}) => ({
   money: 100, xp: 500, shifts: 4, lifetimeItems: 60, displayName: 'Cleaner', ...over,
@@ -70,7 +70,7 @@ describe('planMigration', () => {
       const plan = planMigration({ '0xa': career(), '0xbroken': 'not an object', '0xc': career() })
 
       expect(plan.writes.map((w) => w.address).sort()).toEqual(['0xa', '0xc'])
-      // The corrupt entry migrates to a zeroed record, which the keep rule prunes.
+      // The corrupt entry becomes a zeroed record, which the keep rule prunes.
       expect(plan.pruned).toBe(1)
     })
 
