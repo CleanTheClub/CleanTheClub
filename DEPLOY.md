@@ -18,6 +18,8 @@ publish that came up without those vars.
 | `PROGRESS_BIN_KEY`    | Careers     | " |
 | `LEADERBOARD_BIN_ID`  | Leaderboard | `src/server/server.ts` |
 | `LEADERBOARD_BIN_KEY` | Leaderboard | " |
+| `CAREER_INDEX_BIN_ID`  | Board index | keyed mode only — see §5 |
+| `CAREER_INDEX_BIN_KEY` | Board index | " |
 
 They are **world-scoped remote state**, held by Decentraland's storage service —
 not part of the deploy bundle. Publishing neither sets nor clears them
@@ -136,9 +138,99 @@ it. Fix the credentials, republish, and the careers come back.
 
 The one case that *is* real loss is the repointed `BIN_ID` above.
 
+## 5. Career storage shape
+
+`CAREER_STORAGE_MODE` in `src/shared/config.ts` picks how careers are stored.
+**It ships as `'blob'` and you should not flip it until §6 passes.**
+
+| | `'blob'` (current) | `'keyed'` |
+| --- | --- | --- |
+| Layout | one document, every career | one DCL-storage key per wallet + a small board index |
+| A save writes | every career ever earned | only the players who changed |
+| Grows with | players **×** item variety per player | players (index only, 7 fixed scalars each) |
+| Backend | jsonbin or DCL Storage | DCL Storage only |
+
+The blob grows on two axes because `kindCounts` is sparse and unbounded — a
+veteran who has touched thirty item kinds carries thirty keys, and every save
+rewrites all of it for everyone. Keyed mode moves those fields into the player's
+own record, so the shared document holds only what the leaderboards read.
+
+Why the boards need an index at all: `Storage.player.getValues(address, …)` only
+ever lists **one** address's keys. There is no way to enumerate players, and four
+of the five board categories plus the CLUB OWNERS wall are global top-N queries
+over every career ever earned. The index is that roster.
+
+> ⚠️ **The index is not a cache and must never be pruned.** `Storage.get` returns
+> `null` for a 404 *and* for 429/5xx/transport failures — "no career" and "storage
+> is refusing us" are indistinguishable. The index breaks the tie: if it lists an
+> address, a `null` read is provably a failure, so that player is marked
+> **blocked** and their saves are refused rather than overwriting a real career
+> with an empty record. Drop a row and that player reads as brand new.
+
+## 6. Before flipping to `'keyed'`
+
+Keyed mode requires DCL `Storage`, which is the backend this scene abandoned in
+June — `persistence.ts` records it behaving as if scoped per **deploy** rather
+than per location on a World, and that observation is still marked UNRESOLVED.
+Nothing in the SDK or CLI corroborates it (the only scope identifier that crosses
+the wire is world name plus base parcel), but nothing refutes it either.
+
+Settle it first, on a throwaway world, not this one:
+
+```bash
+# 1. Deploy, then write a value
+sdk-commands storage set probe --value "$(date +%s)"
+# 2. Redeploy the same world, unchanged
+npm run deploy
+# 3. Read it back
+sdk-commands storage get probe
+```
+
+If step 3 returns the value from step 1, scene storage survives redeploys and
+keyed mode is safe to trial. If it comes back empty, the June observation still
+holds, **keyed mode would lose every career on the next publish**, and the right
+move is to take the reproduction to Foundation rather than flip the flag.
+
+Keyed mode also needs **two more EnvVars**, because the board index lives in its
+own bin. This is not optional: on the jsonbin path the bin is chosen by the
+EnvVar prefix alone, so sharing `PROGRESS` would make the index overwrite the
+legacy blob and destroy the rollback.
+
+```bash
+sdk-commands storage env set CAREER_INDEX_BIN_ID  --value <a NEW, empty bin id>
+sdk-commands storage env set CAREER_INDEX_BIN_KEY --value <master key>
+```
+
+Once that is set and §6's probe passes: flip the flag, deploy, and watch the boot
+log.
+
+```
+[PROGRESS] board index is empty — looking for a legacy blob to migrate
+[PROGRESS] MIGRATING 209 career(s) to per-player storage — the legacy blob is left untouched
+[PROGRESS] MIGRATION COMPLETE — 209 career(s) now per-player. Verify the boards, then keep the blob as a rollback point.
+```
+
+The migration runs once, writes per-player records **before** the index, and
+**never touches the legacy blob**. That makes it resumable (a partial run is a
+valid state — the index lists exactly what landed, and the next boot re-derives
+the rest) and reversible while you verify. Two log lines mean stop and read:
+
+| Boot log | Meaning |
+| --- | --- |
+| `migration ABORTED — the legacy blob would not read` | An empty index could not be trusted to mean "nothing to migrate". Nothing was written. Fix the store and reboot. |
+| `career read BLOCKED for 0x… ` | The roster vouches for a career that would not read. That player's saves are refused — deliberately. Nothing is overwritten; it retries each checkpoint. |
+
+Then check the boards actually still show offline veterans (TOP EARNERS, HIGHEST
+RANK, MOST SHIFTS and the owners wall are the ones that depend on the index), and
+the admin `storage:` line. A reverted flip finds the blob exactly as it was — but
+progress earned *after* the cutover lives only in the per-player records and does
+not flow back, so verify before, not after.
+
 ## Related
 
-- `src/server/persistence.ts` — the storage layer, and the incident history in its comments.
-- `src/shared/config.ts` — `REQUIRE_EXTERNAL_STORE`, and why the DCL Storage fallback is refused.
+- `src/server/persistence.ts` — the document layer, and the incident history in its comments.
+- `src/server/careers/boardIndex.ts` — why per-player storage needs a roster. Read before touching keyed mode.
+- `src/shared/config.ts` — `REQUIRE_EXTERNAL_STORE` and `CAREER_STORAGE_MODE`.
+- `npm test` — unit tests for the career merge, migration, record coercion and index projection.
 - `UPGRADE-SDK.md` — read before changing the SDK pin. The pin carries the multiplayer server runtime.
 - `backups/` — point-in-time snapshots, excluded from deploys by `.dclignore`.

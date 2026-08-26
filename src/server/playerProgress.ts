@@ -5,11 +5,28 @@
 // item X" and receive the resulting totals. Money buys real advantage and feeds
 // leaderboards, so treating client numbers as input would be directly exploitable.
 //
-// STORAGE SHAPE: one document holding every player, rather than a key per wallet.
-// Matches the leaderboard's proven pattern and, more importantly, keeps writes to a
-// single request per save — the Storage API is rate-limited (~40 concurrent) and the
-// docs are explicit that writes belong at checkpoints, not per-frame. We write once
-// per shift end, never per clean.
+// STORAGE SHAPE: selected by CAREER_STORAGE_MODE (shared/config.ts).
+//
+//   'blob'  one document holds every player. The original shape — it matched the
+//           leaderboard's proven pattern and kept a save to a single request,
+//           which matters because writes belong at checkpoints, not per-frame.
+//           Its cost is growth on two axes: players, and the variety each player
+//           touches (kindCounts is sparse and unbounded), with every save
+//           rewriting every career ever earned.
+//
+//   'keyed' one address-keyed record per wallet for the full career, plus a small
+//           cross-player index for the boards. A save writes only the players who
+//           changed. Read src/server/careers/boardIndex.ts before touching this
+//           path — the index is not a cache, it is the roster that lets a failed
+//           read be told apart from a new player, and per-player storage is
+//           unsafe without it.
+//
+// Either way writes happen once per shift end, never per clean.
+//
+// The record shape and the pure logic over it (migration, the additive boot-race
+// merge, the keep/prune rule) live in ./careers/* so they can be unit-tested
+// without the SDK — see test/careers/. This module owns the in-memory state and
+// the orchestration, and nothing else should.
 //
 // GUESTS: Decentraland guest accounts get a throwaway address per session, so
 // persisting against it would silently lose everything on leave and pollute the
@@ -18,124 +35,39 @@
 
 import { engine, PlayerIdentityData } from '@dcl/sdk/ecs'
 import { createPersistedDoc } from './persistence'
-import { ADMIN_ADDRESSES } from '../shared/config'
+import { ADMIN_ADDRESSES, CAREER_STORAGE_MODE } from '../shared/config'
 import {
   UpgradeId, canPurchase, rankForXp, titleForXp, PurchaseRefusal,
   ACHIEVEMENTS, achievementStates, TITLE_XP,
 } from '../shared/progression'
+import {
+  ProgressRecord, SCHEMA_VERSION, emptyRecord, migrateRecord, isWorthKeeping,
+} from './careers/record'
+import { mergeSessionIntoStored } from './careers/merge'
+import {
+  BoardRow, CareerIndexDoc, INDEX_SCHEMA_VERSION,
+  projectBoardRow, boardRowToRecord, migrateIndex, indexIsEmpty,
+} from './careers/boardIndex'
+import { readCareer, writeCareer } from './careers/keyedStore'
+import { planMigration } from './careers/migration'
 
-// ── Record shape ──────────────────────────────────────────────────────────────
-// SCHEMA_VERSION is bumped whenever the stored shape changes. Stored data outlives
-// any single deploy, so an old-format record can surface at ANY time — typically
-// from a returning player long after the migration was written. migrate() therefore
-// stays permanently, and is written to cope with partial//unknown shapes rather than
-// assuming the previous version exactly.
-const SCHEMA_VERSION = 1
-
-export type ProgressRecord = {
-  v:            number
-  money:        number
-  xp:           number
-  upgrades:     Partial<Record<UpgradeId, number>>
-  shifts:       number   // completed shifts, for stats / leaderboard categories
-  lifetimeItems: number  // total items cleaned, all time
-  displayName:  string
-  // ── Retention hooks ─────────────────────────────────────────────────────────
-  bestItems:    number   // personal best items cleaned in a single shift
-  lastWorkDay:  string   // UTC 'YYYY-MM-DD' of the last PASSED shift
-  workStreak:   number   // consecutive days with at least one passed shift
-  dailyItems:   number   // items cleaned on dailyDay (drives the daily board)
-  dailyDay:     string   // UTC day the dailyItems counter belongs to
-  /**
-   * Lifetime per-kind tallies — the raw material for achievement gear ("clean
-   * 1000 pieces of pizza"). Keys are normalized letters-only kind names
-   * ('pizza', 'wineglass', 'deposit', 'shiftcocktailnight', …); achievements
-   * sum whatever keys they care about at read time. Counting ships AHEAD of
-   * the achievements because stats can't be backfilled. Sparse by nature —
-   * a player only holds keys for kinds they've actually touched.
-   */
-  kindCounts:   Record<string, number>
-  /** Equipped flex carrier ('' = none) — overrides the upgrade gear ladder.
-   *  Only ever set through setFlexGear, which re-checks the achievement. */
-  flexGear:     string
-  /**
-   * When this player FIRST reached Club Owner (ms epoch; 0 = never). Stamped by
-   * stampOwnerIfTop on every XP-changing path and never cleared — it orders the
-   * CLUB OWNERS wall (founding owner first). Owners who topped out before this
-   * field existed keep 0, which sorts them ahead: they were owners first.
-   */
-  ownerSinceMs: number
-}
-
-type ProgressDoc = {
-  v:       number
-  players: Record<string, ProgressRecord>
-}
-
-const emptyRecord = (displayName = ''): ProgressRecord => ({
-  v: SCHEMA_VERSION,
-  money: 0,
-  xp: 0,
-  upgrades: {},
-  shifts: 0,
-  lifetimeItems: 0,
-  displayName,
-  bestItems: 0,
-  lastWorkDay: '',
-  workStreak: 0,
-  dailyItems: 0,
-  dailyDay: '',
-  kindCounts: {},
-  flexGear: '',
-  ownerSinceMs: 0,
-})
+export { ProgressRecord }
 
 /**
  * First crossing into the top rank stamps the coronation date (once, ever).
  * Called on every XP-raising path — shift awards and admin grants alike — so
  * the CLUB OWNERS wall order can't depend on which path promoted the player.
  */
-function stampOwnerIfTop(rec: ProgressRecord): void {
+function stampOwnerIfTop(address: string, rec: ProgressRecord): void {
   if (rec.ownerSinceMs === 0 && rankForXp(rec.xp) >= TITLE_XP.length - 1) {
     rec.ownerSinceMs = Date.now()
-    dirty = true
+    markDirty(address)
   }
 }
 
 /** UTC day stamp — the boundary all daily mechanics share. */
 export const todayStr = (): string => new Date().toISOString().slice(0, 10)
 const yesterdayStr = (): string => new Date(Date.now() - 86_400_000).toISOString().slice(0, 10)
-
-/** Defensive upgrade of any stored record to the current schema. */
-function migrate(raw: any): ProgressRecord {
-  const rec = emptyRecord()
-  if (!raw || typeof raw !== 'object') return rec
-  // Field-by-field so an unknown or partial shape yields a valid record instead of
-  // throwing — a corrupt entry must never take down a player's whole session.
-  if (typeof raw.money === 'number')         rec.money         = Math.max(0, Math.floor(raw.money))
-  if (typeof raw.xp === 'number')            rec.xp            = Math.max(0, Math.floor(raw.xp))
-  if (typeof raw.shifts === 'number')        rec.shifts        = Math.max(0, Math.floor(raw.shifts))
-  if (typeof raw.lifetimeItems === 'number') rec.lifetimeItems = Math.max(0, Math.floor(raw.lifetimeItems))
-  if (typeof raw.displayName === 'string')   rec.displayName   = raw.displayName
-  if (typeof raw.bestItems === 'number')     rec.bestItems     = Math.max(0, Math.floor(raw.bestItems))
-  if (typeof raw.lastWorkDay === 'string')   rec.lastWorkDay   = raw.lastWorkDay
-  if (typeof raw.workStreak === 'number')    rec.workStreak    = Math.max(0, Math.floor(raw.workStreak))
-  if (typeof raw.dailyItems === 'number')    rec.dailyItems    = Math.max(0, Math.floor(raw.dailyItems))
-  if (typeof raw.dailyDay === 'string')      rec.dailyDay      = raw.dailyDay
-  if (raw.upgrades && typeof raw.upgrades === 'object') {
-    for (const [k, v] of Object.entries(raw.upgrades)) {
-      if (typeof v === 'number' && v > 0) rec.upgrades[k as UpgradeId] = Math.floor(v)
-    }
-  }
-  if (typeof raw.flexGear === 'string') rec.flexGear = raw.flexGear
-  if (typeof raw.ownerSinceMs === 'number') rec.ownerSinceMs = Math.max(0, Math.floor(raw.ownerSinceMs))
-  if (raw.kindCounts && typeof raw.kindCounts === 'object') {
-    for (const [k, v] of Object.entries(raw.kindCounts)) {
-      if (typeof v === 'number' && v > 0) rec.kindCounts[k] = Math.floor(v)
-    }
-  }
-  return rec
-}
 
 /**
  * Bumps a lifetime kind counter (see ProgressRecord.kindCounts). Guests count
@@ -146,7 +78,7 @@ export function bumpKindCount(address: string, kind: string, n = 1): void {
   const rec = records.get(address.toLowerCase())
   if (!rec) return
   rec.kindCounts[kind] = (rec.kindCounts[kind] ?? 0) + n
-  dirty = true
+  markDirty(address)
 }
 
 /**
@@ -172,7 +104,7 @@ export function adminSetAchievement(
     : def.target
   if (value > 0) rec.kindCounts[def.keys[0]] = value
   if (value < def.target && rec.flexGear === gear) rec.flexGear = ''
-  dirty = true
+  markDirty(address)
   return { ok: true, current: value, target: def.target }
 }
 
@@ -182,9 +114,51 @@ const guests  = new Set<string>()                   // addresses excluded from p
 // Addresses whose record came from the STORE — proof of a persistent identity,
 // which overrides an engine isGuest misreport (see registerProgressPlayer).
 const loadedFromStore = new Set<string>()
-let   dirty   = false
 
-const doc = createPersistedDoc<ProgressDoc>(
+// ── Dirty tracking ────────────────────────────────────────────────────────────
+// Per-address, not one global flag. 'blob' mode only needs "did anything change",
+// but 'keyed' mode has to know WHICH players to write — writing all of them would
+// throw away the entire point of the shape. One set serves both: blob reads its
+// size, keyed reads its members.
+const dirtyAddresses = new Set<string>()
+const isDirty = (): boolean => dirtyAddresses.size > 0
+function markDirty(address: string): void {
+  dirtyAddresses.add(address.toLowerCase())
+}
+
+const KEYED = CAREER_STORAGE_MODE === 'keyed'
+
+// ── Keyed-mode state ──────────────────────────────────────────────────────────
+// The board index, mirrored in memory. In keyed mode this is the ROSTER: an
+// address with a row provably has a stored career, which is the only way to tell
+// a failed per-player read from a genuinely new player. See careers/boardIndex.ts.
+const indexRows = new Map<string, BoardRow>()
+// Addresses whose in-memory record is the COMPLETE career, read from that
+// player's own key. Only these may be written back.
+const hydrated = new Set<string>()
+// Addresses the index vouches for but whose record would not read. Their record
+// in memory is a board projection or a stub, so writing it would destroy the real
+// career — they stay unwritable until a retry succeeds.
+const blocked = new Set<string>()
+// Coalesces concurrent hydration of the same address.
+const hydrating = new Map<string, Promise<void>>()
+
+/**
+ * The persisted document.
+ *
+ * blob:  every career, keyed by address.
+ * keyed: the board index only — full records live in per-player storage.
+ *
+ * Two DIFFERENT storage keys, deliberately. The migration writes the index
+ * without touching the legacy blob, so a cutover is reversible and a mode flip
+ * can never make one shape read the other's bytes.
+ */
+type ProgressDoc = {
+  v:       number
+  players: Record<string, ProgressRecord>
+}
+
+const blobDoc = KEYED ? null : createPersistedDoc<ProgressDoc>(
   'playerProgress',
   'PROGRESS',
   // Wipe guard: never overwrite stored progression with an empty player set.
@@ -195,14 +169,49 @@ const doc = createPersistedDoc<ProgressDoc>(
   { count: (d) => Object.keys(d?.players ?? {}).length },
 )
 
+// Keyed mode still needs to READ the legacy blob exactly once, to migrate off
+// it. Same key and same credentials as blob mode — it is the very same document.
+const legacyBlobDoc = KEYED ? createPersistedDoc<ProgressDoc>(
+  'playerProgress',
+  'PROGRESS',
+  (d) => !d || !d.players || Object.keys(d.players).length === 0,
+) : null
+
+// ITS OWN EnvVar PREFIX, WHICH IS NOT COSMETIC. On the jsonbin path
+// createPersistedDoc picks the bin from the PREFIX alone — the storage key is
+// only consulted for DCL Storage. Reusing 'PROGRESS' here would have written the
+// index straight into the legacy blob's bin and overwritten every career in it,
+// destroying both the "migration never touches the blob" guarantee and the
+// rollback. The index needs its own bin: CAREER_INDEX_BIN_ID / _BIN_KEY.
+const indexDoc = KEYED ? createPersistedDoc<CareerIndexDoc>(
+  'careerIndex',
+  'CAREER_INDEX',
+  // Wipe guard's per-player twin: an empty index destroys the roster, and with
+  // it the ability to tell a failed record read from a new player.
+  (d) => indexIsEmpty(d),
+) : null
+
 let loadStarted = false
 // The doc load is promise-guarded, but every caller of ensureProgressLoaded chains
 // its own .then — without this guard each caller re-ran the merge (harmless thanks
 // to the records.has check, but it double-logged and double-walked the document).
 let mergeDone = false
+// Set when a keyed career write fails, so the admin panel reports a save failure
+// even though the index document itself wrote fine.
+let careerWriteFailed = false
+
 /** Career-doc persistence health — surfaced on the in-world admin panel. */
 export function progressStorageStatus() {
-  return doc.status()
+  const base = (KEYED ? indexDoc! : blobDoc!).status()
+  if (!KEYED) return base
+  // Extra fields ride along harmlessly: the client parses this JSON into a typed
+  // shape and ignores what it does not name. lastSaveOk has to fold in per-player
+  // write health, or a green index would mask careers that are not saving.
+  return {
+    ...base,
+    lastSaveOk: careerWriteFailed ? false : base.lastSaveOk,
+    careersBlocked: blocked.size,
+  }
 }
 
 // Fired after the load merge RESTORES careers over pre-load stub records, so
@@ -214,96 +223,249 @@ export function setCareersRestoredHandler(fn: (addresses: string[]) => void): vo
 
 export function ensureProgressLoaded(): Promise<unknown> {
   loadStarted = true
-  return doc.ensureLoaded().then(applyStoredDoc).catch((e) => {
+  const load = KEYED
+    ? indexDoc!.ensureLoaded().then(applyStoredIndex)
+    : blobDoc!.ensureLoaded().then(applyStoredDoc)
+  return load.catch((e) => {
     // Saves stay blocked (loadConfirmed false), so nothing is overwritten.
     // The persistence layer keeps retrying in the background — if the store
-    // comes back, applyStoredDoc runs late (see the onLateLoad registration)
+    // comes back, the merge runs late (see the onLateLoad registrations)
     // and every connected player's real career is restored mid-session.
     console.log('[PROGRESS] load failed — progression will not persist until the store recovers:', e)
   })
 }
 
+/**
+ * Merges one stored career over whatever this session already had for it.
+ * Shared by both modes so the boot-race rules can never diverge between them.
+ * Returns true when a pre-load session stub was folded in (i.e. the player needs
+ * their corrected career pushed).
+ */
+function adoptStoredRecord(key: string, loaded: ProgressRecord): boolean {
+  const existing = records.get(key)
+  // A board projection is NOT session progress — it is seven fields read from the
+  // index with everything else at defaults. Merging it would double-count money
+  // and XP, so it is replaced outright.
+  const isProjection = KEYED && !hydrated.has(key) && indexRows.has(key) && existing !== undefined
+  const restored = existing !== undefined && !isProjection
+
+  if (restored) mergeSessionIntoStored(loaded, existing!)
+
+  records.set(key, loaded)
+  loadedFromStore.add(key)
+  // A stored career proves this identity persists — clear any guest
+  // misflag applied by a register that ran before the load settled.
+  if (guests.has(key)) {
+    guests.delete(key)
+    console.log(`[PROGRESS] ${key} was flagged guest but has a stored career — flag cleared`)
+  }
+  if (restored) console.log(`[PROGRESS] restored stored career for ${key} over a pre-load session stub`)
+  return restored
+}
+
+// ── blob mode ─────────────────────────────────────────────────────────────────
 // Runs for the FOREGROUND load and for a background LATE load alike: the merge
 // is additive over session records (the boot-race design), which is exactly
 // the right behavior when careers arrive minutes into a session too — what was
 // earned during the outage stacks on top of the restored career.
 function applyStoredDoc(stored: ProgressDoc | null): void {
-  {
-    if (mergeDone) return
-    mergeDone = true
-    if (!stored || !stored.players) return
-    let n = 0
-    const restored: string[] = []
-    for (const [address, raw] of Object.entries(stored.players)) {
-      const key    = address.toLowerCase()
-      const loaded = migrate(raw)
-      const existing = records.get(key)
-      if (existing) {
-        // BOOT RACE — the bug that erased the owner's career on every
-        // republish: a player who joins before the read settles (after a
-        // republish, that is almost always the OWNER testing) gets a fresh
-        // stub record; the old skip-if-present merge then ignored their real
-        // career, and the next shift-end save wrote the stub over it in the
-        // store. The stub only ever holds THIS session's pre-load earnings
-        // (records are only created via emptyRecord), so the fix is to ADD
-        // those few minutes on top of the restored career — nobody loses
-        // either side of the race.
-        loaded.money         += existing.money
-        loaded.xp            += existing.xp
-        loaded.shifts        += existing.shifts
-        loaded.lifetimeItems += existing.lifetimeItems
-        loaded.bestItems      = Math.max(loaded.bestItems, existing.bestItems)
-        for (const [id, lvl] of Object.entries(existing.upgrades)) {
-          const u = id as UpgradeId
-          loaded.upgrades[u] = Math.max(loaded.upgrades[u] ?? 0, lvl ?? 0)
-        }
-        if (existing.displayName) loaded.displayName = existing.displayName
-        // Pre-load kind tallies are additive, same as the headline numbers —
-        // dropping them undercounted the achievement counters by whatever the
-        // player touched before the read settled.
-        for (const [k, cnt] of Object.entries(existing.kindCounts)) {
-          loaded.kindCounts[k] = (loaded.kindCounts[k] ?? 0) + cnt
-        }
-        // Daily fields: SAME day sums (both sides earned today), a strictly
-        // newer session day replaces. The old >=-replace dropped the stored
-        // day's count whenever the race happened on the same UTC day —
-        // which is when it always happens.
-        if (existing.dailyDay === loaded.dailyDay && existing.dailyDay !== '') {
-          loaded.dailyItems += existing.dailyItems
-        } else if (existing.dailyDay > loaded.dailyDay) {
-          loaded.dailyItems = existing.dailyItems
-          loaded.dailyDay   = existing.dailyDay
-        }
-        if (existing.lastWorkDay >= loaded.lastWorkDay && existing.lastWorkDay !== '') {
-          loaded.lastWorkDay = existing.lastWorkDay
-          loaded.workStreak  = Math.max(loaded.workStreak, existing.workStreak)
-        }
-        restored.push(key)
-        console.log(`[PROGRESS] restored stored career for ${key} over a pre-load session stub`)
-      }
-      records.set(key, loaded)
-      loadedFromStore.add(key)
-      // A stored career proves this identity persists — clear any guest
-      // misflag applied by a register that ran before the load settled.
-      if (guests.has(key)) {
-        guests.delete(key)
-        console.log(`[PROGRESS] ${key} was flagged guest but has a stored career — flag cleared`)
-      }
-      n++
-    }
-    console.log(`[PROGRESS] loaded ${n} player records${restored.length ? ` (${restored.length} restored over boot-race stubs)` : ''}`)
-    if (restored.length > 0) {
-      dirty = true   // the merged truth should reach the store at the next checkpoint
-      onCareersRestored?.(restored)
+  if (mergeDone) return
+  mergeDone = true
+  if (!stored || !stored.players) return
+  let n = 0
+  const restored: string[] = []
+  for (const [address, raw] of Object.entries(stored.players)) {
+    const key = address.toLowerCase()
+    if (adoptStoredRecord(key, migrateRecord(raw))) restored.push(key)
+    n++
+  }
+  console.log(`[PROGRESS] loaded ${n} player records${restored.length ? ` (${restored.length} restored over boot-race stubs)` : ''}`)
+  finishRestore(restored)
+}
+
+// ── keyed mode ────────────────────────────────────────────────────────────────
+/**
+ * Adopts the board index. This does NOT load careers — it loads the roster plus
+ * the seven fields the boards read, so offline veterans keep appearing on TOP
+ * EARNERS and the CLUB OWNERS wall without holding every career in RAM.
+ *
+ * Records created here are PROJECTIONS and are never written back (see
+ * boardRowToRecord). A player's real career is fetched by hydrate() when they
+ * join, which is also when they become writable.
+ */
+function applyStoredIndex(stored: CareerIndexDoc | null): void {
+  if (mergeDone) return
+  mergeDone = true
+  // Captured BEFORE projections are added: everyone already in `records` at this
+  // point got there from a live session (register or getProgress's create-on-read),
+  // so these are the players actually in the club — the ones who need a real
+  // career read. Everyone else only needs their board projection.
+  const present = [...records.keys()]
+
+  const doc = migrateIndex(stored)
+  let projected = 0
+  for (const [address, row] of Object.entries(doc.rows)) {
+    const key = address.toLowerCase()
+    indexRows.set(key, row)
+    // Never clobber a live session record with a projection — a player already
+    // in the club has real earnings in memory and is about to be hydrated.
+    if (!records.has(key)) {
+      records.set(key, boardRowToRecord(row))
+      projected++
     }
   }
+  console.log(`[PROGRESS] board index loaded: ${indexRows.size} roster row(s), ${projected} projected for boards`)
+
+  // The boot-race case: players who joined before the index landed. Hydrating
+  // them folds this session's pre-load earnings onto their stored career.
+  for (const key of present) if (!hydrated.has(key)) void hydrateCareer(key)
+
+  // A CONFIRMED-empty index on a world that has a legacy blob means this is the
+  // first keyed boot. (Confirmed matters: ensureLoaded rejects rather than
+  // resolving when the read fails, so an empty index here is a real fact, not an
+  // outage. Migrating on an outage would be catastrophic.)
+  if (indexRows.size === 0) void runMigration()
+}
+
+/**
+ * One-time move of every career out of the legacy blob into per-player keys.
+ *
+ * Runs at most once per world: afterwards the index has rows, so the caller's
+ * emptiness check never fires again. The legacy blob is left completely intact —
+ * see careers/migration.ts for why that matters.
+ */
+async function runMigration(): Promise<void> {
+  console.log('[PROGRESS] board index is empty — looking for a legacy blob to migrate')
+  let blob: ProgressDoc | null
+  try {
+    blob = await legacyBlobDoc!.ensureLoaded()
+  } catch (e) {
+    console.log('[PROGRESS] migration ABORTED — the legacy blob would not read, so an empty index ' +
+      'cannot be trusted to mean "nothing to migrate". Nothing written. Will retry on the next boot:', e)
+    return
+  }
+  if (!blob || !blob.players || Object.keys(blob.players).length === 0) {
+    console.log('[PROGRESS] no legacy careers found — starting fresh in keyed mode')
+    return
+  }
+
+  const plan = planMigration(blob.players)
+  console.log(`[PROGRESS] MIGRATING ${plan.writes.length} career(s) to per-player storage` +
+    `${plan.pruned ? ` (${plan.pruned} empty record(s) pruned)` : ''} — the legacy blob is left untouched`)
+
+  // Bounded concurrency. Sequential would take minutes on a large roster; all at
+  // once would hammer a service whose rate limits are undocumented (the repo's
+  // "~40 concurrent" figure is an empirical observation, not a contract).
+  const CONCURRENCY = 8
+  const done: Array<{ address: string; record: ProgressRecord }> = []
+  const failed: string[] = []
+  const queue = [...plan.writes]
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const next = queue.shift()
+      if (!next) return
+      const ok = await writeCareer(next.address, next.record)
+      if (ok) done.push(next)
+      else failed.push(next.address)
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker))
+
+  if (done.length === 0) {
+    console.log('[PROGRESS] migration wrote NOTHING — index left empty so the next boot retries')
+    return
+  }
+
+  // Index only the careers that ACTUALLY landed. Listing a player whose record
+  // failed to write would make the roster vouch for a career that is not there,
+  // and every later read of it would be classified as a failure — blocking that
+  // player instead of letting the next attempt fix them.
+  const rows: Record<string, BoardRow> = {}
+  for (const { address, record } of done) rows[address] = projectBoardRow(record)
+  const indexOk = await indexDoc!.save({ v: INDEX_SCHEMA_VERSION, rows })
+
+  if (!indexOk) {
+    console.log(`[PROGRESS] migration WROTE ${done.length} career(s) but the index write FAILED. ` +
+      'Careers are safe in per-player storage; the next boot sees an empty index and re-derives ' +
+      'the index from the blob. No data lost.')
+    return
+  }
+
+  // Adopt into memory so this session serves the migrated state immediately.
+  for (const { address, record } of done) {
+    indexRows.set(address, projectBoardRow(record))
+    if (!records.has(address)) records.set(address, record)
+    hydrated.add(address)
+    loadedFromStore.add(address)
+  }
+  console.log(`[PROGRESS] MIGRATION COMPLETE — ${done.length} career(s) now per-player` +
+    `${failed.length ? `, ${failed.length} FAILED and still only in the blob (retried next boot)` : ''}. ` +
+    'Verify the boards, then keep the blob as a rollback point.')
+}
+
+/**
+ * Reads one player's full career from their own key and makes them writable.
+ *
+ * The three outcomes are the whole safety story — see careers/keyedStore.ts:
+ *   found   adopt it (folding in any pre-load session earnings) and hydrate.
+ *   absent  provably new: the session record IS the truth, so hydrate as-is.
+ *   failed  the roster says a career exists but we could not read it. Do NOT
+ *           hydrate — that leaves the player unwritable, so a save can never
+ *           overwrite a real career with a projection or a stub.
+ */
+export async function hydrateCareer(address: string): Promise<void> {
+  if (!KEYED) return
+  const key = address.toLowerCase()
+  if (hydrated.has(key)) return
+  const inflight = hydrating.get(key)
+  if (inflight) return inflight
+
+  const run = (async () => {
+    const result = await readCareer(key, indexRows.has(key))
+    if (result.outcome === 'found') {
+      const restored = adoptStoredRecord(key, result.record)
+      hydrated.add(key)
+      blocked.delete(key)
+      if (restored) finishRestore([key])
+    } else if (result.outcome === 'absent') {
+      // No stored career and the roster agrees. Whatever is in memory (a fresh
+      // record, or this session's earnings so far) is the truth from here.
+      if (!records.has(key)) records.set(key, emptyRecord())
+      hydrated.add(key)
+      blocked.delete(key)
+    } else {
+      blocked.add(key)
+      console.log(`[PROGRESS] career read BLOCKED for ${key} — ${result.reason}. ` +
+        `Saves for this player are refused until a retry succeeds (nothing will be overwritten).`)
+    }
+  })().finally(() => { hydrating.delete(key) })
+
+  hydrating.set(key, run)
+  return run
+}
+
+/** Re-attempts every blocked hydration. Called at each save checkpoint. */
+async function retryBlockedHydrations(): Promise<void> {
+  if (blocked.size === 0) return
+  const pending = [...blocked]
+  console.log(`[PROGRESS] retrying ${pending.length} blocked career read(s)`)
+  await Promise.all(pending.map((k) => hydrateCareer(k)))
+}
+
+/** Shared tail of every restore path. */
+function finishRestore(restored: string[]): void {
+  if (restored.length === 0) return
+  // The merged truth should reach the store at the next checkpoint.
+  for (const key of restored) markDirty(key)
+  onCareersRestored?.(restored)
 }
 
 // Background recovery: a load that succeeds after the foreground window gave
 // up flows through the SAME merge, restoring careers mid-session (every
 // connected player has a session record by then, so they all land in
 // `restored` and get their corrected state pushed).
-doc.onLateLoad(applyStoredDoc)
+if (KEYED) indexDoc!.onLateLoad(applyStoredIndex)
+else blobDoc!.onLateLoad(applyStoredDoc)
 
 /**
  * Whether this address belongs to a guest account.
@@ -337,6 +499,15 @@ export function registerProgressPlayer(address: string, displayName: string): Pr
     records.set(key, rec)
   }
   if (displayName) rec.displayName = displayName
+  // A rename is a real change that used to reach the store only if some other
+  // mutation happened to mark the document dirty before the next checkpoint.
+  if (displayName) markDirty(key)
+
+  // Keyed mode: fetch this player's real career. Deliberately not awaited — the
+  // caller is synchronous and the additive merge is built for exactly this race,
+  // so a player who acts before their career lands keeps those earnings and gets
+  // the corrected total pushed by setCareersRestoredHandler.
+  if (KEYED) void hydrateCareer(key)
 
   if (detectGuest(key)) {
     // The engine's isGuest is not fully trustworthy (the deployed explorer
@@ -373,7 +544,7 @@ export function setFlexGear(address: string, gear: string): boolean {
   if (gear === '') {
     if (rec.flexGear === '') return true
     rec.flexGear = ''
-    dirty = true
+    markDirty(address)
     return true
   }
   const def = ACHIEVEMENTS.find((a) => a.gear === gear)
@@ -381,7 +552,7 @@ export function setFlexGear(address: string, gear: string): boolean {
   const state = achievementStates(rec.kindCounts).find((s) => s.gear === gear)
   if (!state?.unlocked) return false
   rec.flexGear = gear
-  dirty = true
+  markDirty(address)
   return true
 }
 
@@ -479,10 +650,10 @@ export function awardShift(
   rec.xp    += xpApplied
   rec.shifts += 1
   rec.lifetimeItems += Math.max(0, itemsCleaned)
-  stampOwnerIfTop(rec)
+  stampOwnerIfTop(address, rec)
 
   const rankAfter = rankForXp(rec.xp)
-  dirty = true
+  markDirty(address)
 
   return {
     record: rec,
@@ -510,8 +681,8 @@ export function adminAdjust(
   const rankBefore = rankForXp(rec.xp)
   rec.money = Math.max(0, rec.money + Math.round(money))
   rec.xp    = Math.max(0, rec.xp + Math.round(xp))
-  dirty = true
-  stampOwnerIfTop(rec)
+  markDirty(address)
+  stampOwnerIfTop(address, rec)
   const rankAfter = rankForXp(rec.xp)
   return { record: rec, promotedTo: rankAfter > rankBefore ? titleForXp(rec.xp) : null }
 }
@@ -532,7 +703,7 @@ export function purchaseUpgrade(
 
   rec.money -= check.cost
   rec.upgrades[id] = level + 1
-  dirty = true
+  markDirty(address)
   return { ok: true, record: rec, level: level + 1 }
 }
 
@@ -540,33 +711,27 @@ export function purchaseUpgrade(
  * Persists all non-guest records. Call at shift end (a checkpoint), never per clean.
  * No-ops when nothing changed, so an idle server makes no requests.
  */
-/**
- * Whether a record is worth persisting.
- *
- * Deliberately conservative: a career is a player's investment, and there is no
- * undo for deleting one. So this only drops records that represent NO earned
- * progress at all — someone who arrived, got a row created by getProgress (which
- * creates on read), and never completed a shift or bought anything. Everyone who
- * has actually played is kept forever, however long ago.
- *
- * That keeps the document proportional to real players rather than to every
- * address that has ever loaded the scene.
- */
-function isWorthKeeping(rec: ProgressRecord): boolean {
-  return rec.shifts > 0 || rec.xp > 0 || rec.money > 0 || rec.lifetimeItems > 0
-}
-
 export async function saveProgress(): Promise<void> {
-  if (!dirty) return
+  if (!isDirty()) return
   if (!loadStarted) {
     console.log('[PROGRESS] save skipped — load never started')
     return
   }
+  if (KEYED) return saveKeyed()
+  return saveBlob()
+}
+
+/** Whether this address's record may be persisted at all. */
+function persistable(address: string, rec: ProgressRecord): boolean {
+  if (guests.has(address)) return false      // session-only, never written
+  return isWorthKeeping(rec)
+}
+
+async function saveBlob(): Promise<void> {
   const players: Record<string, ProgressRecord> = {}
   let pruned = 0
   for (const [address, rec] of records) {
-    if (guests.has(address)) continue   // session-only, never written
-    if (!isWorthKeeping(rec)) { pruned++; continue }
+    if (!persistable(address, rec)) { if (!guests.has(address)) pruned++; continue }
     players[address] = rec
   }
   if (pruned > 0) console.log(`[PROGRESS] skipped ${pruned} empty record(s)`)
@@ -576,7 +741,80 @@ export async function saveProgress(): Promise<void> {
   // then restore on failure so the next checkpoint retries — the old
   // clear-and-forget meant a failed final save (e.g. right before the empty-
   // club shutdown) silently lost the shift.
-  dirty = false
-  const ok = await doc.save({ v: SCHEMA_VERSION, players })
-  if (!ok) dirty = true
+  const inFlight = [...dirtyAddresses]
+  dirtyAddresses.clear()
+  const ok = await blobDoc!.save({ v: SCHEMA_VERSION, players })
+  if (!ok) for (const a of inFlight) dirtyAddresses.add(a)
+}
+
+/**
+ * Writes only the players who changed, then refreshes the board index.
+ *
+ * ORDER MATTERS AND IS NOT A TRANSACTION. The SDK has no multi-key write, no
+ * CAS and no rollback, so the record and the index cannot land atomically. The
+ * record goes first on purpose:
+ *   record ok, index fails  → the career is safe; the boards lag by one
+ *                             checkpoint and self-heal at the next save.
+ *   index ok, record fails  → the roster would vouch for a career that is not
+ *                             there, and every later read of it would be
+ *                             classified as a FAILURE, blocking that player
+ *                             for the session. Strictly worse, hence the order.
+ */
+async function saveKeyed(): Promise<void> {
+  // Give blocked players another chance before deciding who to write — a player
+  // whose read recovers here gets their real career saved this checkpoint
+  // instead of waiting for the next one.
+  await retryBlockedHydrations()
+
+  const inFlight = [...dirtyAddresses]
+  dirtyAddresses.clear()
+  careerWriteFailed = false
+
+  let written = 0
+  let pruned  = 0
+  let skipped = 0
+  const failed: string[] = []
+
+  for (const address of inFlight) {
+    const rec = records.get(address)
+    if (!rec) continue
+    if (!persistable(address, rec)) { if (!guests.has(address)) pruned++; continue }
+    // THE GUARD THAT MAKES THIS SHAPE SAFE. An un-hydrated record is either a
+    // board projection (seven fields, everything else at defaults) or a stub
+    // for a player whose stored career would not read. Writing either one
+    // destroys a real career. Keep them dirty so a later checkpoint retries.
+    if (!hydrated.has(address)) {
+      skipped++
+      dirtyAddresses.add(address)
+      continue
+    }
+    const ok = await writeCareer(address, rec)
+    if (ok) {
+      written++
+      indexRows.set(address, projectBoardRow(rec))
+    } else {
+      failed.push(address)
+      dirtyAddresses.add(address)
+    }
+  }
+
+  if (pruned > 0)  console.log(`[PROGRESS] skipped ${pruned} empty record(s)`)
+  if (skipped > 0) console.log(`[PROGRESS] skipped ${skipped} un-hydrated record(s) — will retry (no data overwritten)`)
+  if (failed.length > 0) {
+    careerWriteFailed = true
+    console.log(`[PROGRESS] ERROR: ${failed.length} career write(s) failed — will retry at the next checkpoint`)
+  }
+
+  if (written === 0) return
+
+  // Refresh the roster + board projections. One document, written whole, but it
+  // carries seven scalars per player rather than every career in full.
+  const rows: Record<string, BoardRow> = {}
+  for (const [address, row] of indexRows) rows[address] = row
+  const indexOk = await indexDoc!.save({ v: INDEX_SCHEMA_VERSION, rows })
+  if (!indexOk) {
+    careerWriteFailed = true
+    console.log('[PROGRESS] ERROR: board index write failed — careers are saved, boards will lag until the next checkpoint')
+  }
+  console.log(`[PROGRESS] saved ${written} career record(s), index ${indexOk ? 'updated' : 'STALE'} (${indexRows.size} rows)`)
 }

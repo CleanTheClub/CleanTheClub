@@ -24,6 +24,33 @@ export const DEBUG = false
 // also the safe default.)
 export const REQUIRE_EXTERNAL_STORE = !DEBUG
 
+// ── Career storage shape ──────────────────────────────────────────────────────
+// 'blob'  — one document holds every career. The original shape. Grows on two
+//           axes (players × the variety each player touches, via kindCounts),
+//           warns at 100KB, and rewrites every career on every save. Works on
+//           jsonbin, which is one document per bin and therefore cannot hold
+//           per-player keys at all.
+// 'keyed' — one DCL-storage key per wallet for the full record, plus a small
+//           cross-player index document for the boards. A save writes one
+//           player instead of everyone; the unbounded fields never touch the
+//           shared document. See src/server/careers/boardIndex.ts.
+//
+// DEFAULT IS 'blob', ON PURPOSE. 'keyed' requires DCL Storage — the backend this
+// scene stopped trusting in June, when `Storage` behaved as if scoped per DEPLOY
+// rather than per location on a World (see the persistence.ts header). That
+// observation is still marked UNRESOLVED and has never been re-tested. Flipping
+// this to 'keyed' before running the deploy → write → redeploy → read check in
+// DEPLOY.md would bet every career on the bug being gone.
+//
+// Switching is non-destructive in one direction: the migration writes per-player
+// records and the index while LEAVING the legacy blob intact, so 'keyed' can be
+// reverted to 'blob' and the old document is still there. Progress earned while
+// in 'keyed' mode does NOT flow back into the blob, so a revert loses whatever
+// was earned after the cutover — treat the flip as a one-way door in practice
+// and verify first.
+export type CareerStorageMode = 'blob' | 'keyed'
+export const CAREER_STORAGE_MODE: CareerStorageMode = 'blob'
+
 // V2: every round runs the SAME duration (per the GDD — the old shrinking table
 // 3:00→1:00 was a V1 finale-pressure mechanic that no longer fits the endless
 // loop). Difficulty comes from respawn scaling, not a shrinking clock. Single
