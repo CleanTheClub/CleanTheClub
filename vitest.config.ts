@@ -10,9 +10,13 @@ import { fileURLToPath } from 'node:url'
 // test the whole thing, and it keeps the seam visible rather than reaching for a
 // mock framework per test.
 //
-// The alias is also a constraint worth keeping. If a test ever needs a SECOND
-// alias — `@dcl/sdk/ecs`, or anything under `~system/` — that means the module
-// under test picked up a dependency it should not have: `~system/*` modules are
+// The pure career logic under src/server/careers/ needs NO alias at all:
+// record.ts, merge.ts, boardIndex.ts and migration.ts import nothing but each
+// other and shared/progression.ts, which has no imports of its own.
+//
+// That split is the constraint worth keeping. If a test ever needs a SECOND
+// alias — `@dcl/sdk/ecs`, or anything under `~system/` — the module under test
+// has picked up a dependency it should not have: `~system/*` modules are
 // type-only declarations with no runtime JS at all, and several SDK entry points
 // perform network calls at import time. Extract the logic instead of stubbing
 // more of the platform.
