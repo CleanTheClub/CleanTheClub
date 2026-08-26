@@ -11,6 +11,16 @@
 > passed so safeArea.ts stays the one inset authority. Desktop verified;
 > item 3's REAL-PHONE CHECK IS STILL OWED before the next deploy.
 
+> **STATUS 2026-08-26: THE PIN IS NOW DETACHED.** `auth-server` has rebased
+> twice more since we pinned and currently reads
+> `7.26.1-32860802198.commit-dae48fb` (published 08-25). No dist-tag points at
+> our `commit-0b97733` any more. That is not urgent — the version is still
+> published, installable, and its integrity matches the lockfile — but we are on
+> a build nobody else is testing against, and the gap widens with every rebase.
+> Decide deliberately whether to track `auth-server` again or stay put; do not
+> let a stray `npm install` decide it for us. Both `upgrade-sdk` scripts are
+> blocked for exactly that reason.
+
 The scene is pinned to the **auth-server** dist-tag:
 
     "@dcl/sdk": "7.26.1-32160793830.commit-0b97733"
@@ -20,21 +30,29 @@ runtime this game depends on. `npm run upgrade-sdk` used to re-resolve the
 `auth-server` tag, which silently moves the pin wherever the tag now points.
 It is deliberately blocked; do the install by hand once you've read this.
 
-## Before you start: is it even possible yet?
+## Before you start
 
     npm view @dcl/sdk dist-tags
 
-Two things must be true before any of this is actionable:
+**The original gate is CLEARED — this section is kept for the rule it encodes.**
+It used to read "7.26.0 must exist" and "`auth-server` must point at a 7.26.x
+build". Both happened: 7.26.0 published 08-13, `auth-server` rebased onto 7.26.x,
+and we migrated on 08-19.
 
-* **7.26.0 exists.** As of 2026-08-11 it does not — `latest` is 7.25.0 and no
-  7.26.x is published.
-* **`auth-server` points at a 7.26.x build.** THIS is the real gate. Moving to
-  mainline 7.26.0 means leaving the auth-server tag, which means losing the
-  multiplayer server runtime the whole game is built on. Being pinned is not
-  the problem to solve here — waiting for the rebase is.
+The rule that still holds: **never move to a mainline `latest`.** Leaving the
+`auth-server` line means losing the multiplayer server runtime the whole game is
+built on. Any pin we adopt must be an `auth-server` build.
 
-If `auth-server` still reads `7.25.1-…`, there is nothing to do. Staying put
-costs us nothing and the live scene is unaffected.
+The live question now is drift, not availability. As of 2026-08-26:
+
+    latest       7.26.0
+    auth-server  7.26.1-32860802198.commit-dae48fb   ← moved 08-25
+    next         7.26.1-32969506852.commit-b7a44a2
+    ours         7.26.1-32160793830.commit-0b97733   ← no tag points here
+
+Re-running the four UI items below is only warranted if a newer `auth-server`
+build changes UI scaling again. Check its release notes before assuming it does;
+the 7.26 scaling rework is already absorbed.
 
 ## SDK 7.26.0 changes UI scaling — we are exposed in four places
 
@@ -118,5 +136,6 @@ auth-server SDK version, where our current UI values are already correct.
 4. Fix the four items above.
 5. Publish only once the UI is right.
 
-If the auth-server tag has not rebased onto 7.26.0 yet, there is nothing to do
-— staying on 7.25.1 is correct and costs us nothing.
+Staying on a known-good `auth-server` pin always costs us nothing. Moving
+without doing steps 2-4 can cost us the server runtime or the HUD, so the
+`upgrade-sdk` scripts stay blocked and the install stays manual.

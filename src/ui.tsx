@@ -2375,6 +2375,7 @@ const uiBody = () => {
           {(() => {
             const s = storageStatus
             const text = !s ? 'storage: …'
+              : s.backend === 'unresolved' ? 'storage: BIN ENVVARS UNRESOLVED — see server log'
               : s.backend === 'storage' ? 'storage: DCL (WIPES ON REPUBLISH!)'
               : !s.loadConfirmed ? 'storage: jsonbin — LOAD FAILED'
               : s.lastSaveOk === false ? 'storage: jsonbin — SAVE FAILED'

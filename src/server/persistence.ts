@@ -35,8 +35,16 @@ const READ_WINDOW_MS = 30_000   // total time to keep trying before giving up
 const SIZE_WARN_BYTES = 100 * 1024
 
 export type DocStatus = {
-  /** 'pending' until the first backend resolution. */
-  backend: 'jsonbin' | 'storage' | 'pending'
+  /**
+   * 'pending'    — no resolution attempted yet (boot).
+   * 'jsonbin'    — external store resolved and in use.
+   * 'storage'    — DCL Storage fallback in use (only when REQUIRE_EXTERNAL_STORE is off).
+   * 'unresolved' — attempted, but the BIN_* pair did not resolve. Distinct from
+   *                'pending': it is a live fault, not a boot state. Unset vars
+   *                and a failing EnvVar read are indistinguishable here by
+   *                design (see getBinCfg), so the log is the tie-breaker.
+   */
+  backend: 'jsonbin' | 'storage' | 'pending' | 'unresolved'
   loadConfirmed: boolean
   /** True once the load has DEFINITIVELY failed (retry window exhausted, or
    *  external store required but unconfigured) — drives the player-facing
@@ -90,31 +98,63 @@ export function createPersistedDoc<T>(
   let lastSaveOk: boolean | null = null
   let lastSaveMs = 0
 
-  // ── Backend resolution (once per document) ──────────────────────────────────
+  // ── Backend resolution ──────────────────────────────────────────────────────
+  // Cache ONLY a POSITIVE resolution. `EnvVar.get` does not throw when the
+  // storage-service read fails — it logs and returns '' (@dcl/sdk/src/server/
+  // env-var.ts: `if (error) { console.error(...); return '' }`, and the typings
+  // say "or empty string if not found"). So '' is genuinely ambiguous: the var
+  // may be unset for this world, OR the read may have just failed.
+  //
+  // The 2026-08-17 fix tried to keep a transient blip out of the cache by moving
+  // the latch inside a try/catch. That catch is unreachable for service failures,
+  // so the latch closed anyway and pinned the WHOLE server session to a null
+  // config: `read()` then threw under REQUIRE_EXTERNAL_STORE, and every
+  // foreground retry AND the forever background loop re-read the cached null
+  // instead of re-asking. One bad read at boot — exactly when the platform is
+  // coldest — blocked every save until the next deploy restarted the process,
+  // which reads to players as "the deploy wiped my career".
+  //
+  // Never caching the negative is what makes those retry loops able to heal. The
+  // cost is two EnvVar fetches per attempt while unresolved (8 across the 30s
+  // window, then one pair a minute); once resolved it is cached for good.
   let binCfg: { id: string; key: string } | null = null
-  let binCfgLoaded = false
+  let binCfgAttempted = false
   async function getBinCfg(): Promise<{ id: string; key: string } | null> {
-    if (binCfgLoaded) return binCfg
+    if (binCfg) return binCfg
+    binCfgAttempted = true
+
+    let id = ''
+    let bk = ''
     try {
-      const id  = await EnvVar.get(`${envPrefix}_BIN_ID`)
-      const bk  = await EnvVar.get(`${envPrefix}_BIN_KEY`)
-      binCfg = id && bk ? { id, key: bk } : null
-      // Cache ONLY a clean answer. A clean-but-empty read ("no vars set") is a
-      // definitive configuration fact; an ERROR is a transient EnvVar-service
-      // blip — and caching that null used to lock the ENTIRE server session
-      // into the DCL Storage fallback off one bad read at boot, exactly when
-      // the platform is coldest. Plausible root cause of the 2026-08-17 wipe
-      // scare. Left uncached, the load retry loop re-asks every attempt.
-      binCfgLoaded = true
+      id = await EnvVar.get(`${envPrefix}_BIN_ID`)
+      bk = await EnvVar.get(`${envPrefix}_BIN_KEY`)
     } catch (e) {
-      console.log(`[STORE:${key}] EnvVar read ERROR (transient? will retry):`, e)
-      binCfg = null
+      // Only reachable off-server (assertIsServer), but a throw must behave
+      // exactly like an unreadable value: report it, cache nothing, re-ask.
+      console.log(`[STORE:${key}] EnvVar read threw (will re-ask):`, e)
       return null
     }
-    console.log(binCfg
-      ? `[STORE:${key}] persistence: external store (jsonbin)`
-      : `[STORE:${key}] persistence: DCL Storage (no ${envPrefix}_BIN_* env vars)`)
-    return binCfg
+
+    if (id && bk) {
+      binCfg = { id, key: bk }
+      console.log(`[STORE:${key}] persistence: external store (jsonbin)`)
+      return binCfg
+    }
+
+    // Half-configured is always a deploy mistake, never a transient read: both
+    // values live in the same place, so one arriving without the other means the
+    // pair was set wrong. Its own line, because waiting will not fix it.
+    if (id || bk) {
+      const present = id ? `${envPrefix}_BIN_ID` : `${envPrefix}_BIN_KEY`
+      const missing = id ? `${envPrefix}_BIN_KEY` : `${envPrefix}_BIN_ID`
+      console.log(`[STORE:${key}] WARNING: ${present} resolved but ${missing} did not — the ` +
+        `${envPrefix}_BIN_* pair is half-configured. Set BOTH and republish (see DEPLOY.md).`)
+    } else {
+      console.log(`[STORE:${key}] ${envPrefix}_BIN_* unresolved — either unset for this world, or the ` +
+        `EnvVar read failed. The SDK logs "Failed to fetch environment variable" immediately above when ` +
+        `it was a failed read; nothing above means genuinely unset. Will re-ask (see DEPLOY.md).`)
+    }
+    return null
   }
 
   // Returns the parsed document, or null when the read could not be COMPLETED.
@@ -135,7 +175,20 @@ export function createPersistedDoc<T>(
       const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}/latest`, {
         headers: { 'X-Master-Key': cfg.key },
       })
-      if (res.status === 404) return null            // empty/new bin — nothing stored yet
+      if (res.status === 404) {
+        // A 404 means jsonbin holds no document at this id. That is correct and
+        // expected on a brand-new bin — but it is ALSO exactly what a mistyped
+        // or re-pointed BIN_ID looks like, and the two are indistinguishable
+        // from here. Either way the load counts as settled-empty, so the next
+        // save writes this session's records as the WHOLE document: a re-point
+        // silently replaces the careers it can no longer see. Loud in the boot
+        // log, because the only recovery is the OLD bin's version history.
+        console.log(`[STORE:${key}] WARNING: jsonbin 404 for the configured ${envPrefix}_BIN_ID — ` +
+          `treating this document as EMPTY. Expected only on a brand-new bin. If it should have had ` +
+          `data, stop the world and check ${envPrefix}_BIN_ID before the next save overwrites from ` +
+          `an empty base (see DEPLOY.md).`)
+        return null
+      }
       if (!res.ok) throw new Error(`jsonbin read ${res.status}`)
       const json: any = await res.json()
       return (json?.record ?? null) as T | null
@@ -298,7 +351,13 @@ export function createPersistedDoc<T>(
 
     status(): DocStatus {
       return {
-        backend: !binCfgLoaded ? 'pending' : binCfg ? 'jsonbin' : 'storage',
+        backend: binCfg ? 'jsonbin'
+          : !binCfgAttempted ? 'pending'
+          // With the external store required there IS no DCL Storage fallback —
+          // read() refuses instead — so an unresolved pair must not report as
+          // 'storage', which would claim a backend that is never used.
+          : REQUIRE_EXTERNAL_STORE ? 'unresolved'
+          : 'storage',
         loadConfirmed,
         loadFailed,
         lastSaveOk,
