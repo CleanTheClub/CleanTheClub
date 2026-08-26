@@ -123,6 +123,11 @@ export function createPersistedDoc<T>(
   let loadFailed = false
   let lastSaveOk: boolean | null = null
   let lastSaveMs = 0
+  // Serialized size of the last document we know the backend holds. Only used
+  // for logging: the isEmpty guard is binary, so it catches a 100% loss but not
+  // a 90% one, and a delta in the log is the cheapest way to make a truncated
+  // read visible before it becomes a truncated write.
+  let lastKnownBytes: number | null = null
 
   // ── Backend resolution ──────────────────────────────────────────────────────
   // Cache ONLY a positive resolution. `EnvVar.get` returns '' both when a var is
@@ -146,7 +151,7 @@ export function createPersistedDoc<T>(
     } catch (e) {
       // Only reachable off-server, but a throw must behave like an unreadable
       // value: report it, cache nothing, re-ask.
-      console.log(`[STORE:${key}] EnvVar read threw (will re-ask):`, e)
+      console.error(`[STORE:${key}] EnvVar read threw (will re-ask):`, e)
       return null
     }
 
@@ -161,7 +166,7 @@ export function createPersistedDoc<T>(
     if (id || bk) {
       const present = id ? `${envPrefix}_BIN_ID` : `${envPrefix}_BIN_KEY`
       const missing = id ? `${envPrefix}_BIN_KEY` : `${envPrefix}_BIN_ID`
-      console.log(`[STORE:${key}] WARNING: ${present} resolved but ${missing} did not — the ` +
+      console.error(`[STORE:${key}] WARNING: ${present} resolved but ${missing} did not — the ` +
         `${envPrefix}_BIN_* pair is half-configured. Set BOTH and republish (see DEPLOY.md).`)
     } else {
       console.log(`[STORE:${key}] ${envPrefix}_BIN_* unresolved — either unset for this world, or the ` +
@@ -195,7 +200,7 @@ export function createPersistedDoc<T>(
         // Either way the load settles empty and the next save overwrites the
         // whole document, so a re-point replaces careers it can't see. Loud,
         // because the only recovery is the old bin's version history.
-        console.log(`[STORE:${key}] WARNING: jsonbin 404 for the configured ${envPrefix}_BIN_ID — ` +
+        console.error(`[STORE:${key}] WARNING: jsonbin 404 for the configured ${envPrefix}_BIN_ID — ` +
           `treating this document as EMPTY. Expected only on a brand-new bin. If it should have had ` +
           `data, stop the world and check ${envPrefix}_BIN_ID before the next save overwrites from ` +
           `an empty base (see DEPLOY.md).`)
@@ -258,6 +263,11 @@ export function createPersistedDoc<T>(
   const writeOnce = (v: T) => withDeadline(write(v), WRITE_TIMEOUT_MS, `[STORE:${key}] write`)
 
   async function load(): Promise<T | null> {
+    // Proves the load STARTED. Without it the absence of any [STORE:] line is
+    // ambiguous — storage never reached, or the server never got this far? That
+    // is the first question after a bad deploy (see DEPLOY.md).
+    console.log(`[STORE:${key}] load starting — up to ${READ_WINDOW_MS / 1000}s, ` +
+      `${READ_TIMEOUT_MS / 1000}s per attempt`)
     const deadline = Date.now() + READ_WINDOW_MS
     let attempt = 0
     while (true) {
@@ -266,11 +276,13 @@ export function createPersistedDoc<T>(
         const value = await readOnce()
         // A settled read — including a confirmed-absent document — tells us what is
         // stored, which is all the save guard needs.
-        console.log(`[STORE:${key}] loaded on attempt ${attempt}${value === null ? ' (empty)' : ''}`)
+        lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
+        console.log(`[STORE:${key}] loaded on attempt ${attempt}` +
+          `${value === null ? ' (empty)' : ` (${Math.round(lastKnownBytes / 1024)}KB)`}`)
         loadConfirmed = true
         return value
       } catch (e) {
-        console.log(`[STORE:${key}] load attempt ${attempt} failed:`, e)
+        console.error(`[STORE:${key}] load attempt ${attempt} failed:`, e)
         // Give up → loadConfirmed stays false → saves stay blocked, so a transient
         // outage can never cause us to overwrite good data with a fresh empty doc.
         // Give up on the FOREGROUND load only: the background loop below keeps
@@ -299,6 +311,7 @@ export function createPersistedDoc<T>(
           const value = await readOnce()
           loadConfirmed = true
           loadFailed = false
+          lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
           // ensureLoaded memoises, rejections included, so without this every
           // later caller keeps getting the old failure long after the store came
           // back — logging "progression will not persist" and "joining without
@@ -309,7 +322,7 @@ export function createPersistedDoc<T>(
           lateLoadCb?.(value)
           return
         } catch (e) {
-          console.log(`[STORE:${key}] background retry failed (trying again in ${BG_RETRY_MS / 1000}s):`, e)
+          console.error(`[STORE:${key}] background retry failed (trying again in ${BG_RETRY_MS / 1000}s):`, e)
         }
       }
     }
@@ -333,18 +346,29 @@ export function createPersistedDoc<T>(
       // shift end rewrites the WHOLE document). Warn early enough to act
       // before a write starts failing in production.
       if (body.length >= SIZE_WARN_BYTES) {
-        console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
+        console.error(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
           `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
+      }
+      // A sharp shrink is the signature of a partial read that is about to
+      // become a partial write. The isEmpty guard cannot catch it (the document
+      // is not empty), so at minimum it must be impossible to miss in the log.
+      if (lastKnownBytes !== null && lastKnownBytes > 0 && body.length < lastKnownBytes / 2) {
+        console.error(`[STORE:${key}] WARNING: document SHRANK from ` +
+          `${Math.round(lastKnownBytes / 1024)}KB to ${Math.round(body.length / 1024)}KB ` +
+          `(${Math.round((1 - body.length / lastKnownBytes) * 100)}% smaller). Expected only after ` +
+          `deliberate pruning — otherwise the load may have been partial. Check before the next save.`)
       }
       await writeOnce(value)
       lastSaveOk = true
       lastSaveMs = Date.now()
-      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
+      const was = lastKnownBytes === null ? '' : `, was ${Math.round(lastKnownBytes / 1024)}KB`
+      lastKnownBytes = body.length
+      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB${was})`)
       return true
     } catch (e) {
       lastSaveOk = false
       lastSaveMs = Date.now()
-      console.log(`[STORE:${key}] ERROR: save failed:`, e)
+      console.error(`[STORE:${key}] ERROR: save failed:`, e)
       return false
     }
   }

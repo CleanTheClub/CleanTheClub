@@ -61,15 +61,28 @@ npm run deploy
 npm run server-logs
 ```
 
-At boot each document logs one line. **Both** `[STORE:playerProgress]` and
-`[STORE:leaderboard]` must report the external store:
+> ⚠️ **Only wallets listed in `scene.json` `logsPermissions` can read these.**
+> It currently holds one address. If you cannot fetch logs, that is why — add
+> your wallet there and republish.
+
+A healthy boot logs three lines per document, and **both**
+`[STORE:playerProgress]` and `[STORE:leaderboard]` must appear:
 
 ```
+[STORE:playerProgress] load starting — up to 30s, 10s per attempt
 [STORE:playerProgress] persistence: external store (jsonbin)
-[STORE:playerProgress] loaded on attempt 1
+[STORE:playerProgress] loaded on attempt 1 (34KB)
 ```
 
-That is a healthy deploy. Anything else, read the table below.
+`load starting` matters on its own: without it, no `[STORE:]` output at all
+would be ambiguous between "storage was never reached" and "the server never got
+this far". If you see `load starting` and nothing after it, storage is the
+problem. If you see nothing at all, the scene is.
+
+Failures go to **stderr** (`console.error`) and routine progress to stdout, so
+you can filter rather than only grep.
+
+Anything other than the three lines above, read the table below.
 
 | Boot log | Meaning | Do |
 | --- | --- | --- |
@@ -78,12 +91,18 @@ That is a healthy deploy. Anything else, read the table below.
 | `*_BIN_* unresolved` with **no** SDK error above it | The vars really are unset for this world. | Set them (§1) and republish. |
 | `WARNING: ... half-configured` | One of a pair is set, the other is not. Always a config mistake. | Set both and republish. |
 | `WARNING: jsonbin 404 ... treating this document as EMPTY` | The bin has no document. Correct on a brand-new bin; otherwise the `BIN_ID` is wrong or repointed. | If this document should have had data: **stop the world now**, before a save overwrites from an empty base. Fix the id, or restore from the bin's version history. |
-| `load attempt N failed` repeating, then `LATE load succeeded` | The store was briefly unreachable and recovered. | Nothing. Progress restored and pushed to everyone connected. |
+| `load attempt N failed` repeating, then `LATE load succeeded` | The store was briefly unreachable and recovered. | Nothing. Progress restored, and the admin line plus every career bar refresh. |
+| `read timed out` / `write timed out` | The store accepted the connection and never answered. Bounded per attempt, so it fails instead of wedging. | Nothing if it recovers; if it repeats, the store is unhealthy. |
+| `WARNING: document SHRANK from NKB to MKB` | The document is about to be written much smaller than it was read. | **Stop and check.** Expected only after deliberate pruning; otherwise the load was partial and this save will make it permanent. |
+| `[LB] save FAILED` | The leaderboard write failed. The in-memory board is fine and the next shift end rewrites it. | Nothing unless it repeats. |
 
-In-world, the admin panel (wallets in `ADMIN_ADDRESSES`) shows the same state as
-a `storage:` line, and any player with a career sees
+In-world, the admin panel (wallets in `ADMIN_ADDRESSES`) shows a `storage:` line
+for careers, plus a `board:` line that appears **only** when the leaderboard
+needs attention. Any player with a career sees
 `⚠ Progress NOT saving — storage issue` whenever the load has definitively
-failed. A mis-deployed world announces itself; it does not fail quietly.
+failed. All three refresh on join, after every shift-end save, and on a
+background recovery — so an indicator going green is as visible as one going
+red. A mis-deployed world announces itself; it does not fail quietly.
 
 ## 4. What a bad deploy looks like from a player's seat
 

@@ -60,6 +60,11 @@ const PAST_ONE_WRITE_TIMEOUT = 16_000
 /** A request that accepts the connection and never answers. */
 const neverSettles = () => new Promise<any>(() => {})
 
+let logged: string[] = []
+let errored: string[] = []
+const loggedMatching = (re: RegExp) => logged.filter((l) => re.test(l))
+const erroredMatching = (re: RegExp) => errored.filter((l) => re.test(l))
+
 beforeEach(() => {
   resetFake()
   cfg.requireExternalStore = true
@@ -69,8 +74,12 @@ beforeEach(() => {
     fetchCalls.push({ url: String(url), init })
     return fetchImpl(String(url), init)
   }) as any
-  // The boot log is a documented contract (DEPLOY.md); silenced for readability.
-  vi.spyOn(console, 'log').mockImplementation(() => {})
+  // The boot log is a documented contract (DEPLOY.md). Captured rather than
+  // dropped, so the tests below can assert on what an operator would see.
+  logged = []
+  errored = []
+  vi.spyOn(console, 'log').mockImplementation((...a: any[]) => { logged.push(a.join(' ')) })
+  vi.spyOn(console, 'error').mockImplementation((...a: any[]) => { errored.push(a.join(' ')) })
   vi.useFakeTimers()
 })
 
@@ -521,6 +530,96 @@ describe('createPersistedDoc', () => {
       // Without the reset this still rejects, and every caller keeps logging
       // "load failed" for the rest of the session.
       await expect(doc.ensureLoaded()).resolves.toEqual({ recovered: true })
+    })
+  })
+
+  // An operator reads the boot log first, so what it does and does not say is
+  // part of the contract (DEPLOY.md tabulates these lines).
+  describe('what the log tells an operator', () => {
+    it('should announce that the load started, so silence is unambiguous', async () => {
+      withCredentials()
+      fetchImpl = async () => jsonRes(200, { record: { a: 1 } })
+
+      await makeDoc<any>().ensureLoaded()
+
+      // Absence of any [STORE:] line otherwise means "storage never reached" and
+      // "the server never got this far" are indistinguishable.
+      expect(loggedMatching(/load starting/)).toHaveLength(1)
+    })
+
+    it('should report the loaded size, not just that a load happened', async () => {
+      withCredentials()
+      fetchImpl = async () => jsonRes(200, { record: { players: { a: 1, b: 2 } } })
+
+      await makeDoc<any>().ensureLoaded()
+
+      expect(loggedMatching(/loaded on attempt 1 \(\d+KB\)/)).toHaveLength(1)
+    })
+
+    it('should mark a load failure as an error, not an ordinary line', async () => {
+      const doc = makeDoc<any>()
+      const loading = expectRejection(doc.ensureLoaded())
+      await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW)
+      await loading.catch(() => {})
+
+      // Everything used to be console.log, so a failure and a routine save were
+      // the same severity in the stream — greppable, never filterable.
+      expect(erroredMatching(/load attempt \d+ failed/).length).toBeGreaterThan(0)
+      expect(loggedMatching(/load attempt \d+ failed/)).toHaveLength(0)
+    })
+
+    it('should mark a save failure as an error', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: { a: 0 } }) : jsonRes(500, {})
+
+      const doc = makeDoc<any>()
+      await doc.ensureLoaded()
+      await doc.save({ a: 1 })
+
+      expect(erroredMatching(/ERROR: save failed/)).toHaveLength(1)
+    })
+
+    it('should report the size delta on a save', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: { a: 'x'.repeat(300) } }) : jsonRes(200, {})
+
+      const doc = makeDoc<any>()
+      await doc.ensureLoaded()
+      await doc.save({ a: 'x'.repeat(300) })
+
+      expect(loggedMatching(/saved OK \(\d+KB, was \d+KB\)/)).toHaveLength(1)
+    })
+
+    // The isEmpty guard is binary: it catches a 100% loss but not a 90% one, so a
+    // truncated read can still become a truncated write. Until there is a real
+    // shrink guard, it must at least be impossible to miss in the log.
+    it('should shout when the document shrinks sharply', async () => {
+      withCredentials()
+      const big = { players: Object.fromEntries([...Array(200)].map((_, i) => [`0x${i}`, i])) }
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: big }) : jsonRes(200, {})
+
+      const doc = makeDoc<any>((v) => !v || Object.keys(v.players ?? {}).length === 0)
+      await doc.ensureLoaded()
+      await doc.save({ players: { '0x1': 1 } })   // 200 players -> 1
+
+      const warning = erroredMatching(/SHRANK/)
+      expect(warning).toHaveLength(1)
+      expect(warning[0]).toMatch(/9\d% smaller/)
+    })
+
+    it('should not cry shrink on an ordinary save', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: { a: 'x'.repeat(300) } }) : jsonRes(200, {})
+
+      const doc = makeDoc<any>()
+      await doc.ensureLoaded()
+      await doc.save({ a: 'x'.repeat(320) })
+
+      expect(erroredMatching(/SHRANK/)).toHaveLength(0)
     })
   })
 })

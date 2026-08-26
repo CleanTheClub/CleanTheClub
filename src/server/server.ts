@@ -66,6 +66,8 @@ function ensureLeaderboardLoaded(): Promise<void> {
 leaderboardDoc.onLateLoad((stored) => {
   applyStoredLeaderboard(stored)
   broadcastLeaderboard()
+  // Hoisted like broadcastLeaderboard; fires late, once the board is back.
+  broadcastStorageStatus()
 })
 
 async function saveLeaderboard(): Promise<void> {
@@ -77,8 +79,15 @@ async function saveLeaderboard(): Promise<void> {
     .filter(([, e]) => e.total > 0)
     .map(([address, e]) => ({ address, ...e }))
   // Unconfirmed-load and empty-document wipe guards, write serialization and
-  // failure logging all live in the shared doc layer.
-  await leaderboardDoc.save(records)
+  // failure logging all live in the shared doc layer. The return value used to
+  // be dropped: the in-memory map is the source of truth and every shift end
+  // rewrites it, so a failed write self-heals — but it did so invisibly, and
+  // this document has no dirty flag to make the retry legible either.
+  const ok = await leaderboardDoc.save(records)
+  if (!ok) {
+    console.error(`[LB] save FAILED (${records.length} rows) — the in-memory board is unaffected ` +
+      'and the next shift end rewrites it, but the stored board is now behind')
+  }
 }
 
 // ── Leaderboard categories (V2) ───────────────────────────────────────────────
@@ -195,6 +204,28 @@ function broadcastLeaderboard(to?: string[]): void {
   } else {
     room.send('leaderboardUpdate', { entriesJson })
   }
+}
+
+// Moved to module scope so the leaderboard late-load hook above can reach it
+// too — that hook runs at import time, outside initServer.
+// Career-storage health → the admin panel line. Sent only to admins actually
+// in the room — nobody else renders it, so a room-wide broadcast was noise.
+function broadcastStorageStatus(address?: string): void {
+  // Careers stay at the TOP LEVEL so the client's existing shape keeps
+  // parsing; the leaderboard rides alongside under its own key. It had no
+  // health surface at all before — status() was never called on it — even
+  // though it is the more player-visible of the two documents.
+  const payload = {
+    statusJson: JSON.stringify({
+      ...progressStorageStatus(),
+      leaderboard: leaderboardDoc.status(),
+    }),
+  }
+  // Session ids may arrive mixed-case; ADMIN_ADDRESSES is lowercase.
+  const to = address
+    ? [address]
+    : [...activeSessions].filter((s) => ADMIN_ADDRESSES.includes(s.toLowerCase()))
+  if (to.length > 0) room.send('storageStatus', payload, { to })
 }
 
 // Trailing debounce — collapses rapid back-to-back cleanItem score updates
@@ -864,6 +895,11 @@ export function initServer() {
   setCareersRestoredHandler((addresses) => {
     for (const a of addresses) sendProgress(a)
     broadcastRanks()
+    // The admin panel only refreshed on join or shift-end save, so after a
+    // background recovery it kept showing LOAD FAILED — red, during exactly the
+    // incident someone is watching it for. sendProgress above re-evaluates the
+    // player-facing warning; this re-evaluates the admin line.
+    broadcastStorageStatus()
   })
 
   // ── Themed spawn roller — called by RoundManager inside every round's mask ────
@@ -1261,17 +1297,6 @@ export function initServer() {
       broadcastStorageStatus()
     })
   })
-
-  // Career-storage health → the admin panel line. Sent only to admins actually
-  // in the room — nobody else renders it, so a room-wide broadcast was noise.
-  function broadcastStorageStatus(address?: string): void {
-    const payload = { statusJson: JSON.stringify(progressStorageStatus()) }
-    // Session ids may arrive mixed-case; ADMIN_ADDRESSES is lowercase.
-    const to = address
-      ? [address]
-      : [...activeSessions].filter((s) => ADMIN_ADDRESSES.includes(s.toLowerCase()))
-    if (to.length > 0) room.send('storageStatus', payload, { to })
-  }
 
   // Load persisted leaderboard from Storage (async — data arrives soon after startup).
   // ensureLeaderboardLoaded() guarantees only one load ever runs, even if registerPlayer

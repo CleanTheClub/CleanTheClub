@@ -574,7 +574,9 @@ export function triggerRoundStartIntro() {
 // Career-storage health, mirrored for the admin panel. A silent persistence
 // failure (stale jsonbin creds after a Creator Hub re-point) once cost real
 // careers on every republish — this line makes the failure visible in-world.
-let storageStatus: { backend: string; loadConfirmed: boolean; lastSaveOk: boolean | null; lastSaveMs: number } | null = null
+type StorageHealth = { backend: string; loadConfirmed: boolean; lastSaveOk: boolean | null; lastSaveMs: number }
+// Careers are the flat fields (unchanged shape); the leaderboard rides alongside.
+let storageStatus: (StorageHealth & { leaderboard?: StorageHealth }) | null = null
 
 // ── UI state system ───────────────────────────────────────────────────────────
 // Render is a pure read: phase-edge detection, the letterbox re-config, the
@@ -2387,6 +2389,28 @@ const uiBody = () => {
                 value={text}
                 fontSize={Math.round(ADMIN_BTN_FONT * 0.95)}
                 color={healthy ? { r: 0.4, g: 0.95, b: 0.5, a: 1 } : { r: 1, g: 0.35, b: 0.3, a: 1 }}
+                uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
+              />
+            )
+          })()}
+          {/* Leaderboard health. Only shown when it needs attention — this
+              document had no in-world surface at all before, so a board that
+              was failing to save looked identical to one that was fine. */}
+          {(() => {
+            const lb = storageStatus?.leaderboard
+            if (!lb) return null
+            const bad = lb.backend === 'unresolved' || lb.backend === 'storage'
+              || !lb.loadConfirmed || lb.lastSaveOk === false
+            if (!bad) return null
+            const text = lb.backend === 'unresolved' ? 'board: BIN ENVVARS UNRESOLVED'
+              : lb.backend === 'storage' ? 'board: DCL (WIPES ON REPUBLISH!)'
+              : !lb.loadConfirmed ? 'board: LOAD FAILED'
+              : 'board: SAVE FAILED'
+            return (
+              <Label
+                value={text}
+                fontSize={Math.round(ADMIN_BTN_FONT * 0.95)}
+                color={{ r: 1, g: 0.35, b: 0.3, a: 1 }}
                 uiTransform={{ margin: { bottom: ADMIN_MARGIN } }}
               />
             )
