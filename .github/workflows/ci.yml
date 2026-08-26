@@ -5,8 +5,7 @@ on:
   push:
     branches: [main]
 
-# A second push to the same PR cancels the first — no value in finishing a run
-# for a commit that has already been replaced.
+# A second push to the same PR cancels the first.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -28,37 +27,28 @@ jobs:
           node-version: '22'
           cache: npm
 
-      # `npm ci` installs strictly from package-lock.json and fails if the lock
-      # and package.json disagree — which also makes a stale lockfile a CI
-      # failure rather than a surprise at deploy time.
-      #
-      # --ignore-scripts: nothing here needs a package's postinstall, and the
-      # SDK's own install scripts are unnecessary for typecheck/test/build.
+      # `npm ci` fails if the lock and package.json disagree, so a stale lockfile
+      # is a CI failure rather than a deploy-time surprise. Nothing here needs a
+      # postinstall, hence --ignore-scripts.
       - name: Install
         run: npm ci --ignore-scripts
 
       - name: Typecheck
         run: npm run typecheck
 
-      # Unit tests for the storage layer. See test/server/persistence.spec.ts —
-      # the credential-caching cases are a direct regression guard, and they fail
-      # by TIMING OUT against the old code, because the bug made a load hang for
-      # the whole server session rather than error.
+      # The credential-caching cases fail by TIMING OUT against the old code —
+      # the bug made a load hang for the whole session rather than error.
       - name: Test
         run: npm test
 
-      # The scene must actually bundle. `sdk-commands build` runs its own type
-      # checker over the scene graph, which catches things `tsc -p .` alone does
-      # not (composite resolution, generated script types).
+      # `sdk-commands build` type-checks the scene graph too — composite
+      # resolution and generated script types that `tsc -p .` alone misses.
       - name: Build
         run: npm run build
 
-      # The keyed career path is behind a config flag, so the default build never
-      # compiles it. Without this, a type error on that path could sit unnoticed
-      # until the day someone flips the flag — which is exactly the day you least
-      # want a surprise. Checks the flag's other value without committing it.
-      #
-      # No-ops on branches where the flag does not exist yet.
+      # The keyed path is behind a flag, so the default build never compiles it —
+      # a type error there would surface on the day someone flips it. No-ops on
+      # branches without the flag.
       - name: Typecheck the non-default career storage mode
         run: |
           if grep -q "CAREER_STORAGE_MODE: CareerStorageMode = 'blob'" src/shared/config.ts; then
@@ -69,7 +59,7 @@ jobs:
             echo "CAREER_STORAGE_MODE not present on this branch — nothing to check."
           fi
 
-  # Deploy-hygiene checks that do not need the dependency tree installed.
+  # Deploy hygiene — no dependency tree needed.
   hygiene:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -77,9 +67,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Test files, CI config and local snapshots must never reach the content
-      # server. .dclignore is the only thing preventing that, so assert it rather
-      # than trusting it — a deploy that ships test/ is silent and permanent.
+      # .dclignore is the only thing keeping tests and CI config out of a deploy,
+      # and shipping them is silent and permanent. Assert it rather than trust it.
       - name: Deploy excludes non-scene files
         run: |
           missing=0
@@ -91,8 +80,8 @@ jobs:
           done
           exit $missing
 
-      # The pin carries the multiplayer server runtime, and a floating range would
-      # let a stray install walk it onto an untested build. See UPGRADE-SDK.md.
+      # The pin carries the multiplayer server runtime; a floating range would let
+      # a stray install walk it onto an untested build. See UPGRADE-SDK.md.
       - name: SDK versions are pinned exactly
         run: |
           node -e '
@@ -108,9 +97,8 @@ jobs:
             console.log("all @dcl/* dependencies are exact pins");
           '
 
-      # Credentials belong in world-scoped EnvVars, never in the repo. There is no
-      # .env here by design and .gitignore does not list one, so a committed .env
-      # would ship straight to the content server.
+      # .gitignore does not list .env, so a committed one ships to the content
+      # server. Credentials belong in world-scoped EnvVars.
       - name: No committed environment file
         run: |
           if ls -A .env .env.* 2>/dev/null | grep -q .; then

@@ -1,21 +1,10 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 
-// Unit tests for the server-side storage layer.
-//
-// ONE alias, deliberately. `@dcl/sdk/server` is the only SDK dependency
-// persistence.ts has (`import { Storage, EnvVar }`) — everything else in that
-// file is plain TypeScript: the retry loop, the wipe guards, the save chain, the
-// status machine. Pointing that single import at a controllable fake is enough to
-// test the whole thing, and it keeps the seam visible rather than reaching for a
-// mock framework per test.
-//
-// The alias is also a constraint worth keeping. If a test ever needs a SECOND
-// alias — `@dcl/sdk/ecs`, or anything under `~system/` — that means the module
-// under test picked up a dependency it should not have: `~system/*` modules are
-// type-only declarations with no runtime JS at all, and several SDK entry points
-// perform network calls at import time. Extract the logic instead of stubbing
-// more of the platform.
+// ONE alias, deliberately. `@dcl/sdk/server` is persistence.ts's only SDK
+// dependency; everything else in it is plain TypeScript. Needing a SECOND alias
+// would mean the module under test picked up a dependency it shouldn't have —
+// `~system/*` has no runtime JS, and some SDK entry points fetch on import.
 export default defineConfig({
   resolve: {
     alias: {

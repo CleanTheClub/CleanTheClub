@@ -35,12 +35,9 @@ const makeDoc = <T,>(isEmpty: (v: T) => boolean = (v) => !v) =>
   createPersistedDoc<T>('testDoc', 'PROGRESS', isEmpty)
 
 /**
- * Marks a promise as expected-to-reject the moment it is created.
- *
- * `expect(p).rejects` only attaches a handler after the awaits in between, and a
- * rejection observed before that point is reported as an unhandled rejection.
- * Attaching a no-op catch up front keeps the assertion working while making the
- * intent explicit.
+ * Attaches the rejection handler at creation time. `expect(p).rejects` only
+ * attaches after the awaits in between, and a rejection seen before that is
+ * reported as unhandled.
  */
 const expectRejection = <T,>(p: Promise<T>): Promise<T> => {
   p.catch(() => {})
@@ -52,8 +49,7 @@ const tick = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-// Retry constants from persistence.ts, restated so the intent of each advance is
-// legible: READ_RETRY_MS 4s, READ_WINDOW_MS 30s, BG_RETRY_MS 60s.
+// Mirrors persistence.ts: READ_RETRY_MS 4s, READ_WINDOW_MS 30s, BG_RETRY_MS 60s.
 const PAST_ONE_RETRY = 4_000
 const PAST_THE_WINDOW = 35_000
 const PAST_ONE_BG_RETRY = 60_000
@@ -67,16 +63,14 @@ beforeEach(() => {
     fetchCalls.push({ url: String(url), init })
     return fetchImpl(String(url), init)
   }) as any
-  // The module logs heavily by design (the boot log is a documented contract in
-  // DEPLOY.md). Silenced so the test output stays readable.
+  // The boot log is a documented contract (DEPLOY.md); silenced for readability.
   vi.spyOn(console, 'log').mockImplementation(() => {})
   vi.useFakeTimers()
 })
 
 afterEach(() => {
-  // The background retry loop runs forever by design (persistence.ts keeps
-  // trying for the session's whole life). Without clearing it, a later test's
-  // clock advance fires an earlier test's loop against the wrong fetch stub.
+  // The background retry loop runs forever by design — without clearing it, a
+  // later test's clock advance fires an earlier test's loop.
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -123,12 +117,9 @@ describe('createPersistedDoc', () => {
   })
 
   // ── The regression this suite exists for ────────────────────────────────────
-  // EnvVar.get returns '' for BOTH "unset" and "read failed", so a transient blip
-  // at boot used to be cached as a definitive "no credentials" for the entire
-  // server session: read() then threw under REQUIRE_EXTERNAL_STORE, and every
-  // retry — foreground and the forever background loop alike — reused the cached
-  // null instead of re-asking. Saves stayed blocked until the next deploy, which
-  // players experienced as "the deploy wiped my career".
+  // A transient blip used to be cached as a definitive "no credentials" for the
+  // whole session, so every retry reused it and saves stayed blocked until the
+  // next deploy — which players read as "the deploy wiped my career".
   describe('when the credential read transiently fails', () => {
     it('should not cache the failure, and should recover on the next attempt', async () => {
       withCredentials()
@@ -191,8 +182,7 @@ describe('createPersistedDoc', () => {
       await vi.advanceTimersByTimeAsync(PAST_THE_WINDOW)
       await loading.catch(() => {})
 
-      // 'storage' would assert a backend that is never actually used, since the
-      // fallback is refused. 'pending' would imply nothing was tried yet.
+      // 'storage' claims a backend never used; 'pending' implies nothing tried.
       expect(doc.status().backend).toBe('unresolved')
       expect(doc.status().loadFailed).toBe(true)
       expect(doc.status().loadConfirmed).toBe(false)
@@ -241,8 +231,7 @@ describe('createPersistedDoc', () => {
       const doc = makeDoc<any>()
       await doc.ensureLoaded()
 
-      // Storage.set resolves false rather than throwing; ignoring it would lose
-      // the write silently.
+      // Storage.set resolves false rather than throwing — ignoring it loses the write.
       await expect(doc.save({ a: 2 })).resolves.toBe(false)
       expect(doc.status().lastSaveOk).toBe(false)
     })
@@ -320,8 +309,7 @@ describe('createPersistedDoc', () => {
       const second = doc.save({ n: 2 })
       await tick()
 
-      // The second PUT must not have been issued while the first is in flight —
-      // last-write-wins on the backend would otherwise let n:1 land after n:2.
+      // Last-write-wins on the backend would otherwise let n:1 land after n:2.
       expect(order).toEqual(['start:1'])
 
       releaseFirst!()
@@ -345,8 +333,8 @@ describe('createPersistedDoc', () => {
       expect(versioningHeaders()).toEqual(['true', 'false'])
     })
 
-    // Field logs 2026-08-18: a bin that refuses versioning 403'd, the flag was
-    // left unset, and so EVERY later save retried versioned and 403'd forever.
+    // Field logs 2026-08-18: one 403 left the flag unset, so every later save
+    // retried versioned and 403'd forever.
     it('should fall back to an unversioned write when versioning is refused, once', async () => {
       withCredentials()
       fetchImpl = async (url, init) => {
