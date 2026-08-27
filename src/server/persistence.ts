@@ -5,17 +5,28 @@
 // guards, which exist because of real data loss.
 //
 // WHY NOT JUST DCL Storage:
-// The docs state storage persists at the LOCATION level and survives redeploys. This
-// scene observed the opposite in production on a WORLD (cleantheclub.dcl.eth): after
-// a republish the server read a fresh, empty bucket and never saw the previous
-// deploy's data — 90s of retried reads all 404'd while the owner CLI read it
-// instantly, i.e. storage behaved as if scoped per DEPLOY (content hash). Retrying
-// can't fix a scope problem. The leaderboard's workaround was an external store.
+// A republish used to make the server read a fresh, empty bucket — 90s of retried
+// reads all 404'd while the owner CLI read the data instantly. That was recorded
+// here as "storage is scoped per DEPLOY (content hash)". RESOLVED 2026-08-27, and
+// the mechanism was different: storage keys on (world_name, place_id, key), and
+// Places minted a NEW record per deploy, disabling the old one with reason
+// "undeployment". place_id moved, so the bucket moved with it. 23 buckets across
+// two worlds — 20 on the dev world afkj.dcl.eth (up to 5 in one afternoon), 3 on
+// cleantheclub.dcl.eth.
 //
-// That discrepancy is UNRESOLVED and worth re-testing before trusting it (deploy →
-// write → redeploy → read). Until then every persisted document goes through this
-// module, so if DCL Storage turns out to be fixed, switching back is deleting the
-// external branch in ONE file rather than auditing every call site.
+// It stopped on 2026-06-12. The live place has since absorbed a redeploy and a
+// 4→16 parcel change without being replaced, so DCL Storage now survives
+// redeploys. Two caveats before trusting it: that is one confirmed data point,
+// and the scope is the PLACES record, so an undeployment cycle would move the
+// bucket again.
+//
+// Note the founding observation (2026-06-10) was made on the DEV world — it
+// predates cleantheclub's first deploy by 25 hours. Production's share of the
+// churn was 1 record, then 2, on launch day. The dev board lost up to 13 at a
+// time. A later rewrite of this comment attributed it all to production.
+//
+// Every persisted document still goes through this module, so switching backends
+// is editing ONE file rather than auditing every call site.
 //
 // Backend selection is per document, via server EnvVars:
 //   <PREFIX>_BIN_ID + <PREFIX>_BIN_KEY set → jsonbin.io (survives redeploys)
@@ -29,14 +40,48 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 const READ_RETRY_MS  = 4_000    // gap between read attempts
 const READ_WINDOW_MS = 30_000   // total time to keep trying before giving up
 
+// Per-ATTEMPT deadlines. Without these READ_WINDOW_MS is not a 30s window at
+// all: the deadline below is only checked BETWEEN attempts, so the real total is
+// the sum of however long each attempt took. Worse, the runtime's fetch has no
+// documented timeout, and a request that never settles is far worse than one
+// that fails — read() would never return, so the retry loop would never reach
+// its deadline, the background retry would never start, loadPromise would never
+// settle, and every caller awaiting a load (registerPlayer among them) would
+// hang for the server's whole life with loadFailed still false, i.e. no
+// "progress not saving" warning. Silent, which is the one thing this module is
+// built to avoid.
+const READ_TIMEOUT_MS  = 10_000   // a healthy read answers in well under a second
+const WRITE_TIMEOUT_MS = 15_000   // writes carry the whole document
+
+/**
+ * Rejects if `work` has not settled within `ms`.
+ *
+ * The losing request keeps running — there is no reliable cancellation in the
+ * scene runtime — so this trades a possibly-leaked socket for a caller that
+ * always gets an answer. That is the right way round: a leaked socket costs
+ * nothing here, a wedged load costs every save for the rest of the session.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
+  })
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer)) as Promise<T>
+}
+
 // Log a warning once a stored document passes this size. Not a hard limit —
 // just an early signal that the playerbase has outgrown "one document holds
 // everyone", well before an external store starts rejecting the write.
 const SIZE_WARN_BYTES = 100 * 1024
 
 export type DocStatus = {
-  /** 'pending' until the first backend resolution. */
-  backend: 'jsonbin' | 'storage' | 'pending'
+  /**
+   * 'pending' = not attempted yet; 'unresolved' = attempted and the BIN_* pair
+   * didn't resolve (a live fault, not a boot state); 'storage' only when
+   * REQUIRE_EXTERNAL_STORE is off. Unset vars and a failed read look identical
+   * here by design (see getBinCfg) — the log is the tie-breaker.
+   */
+  backend: 'jsonbin' | 'storage' | 'pending' | 'unresolved'
   loadConfirmed: boolean
   /** True once the load has DEFINITIVELY failed (retry window exhausted, or
    *  external store required but unconfigured) — drives the player-facing
@@ -79,42 +124,89 @@ export type PersistedDoc<T> = {
  *                  existing data. Overwriting good data with an empty document is
  *                  the exact signature of the wipes this protects against.
  */
+export type DocOptions<T> = {
+  /**
+   * Number of records in the document. Supplying this turns on the SHRINK GUARD:
+   * a save holding less than `minRetainedFraction` of the last CONFIRMED count is
+   * refused rather than written.
+   *
+   * This is the other half of `isEmpty`. That guard is binary — it catches a 100%
+   * loss and nothing else — so a partial read still became a partial write, which
+   * is how a session holding two records can overwrite two hundred. Careers are
+   * kept forever (see isWorthKeeping), so a real document does not halve.
+   */
+  count?: (value: T) => number
+  /** Fraction of the last confirmed count a save must retain. Default 0.5. */
+  minRetainedFraction?: number
+}
+
 export function createPersistedDoc<T>(
   key: string,
   envPrefix: string,
   isEmpty: (value: T) => boolean,
+  options: DocOptions<T> = {},
 ): PersistedDoc<T> {
+  const countRecords = options.count
+  const minRetainedFraction = options.minRetainedFraction ?? 0.5
   let loadPromise: Promise<T | null> | null = null
   let loadConfirmed = false
   let loadFailed = false
   let lastSaveOk: boolean | null = null
   let lastSaveMs = 0
+  // Serialized size of the last document we know the backend holds. Only used
+  // for logging: the isEmpty guard is binary, so it catches a 100% loss but not
+  // a 90% one, and a delta in the log is the cheapest way to make a truncated
+  // read visible before it becomes a truncated write.
+  let lastKnownBytes: number | null = null
+  // Record count of the last document we know the backend holds. Drives the
+  // shrink guard; null until a load or save confirms one.
+  let lastKnownCount: number | null = null
 
-  // ── Backend resolution (once per document) ──────────────────────────────────
+  // ── Backend resolution ──────────────────────────────────────────────────────
+  // Cache ONLY a positive resolution. `EnvVar.get` returns '' both when a var is
+  // unset and when the read FAILS — it swallows the error (@dcl/sdk/src/server/
+  // env-var.ts) — so '' is never a definitive answer. The 2026-08-17 fix latched
+  // on it anyway, pinning the session to a null config: every retry, foreground
+  // and background alike, reused it and saves stayed blocked until the next
+  // deploy. Not caching the negative is what lets a session heal. Costs two
+  // EnvVar fetches per attempt while unresolved; free once resolved.
   let binCfg: { id: string; key: string } | null = null
-  let binCfgLoaded = false
+  let binCfgAttempted = false
   async function getBinCfg(): Promise<{ id: string; key: string } | null> {
-    if (binCfgLoaded) return binCfg
+    if (binCfg) return binCfg
+    binCfgAttempted = true
+
+    let id = ''
+    let bk = ''
     try {
-      const id  = await EnvVar.get(`${envPrefix}_BIN_ID`)
-      const bk  = await EnvVar.get(`${envPrefix}_BIN_KEY`)
-      binCfg = id && bk ? { id, key: bk } : null
-      // Cache ONLY a clean answer. A clean-but-empty read ("no vars set") is a
-      // definitive configuration fact; an ERROR is a transient EnvVar-service
-      // blip — and caching that null used to lock the ENTIRE server session
-      // into the DCL Storage fallback off one bad read at boot, exactly when
-      // the platform is coldest. Plausible root cause of the 2026-08-17 wipe
-      // scare. Left uncached, the load retry loop re-asks every attempt.
-      binCfgLoaded = true
+      id = await EnvVar.get(`${envPrefix}_BIN_ID`)
+      bk = await EnvVar.get(`${envPrefix}_BIN_KEY`)
     } catch (e) {
-      console.log(`[STORE:${key}] EnvVar read ERROR (transient? will retry):`, e)
-      binCfg = null
+      // Only reachable off-server, but a throw must behave like an unreadable
+      // value: report it, cache nothing, re-ask.
+      console.error(`[STORE:${key}] EnvVar read threw (will re-ask):`, e)
       return null
     }
-    console.log(binCfg
-      ? `[STORE:${key}] persistence: external store (jsonbin)`
-      : `[STORE:${key}] persistence: DCL Storage (no ${envPrefix}_BIN_* env vars)`)
-    return binCfg
+
+    if (id && bk) {
+      binCfg = { id, key: bk }
+      console.log(`[STORE:${key}] persistence: external store (jsonbin)`)
+      return binCfg
+    }
+
+    // Half-configured is a deploy mistake, not a transient read — both values
+    // live in the same place. Its own line, because waiting won't fix it.
+    if (id || bk) {
+      const present = id ? `${envPrefix}_BIN_ID` : `${envPrefix}_BIN_KEY`
+      const missing = id ? `${envPrefix}_BIN_KEY` : `${envPrefix}_BIN_ID`
+      console.error(`[STORE:${key}] WARNING: ${present} resolved but ${missing} did not — the ` +
+        `${envPrefix}_BIN_* pair is half-configured. Set BOTH and republish (see DEPLOY.md).`)
+    } else {
+      console.log(`[STORE:${key}] ${envPrefix}_BIN_* unresolved — either unset for this world, or the ` +
+        `EnvVar read failed. The SDK logs "Failed to fetch environment variable" immediately above when ` +
+        `it was a failed read; nothing above means genuinely unset. Will re-ask (see DEPLOY.md).`)
+    }
+    return null
   }
 
   // Returns the parsed document, or null when the read could not be COMPLETED.
@@ -135,7 +227,18 @@ export function createPersistedDoc<T>(
       const res = await fetch(`https://api.jsonbin.io/v3/b/${cfg.id}/latest`, {
         headers: { 'X-Master-Key': cfg.key },
       })
-      if (res.status === 404) return null            // empty/new bin — nothing stored yet
+      if (res.status === 404) {
+        // Correct on a brand-new bin — but also exactly what a mistyped or
+        // re-pointed BIN_ID looks like, and the two are indistinguishable here.
+        // Either way the load settles empty and the next save overwrites the
+        // whole document, so a re-point replaces careers it can't see. Loud,
+        // because the only recovery is the old bin's version history.
+        console.error(`[STORE:${key}] WARNING: jsonbin 404 for the configured ${envPrefix}_BIN_ID — ` +
+          `treating this document as EMPTY. Expected only on a brand-new bin. If it should have had ` +
+          `data, stop the world and check ${envPrefix}_BIN_ID before the next save overwrites from ` +
+          `an empty base (see DEPLOY.md).`)
+        return null
+      }
       if (!res.ok) throw new Error(`jsonbin read ${res.status}`)
       const json: any = await res.json()
       return (json?.record ?? null) as T | null
@@ -189,20 +292,31 @@ export function createPersistedDoc<T>(
     if (!ok) throw new Error('Storage.set rejected the write')
   }
 
+  const readOnce  = () => withDeadline(read(), READ_TIMEOUT_MS, `[STORE:${key}] read`)
+  const writeOnce = (v: T) => withDeadline(write(v), WRITE_TIMEOUT_MS, `[STORE:${key}] write`)
+
   async function load(): Promise<T | null> {
+    // Proves the load STARTED. Without it the absence of any [STORE:] line is
+    // ambiguous — storage never reached, or the server never got this far? That
+    // is the first question after a bad deploy (see DEPLOY.md).
+    console.log(`[STORE:${key}] load starting — up to ${READ_WINDOW_MS / 1000}s, ` +
+      `${READ_TIMEOUT_MS / 1000}s per attempt`)
     const deadline = Date.now() + READ_WINDOW_MS
     let attempt = 0
     while (true) {
       attempt++
       try {
-        const value = await read()
+        const value = await readOnce()
         // A settled read — including a confirmed-absent document — tells us what is
         // stored, which is all the save guard needs.
-        console.log(`[STORE:${key}] loaded on attempt ${attempt}${value === null ? ' (empty)' : ''}`)
+        lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
+        lastKnownCount = value === null ? 0 : countRecords?.(value) ?? null
+        console.log(`[STORE:${key}] loaded on attempt ${attempt}` +
+          `${value === null ? ' (empty)' : ` (${Math.round(lastKnownBytes / 1024)}KB)`}`)
         loadConfirmed = true
         return value
       } catch (e) {
-        console.log(`[STORE:${key}] load attempt ${attempt} failed:`, e)
+        console.error(`[STORE:${key}] load attempt ${attempt} failed:`, e)
         // Give up → loadConfirmed stays false → saves stay blocked, so a transient
         // outage can never cause us to overwrite good data with a fresh empty doc.
         // Give up on the FOREGROUND load only: the background loop below keeps
@@ -228,14 +342,22 @@ export function createPersistedDoc<T>(
       while (true) {
         await sleep(BG_RETRY_MS)
         try {
-          const value = await read()
+          const value = await readOnce()
           loadConfirmed = true
           loadFailed = false
+          lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
+          lastKnownCount = value === null ? 0 : countRecords?.(value) ?? null
+          // ensureLoaded memoises, rejections included, so without this every
+          // later caller keeps getting the old failure long after the store came
+          // back — logging "progression will not persist" and "joining without
+          // leaderboard" on every join for the rest of the session. Re-running
+          // the callers' .then(apply…) is harmless: those merges are latched.
+          loadPromise = Promise.resolve(value)
           console.log(`[STORE:${key}] LATE load succeeded — store back online, restoring stored data`)
           lateLoadCb?.(value)
           return
         } catch (e) {
-          console.log(`[STORE:${key}] background retry failed (trying again in ${BG_RETRY_MS / 1000}s):`, e)
+          console.error(`[STORE:${key}] background retry failed (trying again in ${BG_RETRY_MS / 1000}s):`, e)
         }
       }
     }
@@ -251,6 +373,21 @@ export function createPersistedDoc<T>(
       console.log(`[STORE:${key}] skipping save — document is empty (wipe guard)`)
       return false
     }
+    // SHRINK GUARD. Refusing is the same trade the other guards make: the caller
+    // keeps its dirty flag, the failure is loud, and no data is destroyed. A
+    // legitimate collapse this large has no known cause here, so it needs a
+    // human — the log says what to do.
+    if (countRecords && lastKnownCount !== null && lastKnownCount > 0) {
+      const now = countRecords(value)
+      if (now < lastKnownCount * minRetainedFraction) {
+        console.error(`[STORE:${key}] REFUSING SAVE — record count would fall from ` +
+          `${lastKnownCount} to ${now} (below the ${Math.round(minRetainedFraction * 100)}% floor). ` +
+          `This is the signature of a partial read about to become a partial write, or of a ` +
+          `different world writing into this document. Nothing has been overwritten. Check the ` +
+          `boot log's realm line and the ${envPrefix}_BIN_ID before forcing anything (see DEPLOY.md).`)
+        return false
+      }
+    }
     try {
       const body = JSON.stringify(value)
       // Size watch. These documents hold one record per player forever, so they
@@ -259,18 +396,31 @@ export function createPersistedDoc<T>(
       // shift end rewrites the WHOLE document). Warn early enough to act
       // before a write starts failing in production.
       if (body.length >= SIZE_WARN_BYTES) {
-        console.log(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
+        console.error(`[STORE:${key}] WARNING: document is ${Math.round(body.length / 1024)}KB ` +
           `(warn at ${Math.round(SIZE_WARN_BYTES / 1024)}KB) — consider pruning inactive records`)
       }
-      await write(value)
+      // A sharp shrink is the signature of a partial read that is about to
+      // become a partial write. The isEmpty guard cannot catch it (the document
+      // is not empty), so at minimum it must be impossible to miss in the log.
+      if (lastKnownBytes !== null && lastKnownBytes > 0 && body.length < lastKnownBytes / 2) {
+        console.error(`[STORE:${key}] WARNING: document SHRANK from ` +
+          `${Math.round(lastKnownBytes / 1024)}KB to ${Math.round(body.length / 1024)}KB ` +
+          `(${Math.round((1 - body.length / lastKnownBytes) * 100)}% smaller). Expected only after ` +
+          `deliberate pruning — otherwise the load may have been partial. Check before the next save.`)
+      }
+      await writeOnce(value)
       lastSaveOk = true
       lastSaveMs = Date.now()
-      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB)`)
+      const was = lastKnownBytes === null ? '' : `, was ${Math.round(lastKnownBytes / 1024)}KB`
+      lastKnownBytes = body.length
+      if (countRecords) lastKnownCount = countRecords(value)
+      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB${was}` +
+        `${lastKnownCount === null ? '' : `, ${lastKnownCount} records`})`)
       return true
     } catch (e) {
       lastSaveOk = false
       lastSaveMs = Date.now()
-      console.log(`[STORE:${key}] ERROR: save failed:`, e)
+      console.error(`[STORE:${key}] ERROR: save failed:`, e)
       return false
     }
   }
@@ -298,7 +448,12 @@ export function createPersistedDoc<T>(
 
     status(): DocStatus {
       return {
-        backend: !binCfgLoaded ? 'pending' : binCfg ? 'jsonbin' : 'storage',
+        backend: binCfg ? 'jsonbin'
+          : !binCfgAttempted ? 'pending'
+          // read() refuses the fallback when the store is required, so reporting
+          // 'storage' here would claim a backend that is never used.
+          : REQUIRE_EXTERNAL_STORE ? 'unresolved'
+          : 'storage',
         loadConfirmed,
         loadFailed,
         lastSaveOk,

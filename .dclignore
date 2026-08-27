@@ -17,6 +17,12 @@ cursor.config
 cursorignore
 CLAUDE.md
 LICENSE
+# Unit tests, CI and their config — never needed in a deploy
+test/
+vitest.config.ts
+tsconfig.test.json
+.github/
+
 # Build & dependency trees (also in the default ignore, kept explicit)
 node_modules/
 bin/*.map

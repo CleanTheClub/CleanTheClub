@@ -1,0 +1,23 @@
+{
+  "//": [
+    "Editor/CI type checking for the unit tests. Deliberately does NOT extend the",
+    "SDK's tsconfig.ecs7.json: that sets `types` to an allowlist containing only",
+    "@dcl/js-runtime, which leaves vitest's globals and Node's unresolved. The",
+    "scene's own tsconfig.json only includes src/ and assets/, so `npm run",
+    "typecheck` never sees these files and stays exactly as strict as before.",
+    "Run with: npx tsc --noEmit -p tsconfig.test.json"
+  ],
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "node",
+    "lib": ["ES2020"],
+    "types": ["node", "@dcl/js-runtime"],
+    "noEmit": true,
+    "esModuleInterop": true,
+    "noUnusedLocals": false
+  },
+  "include": ["test/**/*.ts", "vitest.config.ts"]
+}

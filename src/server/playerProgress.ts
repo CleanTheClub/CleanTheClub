@@ -189,6 +189,10 @@ const doc = createPersistedDoc<ProgressDoc>(
   'PROGRESS',
   // Wipe guard: never overwrite stored progression with an empty player set.
   (d) => !d || !d.players || Object.keys(d.players).length === 0,
+  // Shrink guard: careers are kept forever (isWorthKeeping only drops rows with
+  // no earned progress), so the player count does not halve on its own. If it
+  // does, something is wrong upstream of the write.
+  { count: (d) => Object.keys(d?.players ?? {}).length },
 )
 
 let loadStarted = false
