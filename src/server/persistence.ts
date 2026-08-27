@@ -5,17 +5,28 @@
 // guards, which exist because of real data loss.
 //
 // WHY NOT JUST DCL Storage:
-// The docs state storage persists at the LOCATION level and survives redeploys. This
-// scene observed the opposite in production on a WORLD (cleantheclub.dcl.eth): after
-// a republish the server read a fresh, empty bucket and never saw the previous
-// deploy's data — 90s of retried reads all 404'd while the owner CLI read it
-// instantly, i.e. storage behaved as if scoped per DEPLOY (content hash). Retrying
-// can't fix a scope problem. The leaderboard's workaround was an external store.
+// A republish used to make the server read a fresh, empty bucket — 90s of retried
+// reads all 404'd while the owner CLI read the data instantly. That was recorded
+// here as "storage is scoped per DEPLOY (content hash)". RESOLVED 2026-08-27, and
+// the mechanism was different: storage keys on (world_name, place_id, key), and
+// Places minted a NEW record per deploy, disabling the old one with reason
+// "undeployment". place_id moved, so the bucket moved with it. 23 buckets across
+// two worlds — 20 on the dev world afkj.dcl.eth (up to 5 in one afternoon), 3 on
+// cleantheclub.dcl.eth.
 //
-// That discrepancy is UNRESOLVED and worth re-testing before trusting it (deploy →
-// write → redeploy → read). Until then every persisted document goes through this
-// module, so if DCL Storage turns out to be fixed, switching back is deleting the
-// external branch in ONE file rather than auditing every call site.
+// It stopped on 2026-06-12. The live place has since absorbed a redeploy and a
+// 4→16 parcel change without being replaced, so DCL Storage now survives
+// redeploys. Two caveats before trusting it: that is one confirmed data point,
+// and the scope is the PLACES record, so an undeployment cycle would move the
+// bucket again.
+//
+// Note the founding observation (2026-06-10) was made on the DEV world — it
+// predates cleantheclub's first deploy by 25 hours. Production's share of the
+// churn was 1 record, then 2, on launch day. The dev board lost up to 13 at a
+// time. A later rewrite of this comment attributed it all to production.
+//
+// Every persisted document still goes through this module, so switching backends
+// is editing ONE file rather than auditing every call site.
 //
 // Backend selection is per document, via server EnvVars:
 //   <PREFIX>_BIN_ID + <PREFIX>_BIN_KEY set → jsonbin.io (survives redeploys)
@@ -113,11 +124,30 @@ export type PersistedDoc<T> = {
  *                  existing data. Overwriting good data with an empty document is
  *                  the exact signature of the wipes this protects against.
  */
+export type DocOptions<T> = {
+  /**
+   * Number of records in the document. Supplying this turns on the SHRINK GUARD:
+   * a save holding less than `minRetainedFraction` of the last CONFIRMED count is
+   * refused rather than written.
+   *
+   * This is the other half of `isEmpty`. That guard is binary — it catches a 100%
+   * loss and nothing else — so a partial read still became a partial write, which
+   * is how a session holding two records can overwrite two hundred. Careers are
+   * kept forever (see isWorthKeeping), so a real document does not halve.
+   */
+  count?: (value: T) => number
+  /** Fraction of the last confirmed count a save must retain. Default 0.5. */
+  minRetainedFraction?: number
+}
+
 export function createPersistedDoc<T>(
   key: string,
   envPrefix: string,
   isEmpty: (value: T) => boolean,
+  options: DocOptions<T> = {},
 ): PersistedDoc<T> {
+  const countRecords = options.count
+  const minRetainedFraction = options.minRetainedFraction ?? 0.5
   let loadPromise: Promise<T | null> | null = null
   let loadConfirmed = false
   let loadFailed = false
@@ -128,6 +158,9 @@ export function createPersistedDoc<T>(
   // a 90% one, and a delta in the log is the cheapest way to make a truncated
   // read visible before it becomes a truncated write.
   let lastKnownBytes: number | null = null
+  // Record count of the last document we know the backend holds. Drives the
+  // shrink guard; null until a load or save confirms one.
+  let lastKnownCount: number | null = null
 
   // ── Backend resolution ──────────────────────────────────────────────────────
   // Cache ONLY a positive resolution. `EnvVar.get` returns '' both when a var is
@@ -277,6 +310,7 @@ export function createPersistedDoc<T>(
         // A settled read — including a confirmed-absent document — tells us what is
         // stored, which is all the save guard needs.
         lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
+        lastKnownCount = value === null ? 0 : countRecords?.(value) ?? null
         console.log(`[STORE:${key}] loaded on attempt ${attempt}` +
           `${value === null ? ' (empty)' : ` (${Math.round(lastKnownBytes / 1024)}KB)`}`)
         loadConfirmed = true
@@ -312,6 +346,7 @@ export function createPersistedDoc<T>(
           loadConfirmed = true
           loadFailed = false
           lastKnownBytes = value === null ? 0 : JSON.stringify(value).length
+          lastKnownCount = value === null ? 0 : countRecords?.(value) ?? null
           // ensureLoaded memoises, rejections included, so without this every
           // later caller keeps getting the old failure long after the store came
           // back — logging "progression will not persist" and "joining without
@@ -338,6 +373,21 @@ export function createPersistedDoc<T>(
       console.log(`[STORE:${key}] skipping save — document is empty (wipe guard)`)
       return false
     }
+    // SHRINK GUARD. Refusing is the same trade the other guards make: the caller
+    // keeps its dirty flag, the failure is loud, and no data is destroyed. A
+    // legitimate collapse this large has no known cause here, so it needs a
+    // human — the log says what to do.
+    if (countRecords && lastKnownCount !== null && lastKnownCount > 0) {
+      const now = countRecords(value)
+      if (now < lastKnownCount * minRetainedFraction) {
+        console.error(`[STORE:${key}] REFUSING SAVE — record count would fall from ` +
+          `${lastKnownCount} to ${now} (below the ${Math.round(minRetainedFraction * 100)}% floor). ` +
+          `This is the signature of a partial read about to become a partial write, or of a ` +
+          `different world writing into this document. Nothing has been overwritten. Check the ` +
+          `boot log's realm line and the ${envPrefix}_BIN_ID before forcing anything (see DEPLOY.md).`)
+        return false
+      }
+    }
     try {
       const body = JSON.stringify(value)
       // Size watch. These documents hold one record per player forever, so they
@@ -363,7 +413,9 @@ export function createPersistedDoc<T>(
       lastSaveMs = Date.now()
       const was = lastKnownBytes === null ? '' : `, was ${Math.round(lastKnownBytes / 1024)}KB`
       lastKnownBytes = body.length
-      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB${was})`)
+      if (countRecords) lastKnownCount = countRecords(value)
+      console.log(`[STORE:${key}] saved OK (${Math.round(body.length / 1024)}KB${was}` +
+        `${lastKnownCount === null ? '' : `, ${lastKnownCount} records`})`)
       return true
     } catch (e) {
       lastSaveOk = false

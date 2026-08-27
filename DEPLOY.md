@@ -38,6 +38,20 @@ Never commit these values. There is no `.env` in this repo and there should not
 be one — local preview has no EnvVars by design, and with `DEBUG = false`
 careers simply do not persist between local server restarts.
 
+> ⚠️ **Dev and production must NOT share a bin.** `scene.json`'s
+> `worldConfiguration.name` flips between `afkj.dcl.eth` (dev) and
+> `cleantheclub.dcl.eth` (production), and storage *and* EnvVars are both keyed by
+> world name — so each world has its own credentials. If those credentials point
+> at the **same** jsonbin bin, a dev playtest holding two test players will
+> overwrite production's careers, and the empty-document guard cannot stop it
+> because the document is not empty. This is the leading explanation for the
+> 2026-08-17 incident. Verify with the digest comparison below; the shrink guard
+> now refuses such a write, but separate bins is the actual fix.
+>
+> Note `afkj.dcl.eth` is also **shared with another project** — it holds `plants`
+> and `leaderboardResetAt` keys this scene has never written. Its storage
+> namespace is not ours alone.
+
 > ⚠️ **`*_BIN_ID` is the one field that can destroy data.** Pointing it at a
 > different or empty bin makes the server read a 404, treat the document as
 > legitimately empty, and then write the session's records over the top as the
@@ -69,10 +83,16 @@ A healthy boot logs three lines per document, and **both**
 `[STORE:playerProgress]` and `[STORE:leaderboard]` must appear:
 
 ```
+[SERVER] realm: cleantheclub.dcl.eth (preview=false, baseUrl=…) — storage and EnvVars are scoped to this name
 [STORE:playerProgress] load starting — up to 30s, 10s per attempt
 [STORE:playerProgress] persistence: external store (jsonbin)
 [STORE:playerProgress] loaded on attempt 1 (34KB)
 ```
+
+Check the `realm:` line first, every time. Storage, player storage and EnvVars are
+all keyed by that name, so a server running as the dev world reads a different
+bucket with different credentials — and every storage mystery in this scene's
+history would have been shorter if this line had existed.
 
 `load starting` matters on its own: without it, no `[STORE:]` output at all
 would be ambiguous between "storage was never reached" and "the server never got
@@ -93,7 +113,9 @@ Anything other than the three lines above, read the table below.
 | `WARNING: jsonbin 404 ... treating this document as EMPTY` | The bin has no document. Correct on a brand-new bin; otherwise the `BIN_ID` is wrong or repointed. | If this document should have had data: **stop the world now**, before a save overwrites from an empty base. Fix the id, or restore from the bin's version history. |
 | `load attempt N failed` repeating, then `LATE load succeeded` | The store was briefly unreachable and recovered. | Nothing. Progress restored, and the admin line plus every career bar refresh. |
 | `read timed out` / `write timed out` | The store accepted the connection and never answered. Bounded per attempt, so it fails instead of wedging. | Nothing if it recovers; if it repeats, the store is unhealthy. |
-| `WARNING: document SHRANK from NKB to MKB` | The document is about to be written much smaller than it was read. | **Stop and check.** Expected only after deliberate pruning; otherwise the load was partial and this save will make it permanent. |
+| `WARNING: document SHRANK from NKB to MKB` | The payload is much smaller than it was read, but the record count is fine. | Check: same players, less data per player, means a truncated read. |
+| `REFUSING SAVE — record count would fall from N to M` | The shrink guard fired. **Nothing was overwritten.** | Check the boot `realm:` line first — a dev world writing into production's bin looks exactly like this. Then check the `*_BIN_ID`. |
+| `realm: <name> (preview=…, baseUrl=…)` | Which world's storage and EnvVars this server is using. | Confirm it is the world you meant. Storage keys on this name. |
 | `[LB] save FAILED` | The leaderboard write failed. The in-memory board is fine and the next shift end rewrites it. | Nothing unless it repeats. |
 
 In-world, the admin panel (wallets in `ADMIN_ADDRESSES`) shows a `storage:` line

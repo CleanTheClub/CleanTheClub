@@ -31,8 +31,10 @@ const withCredentials = (): void => {
   fake.envVars.set('PROGRESS_BIN_KEY', 'test-master-key')
 }
 
-const makeDoc = <T,>(isEmpty: (v: T) => boolean = (v) => !v) =>
-  createPersistedDoc<T>('testDoc', 'PROGRESS', isEmpty)
+const makeDoc = <T,>(
+  isEmpty: (v: T) => boolean = (v) => !v,
+  options?: { count?: (v: T) => number; minRetainedFraction?: number },
+) => createPersistedDoc<T>('testDoc', 'PROGRESS', isEmpty, options)
 
 /**
  * Attaches the rejection handler at creation time. `expect(p).rejects` only
@@ -620,6 +622,99 @@ describe('createPersistedDoc', () => {
       await doc.save({ a: 'x'.repeat(320) })
 
       expect(erroredMatching(/SHRANK/)).toHaveLength(0)
+    })
+  })
+
+  // The isEmpty guard is binary: it catches a 100% loss and nothing else. That is
+  // how a session holding two records can overwrite two hundred — the document is
+  // not empty, so every existing guard passes it.
+  describe('the shrink guard', () => {
+    const players = (n: number) => ({
+      players: Object.fromEntries([...Array(n)].map((_, i) => [`0x${i}`, { xp: i + 1 }])),
+    })
+    const countPlayers = (d: any) => Object.keys(d?.players ?? {}).length
+    const withPlayers = (n: number) => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: players(n) }) : jsonRes(200, {})
+      return makeDoc<any>((d) => countPlayers(d) === 0, { count: countPlayers })
+    }
+
+    it('should refuse a save that would drop most of the records', async () => {
+      const doc = withPlayers(200)
+      await doc.ensureLoaded()
+
+      await expect(doc.save(players(2))).resolves.toBe(false)
+      expect(puts()).toHaveLength(0)
+      expect(erroredMatching(/REFUSING SAVE — record count would fall from 200 to 2/)).toHaveLength(1)
+    })
+
+    it('should leave the stored document untouched when it refuses', async () => {
+      const doc = withPlayers(200)
+      await doc.ensureLoaded()
+      await doc.save(players(2))
+
+      // Nothing written means nothing lost — the caller keeps its dirty flag.
+      expect(fetchCalls.filter((c) => c.init?.method === 'PUT')).toHaveLength(0)
+    })
+
+    it('should allow a save just above the floor', async () => {
+      const doc = withPlayers(200)
+      await doc.ensureLoaded()
+
+      await expect(doc.save(players(101))).resolves.toBe(true)
+    })
+
+    it('should refuse a save just below the floor', async () => {
+      const doc = withPlayers(200)
+      await doc.ensureLoaded()
+
+      await expect(doc.save(players(99))).resolves.toBe(false)
+    })
+
+    it('should honour a custom floor', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: players(100) }) : jsonRes(200, {})
+      const doc = makeDoc<any>((d) => countPlayers(d) === 0,
+        { count: countPlayers, minRetainedFraction: 0.9 })
+      await doc.ensureLoaded()
+
+      await expect(doc.save(players(95))).resolves.toBe(true)
+      await expect(doc.save(players(80))).resolves.toBe(false)
+    })
+
+    it('should not fire on a brand-new document, where there is nothing to lose', async () => {
+      withCredentials()
+      fetchImpl = async (url) => (url.endsWith('/latest') ? jsonRes(404, {}) : jsonRes(200, {}))
+      const doc = makeDoc<any>((d) => countPlayers(d) === 0, { count: countPlayers })
+      await doc.ensureLoaded()
+
+      await expect(doc.save(players(1))).resolves.toBe(true)
+    })
+
+    it('should track the count forward after each successful save', async () => {
+      const doc = withPlayers(200)
+      await doc.ensureLoaded()
+
+      // 200 -> 150 is allowed, and 150 becomes the new baseline, so 80 (>50% of
+      // 150) is allowed too even though it is well under half of the original.
+      await expect(doc.save(players(150))).resolves.toBe(true)
+      await expect(doc.save(players(80))).resolves.toBe(true)
+      await expect(doc.save(players(20))).resolves.toBe(false)
+    })
+
+    it('should stay inert when no count callback is supplied', async () => {
+      withCredentials()
+      fetchImpl = async (url) =>
+        url.endsWith('/latest') ? jsonRes(200, { record: players(200) }) : jsonRes(200, {})
+      const doc = makeDoc<any>((d) => countPlayers(d) === 0)   // no count
+      await doc.ensureLoaded()
+
+      // Only the byte-level SHRANK warning applies — the guard needs a counter.
+      await expect(doc.save(players(2))).resolves.toBe(true)
+      expect(erroredMatching(/REFUSING SAVE/)).toHaveLength(0)
+      expect(erroredMatching(/SHRANK/)).toHaveLength(1)
     })
   })
 })

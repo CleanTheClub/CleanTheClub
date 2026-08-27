@@ -3,17 +3,25 @@ export const DEBUG = false
 
 // ── Persistence policy ────────────────────────────────────────────────────────
 // Career/leaderboard documents may ONLY live in the external store (jsonbin).
-// INCIDENT 2026-08-17: a publish came up without the jsonbin EnvVars, the
-// persistence layer silently fell back to DCL Storage's per-deploy bucket, and
-// every player saw a fresh empty career, empty leaderboard, empty wall — while
-// new progress diverged into a bucket no later deploy can read. The wipe
-// guards protect a BACKEND from empty overwrites; they cannot protect against
-// quietly SWITCHING backends. With this true, missing credentials REFUSE to
-// load: play continues on in-memory records, saves stay blocked, and every
-// career bar shows a "progress not saving" warning until the EnvVars are
-// restored and the world republished. Loud and recoverable beats silent and
-// diverged. (Local preview has no EnvVars: with DEBUG=false careers simply
-// don't persist between local server restarts — also the safe default.)
+//
+// The reason is not the 2026-08-17 incident, whose stated cause turned out to be
+// wrong: that comment claimed progress "diverged into a bucket no later deploy
+// can read", and the storage tables show nothing was written there at all — no
+// August rows, and no playerProgress key in DCL Storage, ever. Saves were
+// BLOCKED, not diverted (see getBinCfg).
+//
+// The real reason is worse and better evidenced: the jsonbin code shipped
+// 2026-06-10 and the credentials were not set until 2026-07-27, so for 47 days
+// the external store was INERT and the scene silently ran on the DCL Storage
+// fallback — the backend that same commit had just declared broken. Nothing said
+// so, because nothing checked. That is what this flag prevents.
+//
+// With this true, missing credentials REFUSE to load: play continues on
+// in-memory records, saves stay blocked, and every career bar shows a "progress
+// not saving" warning until the EnvVars are restored and the world republished.
+// Loud and recoverable beats silent and diverged. (Local preview has no EnvVars:
+// with DEBUG=false careers simply don't persist between local server restarts —
+// also the safe default.)
 export const REQUIRE_EXTERNAL_STORE = !DEBUG
 
 // V2: every round runs the SAME duration (per the GDD — the old shrinking table

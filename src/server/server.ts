@@ -4,6 +4,7 @@ import { syncEntity } from '@dcl/sdk/network'
 import { onEnterSceneObservable } from '@dcl/sdk/observables'
 import { createPersistedDoc } from './persistence'
 import { OUTCOME_OPTIMAL } from '../shared/config'
+import { getRealm } from '~system/Runtime'
 import { room } from '../shared/messages'
 import { ClutterSync, GameState } from '../shared/schemas'
 import { CLUTTER_DEFS, ADMIN_ADDRESSES, ItemCategory, THEME_DEFS, ThemeId, THEME_SLOT_PREFIX, THEME_SLOT_COUNT, themeModelSrc, TIGHT_ANCHOR_PARTS, THEME_SMALL_MODELS, DISASTER_PREFIX, DISASTER_STAGES, DISASTER_CHANCE_CLASSIC, DISASTER_THEMES, DISASTER_BONUS, binCapacityFor, HAUL_BONUS } from '../shared/config'
@@ -34,6 +35,9 @@ const leaderboardDoc = createPersistedDoc<LbRecord[]>(
   'leaderboard',
   'LEADERBOARD',
   (records) => !records || records.length === 0,
+  // Shrink guard. The board only sheds rows through the total > 0 filter, which
+  // applies on every save alike, so the count is monotonic in practice.
+  { count: (records) => records?.length ?? 0 },
 )
 
 let lbLoadStarted = false
@@ -658,6 +662,22 @@ function sendParticipation(address: string): void {
 
 export function initServer() {
   console.log('[SERVER] started')
+
+  // WHICH WORLD ARE WE? Storage is scoped by realm name — world_storage,
+  // player_storage and env_variables all key on it — so a server running as the
+  // dev world reads and writes an entirely different bucket, and different
+  // credentials, from one running as production. Every storage mystery in this
+  // scene's history cost days that this one line would have closed.
+  executeTask(async () => {
+    try {
+      const { realmInfo } = await getRealm({})
+      console.log(`[SERVER] realm: ${realmInfo?.realmName ?? 'UNKNOWN'} ` +
+        `(preview=${realmInfo?.isPreview ?? '?'}, baseUrl=${realmInfo?.baseUrl ?? '?'}) ` +
+        `— storage and EnvVars are scoped to this name`)
+    } catch (e) {
+      console.error('[SERVER] could not resolve the realm — storage scope is unknown:', e)
+    }
+  })
 
   const itemEntities    = new Map<string, Entity>()
   // Every hand-placed sample for theme spawn scales. `model` (GLB src basename)
